@@ -66,16 +66,15 @@ structures (PMTable) stay in C++ as primitives exposed to Lua (see Phase 4).
 > remote `origin` = `JotaPeRL/thinker-lua`, working branch `lua-ai` created and
 > pushed.
 
-1. Configure remotes: `origin` = your fork; `upstream` = `induktio/thinker`.
-2. Create the `lua-ai` working branch from `master`.
-3. Strategy for coexisting with upstream: Thinker is actively developed (large
+1. Create the `lua-ai` working branch from `master`.
+2. Strategy for coexisting with upstream: Thinker is actively developed (large
    rewrites, e.g. commit `15418b2 "Rewrite faction and movement code"`).
    To minimize rebase conflicts:
    - Concentrate new code in new files (`src/luaai.cpp`, `src/luaapi.cpp`, the
      `lua/` directory), touching existing files as little as possible.
    - In existing files, the touch is 1–3 lines per hooked function (the "seam"
      of Phase 4).
-4. Document the fork's goal and status in the fork's `Readme.md`.
+3. Document the fork's goal and status in the fork's `Readme.md`.
 
 **Done when:** fork builds identically to upstream, branch created.
 
@@ -167,14 +166,7 @@ How it was done (prefix at `~/.wine-smac`, game at `drive_c/Games/SMAC`):
 4. Launch and validate (done): game opens in windowed mode, mod loaded, Alt+T
    works. Wine notes: `WINEDEBUG=-all` for performance; the GOG
    `1.1_pracx_ddraw` release ships `ddraw.dll` and PRACX in the folder — they
-   did not interfere in testing, but removing/renaming `ddraw.dll` is the first
-   thing to try if graphics problems appear.
-
-### 1.4 CI (optional but recommended)
-
-GitHub Actions on `ubuntu-latest` with `g++-mingw-w64-i686-posix` + CMake,
-building `develop` on every push. Ensures the fork's build never breaks while
-the port advances.
+   did not interfere in testing.
 
 **Done when:** game runs via Wine with the locally compiled `thinker.dll`,
 Alt+T menu visible, a game playable for 50+ turns without crashing.

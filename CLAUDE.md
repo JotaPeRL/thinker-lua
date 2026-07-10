@@ -34,8 +34,7 @@ WINEPREFIX=~/.wine-smac wine ~/.wine-smac/drive_c/Games/SMAC/thinker.exe -window
 - **Determinism:** AI code must use the engine RNG bindings (`rand.*`), never
   `math.random`; no decision may depend on Lua hash-table iteration order.
 - **Language:** all docs, comments and commit messages in English.
-- **Commits:** do NOT add a `Co-Authored-By: Claude` trailer. Do not commit or
-  push unless asked.
+- **Commits:** Do not commit or push unless asked.
 - Repo uses CRLF line endings (upstream convention); don't fight the warnings.
 
 ## Git
