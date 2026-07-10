@@ -1,0 +1,45 @@
+# CLAUDE.md
+
+Fork of [induktio/thinker](https://github.com/induktio/thinker) (SMACX Thinker
+Mod). Goal: port the mod's deterministic AI from C++ to Lua scripts run by an
+embedded interpreter, to make single-player AI development easier. Engine bug
+fixes, rendering, mapgen, UI and launcher stay in C++ and follow upstream.
+
+Read `IMPLEMENTATION_PLAN.md` (roadmap, phases, status) and
+`IMPLEMENTATION_DETAILS.md` (tactical, code-grounded notes per phase) before
+starting any work. Update phase status in the plan as work completes.
+
+## Build, deploy, run (Arch Linux + Wine)
+
+```sh
+cmake --preset ninja-develop && cmake --build --preset ninja-develop
+cmake --preset ninja-debug   && cmake --build --preset ninja-debug
+tools/deploy.sh develop        # or: debug — copies artifacts to the game folder
+WINEPREFIX=~/.wine-smac wine ~/.wine-smac/drive_c/Games/SMAC/thinker.exe -windowed
+```
+
+- Cross-compile only: `i686-w64-mingw32-g++` (32-bit Windows DLL). There is no
+  native Linux build and no test suite; validation is running the game in Wine.
+- Game install: `~/.wine-smac/drive_c/Games/SMAC` (GOG, terranx.exe v2.0).
+- `debug` builds enable `BUILD_DEBUG`: `debug.txt` logging, Alt+D/M/V dev
+  shortcuts. `develop`/`release` builds compile `debug()` out entirely.
+
+## Conventions
+
+- **Upstream-friendly diffs:** new code goes in new files (`src/luaai.*`,
+  `lua/`); existing files get at most a 1–3 line hook per function. Upstream
+  rewrites large files often; keep seams minimal and centralized.
+- **1:1 port first:** Lua ports must reproduce C++ behavior exactly before any
+  AI improvement. C++ originals remain as fallback — never delete them.
+- **Determinism:** AI code must use the engine RNG bindings (`rand.*`), never
+  `math.random`; no decision may depend on Lua hash-table iteration order.
+- **Language:** all docs, comments and commit messages in English.
+- **Commits:** do NOT add a `Co-Authored-By: Claude` trailer. Do not commit or
+  push unless asked.
+- Repo uses CRLF line endings (upstream convention); don't fight the warnings.
+
+## Git
+
+- `origin` = `JotaPeRL/thinker-lua` (SSH), `upstream` = `induktio/thinker`.
+- Work happens on `lua-ai`; `master` is a clean mirror of upstream
+  (`git fetch upstream && git merge --ff-only upstream/master`).

@@ -1,5 +1,8 @@
 # Implementation Plan — Thinker AI in Lua
 
+> Tactical, code-grounded notes for executing each phase live in
+> `IMPLEMENTATION_DETAILS.md` — read both before starting work on a phase.
+
 Goal: extract Thinker Mod's deterministic AI (currently written in C++ inside
 `thinker.dll`) into Lua scripts executed by an interpreter embedded in the DLL,
 keeping the current behavior as the baseline and opening the way for improved AI
