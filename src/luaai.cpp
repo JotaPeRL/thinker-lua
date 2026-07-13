@@ -84,6 +84,17 @@ static int host_log(lua_State* LS) {
     return 0;
 }
 
+// Verbose counterpart, gated the same way the C++ side's debug_ver() macro
+// is: only writes when conf.debug_verbose is set (the Alt+M toggle,
+// src/gui.cpp). Kept as its own host function rather than a flag checked
+// in Lua so the AI code never needs to know about conf directly.
+static int host_log_ver(lua_State* LS) {
+    if (conf.debug_verbose) {
+        lua_logf("%s\n", luaL_checkstring(LS, 1));
+    }
+    return 0;
+}
+
 static int forbidden_math_random(lua_State* LS) {
     return luaL_error(LS, "math.random/randomseed is forbidden in Lua AI"
         " scripts; determinism requires the engine RNG bindings (rand.*,"
@@ -157,6 +168,7 @@ static void open_sandbox(lua_State* LS) {
     lua_pop(LS, 1);
 
     lua_register(LS, "host_log", host_log);
+    lua_register(LS, "host_log_ver", host_log_ver);
 }
 
 // Applies conf.lua_strict and the once-per-(hook,turn,traceback) dedup rule.

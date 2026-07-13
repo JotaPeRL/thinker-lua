@@ -834,15 +834,16 @@ Verbose `debug.txt` diffable between runs.
 - **M2B — Production runtime:** ✅ completed (2026-07-13). Lifecycle,
   sandbox, `lua_strict` policy, dedup logging, safe-point hot reload — see
   Phase 2B status.
-- **M3A — Minimal vertical API:** 🔨 in progress. Phase 3.1 + the narrowed
-  Phase 3.2 slice done (2026-07-13): generated cdefs + validation, `rand`,
-  `cmath`, and now the required host-API *functions*
+- **M3A — Minimal vertical API:** ✅ completed (2026-07-13). Generated
+  cdefs + validation, `rand`, `cmath`, the required host-API *functions*
   (`has_tech`/`is_human`/etc.) and `UNIT`'s re-exposed methods
-  (`lua/api/faction.lua`, `lua/api/tech.lua`, `lua/api/map.lua` — see
-  Phase 3.2 status). Only `log` (`log.debug`/`log.ver`) is still pending —
-  the last thing standing between here and M4. **Do not build the full
-  map/veh/base/path API up front** — its ideal shape is discovered by
-  porting.
+  (`lua/api/faction.lua`, `lua/api/tech.lua`, `lua/api/map.lua` — Phase 3.2
+  status), and `log.debug`/`log.ver` (`lua/api/log.lua`, backed by a new
+  `host_log_ver` gated on `conf.debug_verbose` — validated in-game on both
+  presets: silent by default in `develop`, both lines visible in `debug`
+  where `debug_verbose` defaults on). **Do not build the full map/veh/
+  base/path API up front** — its ideal shape is discovered by porting.
+  Nothing blocks M4 (research pilot) from starting now.
 - **M4 — Research pilot:** research AI in Lua enabled by default; golden traces
   and shadow runs clean. From here the fork is already useful (custom research
   AI can be experimented with).

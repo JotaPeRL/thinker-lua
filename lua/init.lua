@@ -9,8 +9,9 @@
 -- No AI hooks exist yet (Phase 4). This wires up the binding layer:
 -- validates the generated engine-struct cdefs against this build's real
 -- LuaJIT layout before anything else trusts them. lua/api/* (rand, cmath,
--- faction, tech, map) and lua/ffi/funcs.lua (the LuaHostApi handshake) are
--- loaded on demand by AI code as Phase 4 is written, not eagerly here.
+-- faction, tech, map, log) and lua/ffi/funcs.lua (the LuaHostApi
+-- handshake) are loaded on demand by AI code as Phase 4 is written, not
+-- eagerly here.
 
 host_log("lua/init.lua loaded")
 
