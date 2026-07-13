@@ -7,7 +7,7 @@
 -- rand.game(n): the main engine stream (game_randv, 0..n-1).
 -- rand.map(low, high): the mod's own LCG (random_get), used by mapgen and
 -- some AI planning.
-local funcs = dofile("lua/ffi/funcs.lua")
+local funcs = dofile_once("lua/ffi/funcs.lua")
 
 return {
     game = funcs.rand_game,

@@ -211,9 +211,17 @@ int main() {
 
     emit_struct(stdout, {"CChassis", sizeof(CChassis), alignof(CChassis), {
         FIELD(CChassis, preq_tech),
+        FIELD(CChassis, speed),
+    }});
+
+    emit_struct(stdout, {"CArmor", sizeof(CArmor), alignof(CArmor), {
+        FIELD(CArmor, defense_value),
     }});
 
     emit_struct(stdout, {"UNIT", sizeof(UNIT), alignof(UNIT), {
+        FIELD(UNIT, chassis_id),
+        FIELD(UNIT, weapon_id),
+        FIELD(UNIT, armor_id),
         FIELD(UNIT, preq_tech),
     }});
 
@@ -259,6 +267,7 @@ int main() {
     printf("    Facility = 0x%08X,\n", 0x9A4B68);
     printf("    Reactor = 0x%08X,\n", 0x9527F8);
     printf("    Weapon = 0x%08X,\n", 0x94AE60);
+    printf("    Armor = 0x%08X,\n", 0x94F278);
     printf("    Chassis = 0x%08X,\n", 0x94A330);
     printf("    Units = 0x%08X,\n", 0x9AB868);
     printf("    Continents = 0x%08X,\n", 0x9AA730);
@@ -268,6 +277,21 @@ int main() {
     printf("    GameRules = 0x%08X,\n", 0x9A649C);
     printf("    MapCloudCover = 0x%08X,\n", 0x94A2B4);
     printf("    BaseCount = 0x%08X,\n", 0x9A64CC);
+    printf("  },\n");
+    // Array bounds for the exposed rule tables, from src/main.h (not
+    // included here -- same provenance-by-comment convention as the
+    // addresses above, since main.h pulls in the Windows-dependent
+    // engine.h chain gen_ffi otherwise avoids).
+    printf("  counts = {\n");
+    printf("    MaxPlayerNum = %d,\n", 8);        // main.h:111
+    printf("    MaxTechnologyNum = %d,\n", 89);    // main.h:123
+    printf("    MaxChassisNum = %d,\n", 9);        // main.h:124
+    printf("    MaxWeaponNum = %d,\n", 26);        // main.h:125
+    printf("    MaxArmorNum = %d,\n", 14);         // main.h:126
+    printf("    MaxReactorNum = %d,\n", 4);        // main.h:127
+    printf("    MaxFacilityNum = %d,\n", 64);      // main.h:143
+    printf("    MaxProtoNum = %d,\n", 512);        // main.h:116
+    printf("    MaxRegionNum = %d,\n", 128);       // main.h:106
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

@@ -15,6 +15,9 @@
 #include "main.h"
 #include "luaai.h"
 #include "random.h"
+#include "faction.h"
+#include "tech.h"
+#include "map.h"
 
 #include <string>
 #include <unordered_set>
@@ -26,12 +29,22 @@ extern "C" {
 #include "luajit.h"
 }
 
-// Populated once; game_randv/random_get already match the LuaHostApi
-// pointer signatures exactly, so no wrapper functions are needed.
+// Populated once; every entry already matches the LuaHostApi pointer
+// signature exactly, so no wrapper/trampoline functions are needed
+// (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version */ 1,
-    /* rand_game   */ game_randv,
-    /* rand_map    */ random_get,
+    /* api_version         */ 2,
+    /* rand_game           */ game_randv,
+    /* rand_map            */ random_get,
+    /* is_human            */ is_human,
+    /* has_treaty          */ has_treaty,
+    /* climactic_battle    */ climactic_battle,
+    /* mod_wants_to_attack */ mod_wants_to_attack,
+    /* has_tech            */ has_tech,
+    /* tech_level          */ tech_level,
+    /* mod_tech_avail      */ mod_tech_avail,
+    /* tech_is_preq        */ tech_is_preq,
+    /* bad_reg             */ bad_reg,
 };
 
 static lua_State* L = NULL;

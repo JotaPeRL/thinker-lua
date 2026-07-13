@@ -493,6 +493,33 @@ with a strict asymmetry between reads and everything else:
 
 ### 3.2 High layer: idiomatic API
 
+> **Status: 🔨 narrowed slice done (2026-07-13)** — this section as written
+> below describes the full engine-wide `game`/`map`/`veh`/`base`/`path`/
+> `rules` API; per M3A's "do not build the full API up front" and a
+> deliberate scoping decision this session, only the slice
+> `mod_tech_val`/`mod_tech_ai` need was built: `lua/api/faction.lua`
+> (`is_human`, `has_treaty`, `climactic_battle`, `mod_wants_to_attack` +
+> ID-validated `Faction`/`MFaction` accessors), `lua/api/tech.lua`
+> (`has_tech`, `tech_level`, `tech_is_preq`, `mod_tech_avail` + accessors
+> for `CTech`/`CFacility`/`CReactor`/`CWeapon`/`CChassis`/`CArmor`/unit
+> prototypes, plus `proto_offense_value`/`proto_defense_value`/`proto_speed`
+> re-porting `UNIT`'s three inline methods dropped by field-only cdef
+> generation), `lua/api/map.lua` (`bad_reg` + a `Continent` accessor,
+> deliberately minimal — one function). `LuaHostApi` bumped to
+> `api_version=2` with the 9 new entries, all direct function-pointer
+> assignments (no trampolines — confirmed `extern "C"` is irrelevant for
+> same-TU pointer assignment, only `is_human`'s `bool` return needed its
+> own field type rather than a generic `int`, since C++ function-pointer
+> types don't implicitly convert). Also added `dofile_once` (`lua/init.lua`)
+> — a path-memoized loader closing a fragility flagged in the Phase 3.1
+> commit message, now load-bearing since `lua/ffi/types.lua` and
+> `lua/ffi/funcs.lua` gained real second/third callers this session.
+> Validated in-game: `faction.is_human(1)=false`,
+> `tech.get(0).AI_growth=2`, `map.bad_reg(0)=true`. `game`/`veh`/`base`/
+> `path`/live-tile access below remain undone — no consumer until
+> Phase 4's later porting-order items (social engineering, production,
+> movement) need them.
+
 Thin Lua modules over the FFI reads + host API calls, with the semantics of the
 helpers already in `veh.h`/`base.h`/`map.h`:
 
@@ -807,13 +834,15 @@ Verbose `debug.txt` diffable between runs.
 - **M2B — Production runtime:** ✅ completed (2026-07-13). Lifecycle,
   sandbox, `lua_strict` policy, dedup logging, safe-point hot reload — see
   Phase 2B status.
-- **M3A — Minimal vertical API:** 🔨 in progress. Phase 3.1 done (2026-07-13):
-  generated cdefs + validation for the involved structs, `rand`, `cmath`. The
-  required host-API *functions* (`has_tech`/`is_human`/etc.) and `UNIT`'s
-  re-exposed methods are deferred to Phase 4, decided on demand as the tech
-  port is written — `log` (`log.debug`/`log.ver`) is also still pending, not
-  covered by Phase 3.1. **Do not build the full map/veh/base/path API up
-  front** — its ideal shape is discovered by porting.
+- **M3A — Minimal vertical API:** 🔨 in progress. Phase 3.1 + the narrowed
+  Phase 3.2 slice done (2026-07-13): generated cdefs + validation, `rand`,
+  `cmath`, and now the required host-API *functions*
+  (`has_tech`/`is_human`/etc.) and `UNIT`'s re-exposed methods
+  (`lua/api/faction.lua`, `lua/api/tech.lua`, `lua/api/map.lua` — see
+  Phase 3.2 status). Only `log` (`log.debug`/`log.ver`) is still pending —
+  the last thing standing between here and M4. **Do not build the full
+  map/veh/base/path API up front** — its ideal shape is discovered by
+  porting.
 - **M4 — Research pilot:** research AI in Lua enabled by default; golden traces
   and shadow runs clean. From here the fork is already useful (custom research
   AI can be experimented with).
