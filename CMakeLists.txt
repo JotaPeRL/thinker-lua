@@ -71,6 +71,21 @@ target_compile_definitions(thinkerlib PRIVATE BUILD_DLL)
 set_target_properties(thinkerlib PROPERTIES PREFIX "" OUTPUT_NAME "thinker" SUFFIX ".dll")
 target_link_libraries(thinkerlib PRIVATE user32 gdi32 winmm psapi)
 
+# ---------- LuaJIT (vendored submodule, cross-compiled static) ----------
+# Single libluajit.a shared by all configs: LuaJIT is always built optimized,
+# and its makefile is not parallel-safe across configs in the same source dir.
+# Host tools (minilua/buildvm) need the target pointer size => HOST_CC gcc -m32.
+set(LUAJIT_DIR ${CMAKE_SOURCE_DIR}/third_party/luajit/src)
+add_custom_command(OUTPUT ${LUAJIT_DIR}/libluajit.a
+    COMMAND make -C ${LUAJIT_DIR} "HOST_CC=gcc -m32"
+            CROSS=i686-w64-mingw32- TARGET_SYS=Windows BUILDMODE=static libluajit.a
+    COMMENT "Cross-compiling LuaJIT (static, i686)"
+    VERBATIM)
+add_custom_target(luajit DEPENDS ${LUAJIT_DIR}/libluajit.a)
+add_dependencies(thinkerlib luajit)
+target_include_directories(thinkerlib PRIVATE ${LUAJIT_DIR})
+target_link_libraries(thinkerlib PRIVATE ${LUAJIT_DIR}/libluajit.a)
+
 # ---------- Launch executable ----------
 file(GLOB THINKER_LAUNCH_SOURCES
     "src/launch.*"

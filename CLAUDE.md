@@ -2,7 +2,9 @@
 
 Fork of [induktio/thinker](https://github.com/induktio/thinker) (SMACX Thinker
 Mod). Goal: port the mod's deterministic AI from C++ to Lua scripts run by an
-embedded interpreter, to make single-player AI development easier. Engine bug
+embedded LuaJIT 2.1 (pinned commit, no fallback interpreter), to make
+single-player AI development easier. Lua is a client of a versioned Thinker
+API — FFI may implement parts of it, but is not itself the API. Engine bug
 fixes, rendering, mapgen, UI and launcher stay in C++ and follow upstream.
 
 Read `IMPLEMENTATION_PLAN.md` (roadmap, phases, status) and
@@ -33,6 +35,13 @@ WINEPREFIX=~/.wine-smac wine ~/.wine-smac/drive_c/Games/SMAC/thinker.exe -window
   AI improvement. C++ originals remain as fallback — never delete them.
 - **Determinism:** AI code must use the engine RNG bindings (`rand.*`), never
   `math.random`; no decision may depend on Lua hash-table iteration order.
+- **No Lua in `DllMain`:** loader lock — the Lua VM initializes lazily from a
+  patched engine callback (`mod_turn_upkeep`), never during DLL attach.
+- **FFI boundary:** engine-state *reads* use FFI inside `lua/api/` only; all
+  *writes* and engine-function *calls* go through `LuaHostApi` wrappers in C++.
+  `lua/ai/` never requires `ffi`.
+- **Integer semantics:** in `lua/ai/`, use `cmath.idiv`/`cmath.imod` (C
+  semantics); bare `/` and `%` are banned on integers; bitwise via `bit`.
 - **Language:** all docs, comments and commit messages in English.
 - **Commits:** Do not commit or push unless asked.
 - Repo uses CRLF line endings (upstream convention); don't fight the warnings.

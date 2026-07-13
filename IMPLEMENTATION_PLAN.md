@@ -1,4 +1,4 @@
-# Implementation Plan — Thinker AI in Lua
+# Implementation Plan — Thinker AI in Lua (rev 2)
 
 > Tactical, code-grounded notes for executing each phase live in
 > `IMPLEMENTATION_DETAILS.md` — read both before starting work on a phase.
@@ -8,12 +8,32 @@ Goal: extract Thinker Mod's deterministic AI (currently written in C++ inside
 keeping the current behavior as the baseline and opening the way for improved AI
 development without recompiling the mod.
 
+Conceptually, the project is **not** "porting C++ to Lua inside the same address
+space". It is **separating AI policy from engine mechanism**: Lua is a client of
+a versioned Thinker API. FFI may *implement* parts of that API, but it is not
+itself the API.
+
+**Rev 2 changes (2026-07-11):** incorporates external review. Main deltas:
+hook taxonomy (pure/transactional/command) with a propose-then-commit contract;
+read/write asymmetry in the FFI layer (reads direct, writes and calls wrapped);
+cdef generation from the compiler itself instead of header parsing; a
+feasibility spike (Phase 2A) before consolidating the runtime; golden traces as
+the primary test anchor; upstream drift detection by function-body hashing;
+graduated equivalence levels; integer-semantics rules; milestone reordering.
+
+**Interpreter decision (final): LuaJIT 2.1, pinned commit, no fallback.**
+PUC Lua 5.4 is formally abandoned as a contingency. If the Phase 2A spike shows
+LuaJIT to be unviable in this process (mingw i686 static link, inside
+terranx.exe, under Wine and native Windows), **the project ends**. This is a
+deliberate kill criterion, not an open question — it removes the tax of keeping
+the AI code "5.4-portable" and lets the API layer use metatypes freely.
+
 **Scope:**
 
 - Build the project on Arch Linux (mingw32 cross-compile) and run it via Wine.
-- Embed a Lua interpreter (recommendation: LuaJIT, see Phase 2).
+- Embed LuaJIT 2.1 statically in `thinker.dll`.
 - Port the AI decision modules from C++ to Lua, incrementally and verifiably,
-  with fallback to the original C++ code.
+  with fallback to the original C++ code where the hook contract permits it.
 
 **Out of scope (do not touch):**
 
@@ -21,6 +41,11 @@ development without recompiling the mod.
   All of that stays in C++.
 - AI balance/behavior changes. The port must be 1:1 at first; AI improvements
   come later, on top of the Lua base.
+- **Multiplayer is not supported during the porting phase.** The implementation
+  must avoid gratuitous nondeterminism (RNG rules, iteration order), but
+  multiplayer validation and script synchronization (manifest with script
+  hashes, identical LuaJIT builds across peers, no unilateral reload) are
+  deferred to a possible future phase.
 
 ---
 
@@ -32,18 +57,23 @@ binary). In `DllMain`/`ThinkerModule` (`src/main.cpp:442`), the mod reads
 `call`s to mod functions via `write_call(address, function)`. Thinker's AI is
 enabled per faction according to `factions_enabled` (`src/faction.cpp:143`).
 
-AI entry points (the "seams" where Lua will plug in):
+AI entry points (the "seams" where Lua will plug in), with their **hook class**
+(see Phase 4.1):
 
-| Domain | C++ entry | Files | Size |
-|---|---|---|---|
-| Turn/unit dispatch | `mod_enemy_turn`, `mod_enemy_veh`, `mod_enemy_move` | `veh_turn.cpp` | ~900 loc |
-| Movement per unit type | `colony_move`, `former_move`, `crawler_move`, `artifact_move`, `trans_move`, `nuclear_move`, `combat_move`, `move_upkeep` | `move.cpp` | ~3700 loc |
-| Strategic plans | `plans_upkeep`, `design_units`, `former_plans`, `invasion_plan`, `land_raise_plan` | `plan.cpp`, `move.cpp` | ~600 loc |
-| Base production | `select_build`, `find_proto`, `unit_score`, `facility_score`, `find_project`, `mod_base_hurry` | `build.cpp`, `plan.cpp` | ~1300 loc |
-| Social engineering / diplomacy | `mod_social_ai`, `mod_wants_to_attack` | `faction.cpp` | ~2500 loc (partial) |
-| Research | `mod_tech_ai`, `mod_tech_val` | `tech.cpp` | ~760 loc |
-| Goals | `add_goal`, `wipe_goals` etc. (state in the engine's `Faction` struct) | `goal.cpp` | ~180 loc |
-| Pathfinding and tile search | `Path`, `TileSearch`, `PMTable mapdata`, `NodeSet mapnodes` | `path.cpp`, `map.cpp`, `move.h` | ~1000 loc |
+| Domain | C++ entry | Files | Size | Class (initial assessment) |
+|---|---|---|---|---|
+| Turn/unit dispatch | `mod_enemy_turn`, `mod_enemy_veh`, `mod_enemy_move` | `veh_turn.cpp` | ~900 loc | command |
+| Movement per unit type | `colony_move`, `former_move`, `crawler_move`, `artifact_move`, `trans_move`, `nuclear_move`, `combat_move`, `move_upkeep` | `move.cpp` | ~3700 loc | command (inner scoring: pure) |
+| Strategic plans | `plans_upkeep`, `design_units`, `former_plans`, `invasion_plan`, `land_raise_plan` | `plan.cpp`, `move.cpp` | ~600 loc | transactional |
+| Base production | `select_build`, `find_proto`, `unit_score`, `facility_score`, `find_project`, `mod_base_hurry` | `build.cpp`, `plan.cpp` | ~1300 loc | mostly pure query / transactional |
+| Social engineering / diplomacy | `mod_social_ai`, `mod_wants_to_attack` | `faction.cpp` | ~2500 loc (partial) | transactional / pure |
+| Research | `mod_tech_ai`, `mod_tech_val` | `tech.cpp` | ~760 loc | pure query |
+| Goals | `add_goal`, `wipe_goals` etc. (state in the engine's `Faction` struct) | `goal.cpp` | ~180 loc | command |
+| Pathfinding and tile search | `Path`, `TileSearch`, `PMTable mapdata`, `NodeSet mapnodes` | `path.cpp`, `map.cpp`, `move.h` | ~1000 loc | stays in C++ |
+
+The class column is a working hypothesis to be confirmed per function during
+porting; each ported function's classification must be recorded in
+`docs/LUA_PORTING.md` (Phase 6).
 
 Relevant infrastructure:
 
@@ -52,11 +82,27 @@ Relevant infrastructure:
   `engine.h` — fixed addresses for globals such as `Vehs`, `Bases`, `Factions`,
   `MapTiles`.
 - RNG: the AI uses the engine's own RNG (`game_rand`, `src/random.cpp`) and its
-  own LCG (`random(n)`). Determinism matters for replays/multiplayer sync.
+  own LCG (`random(n)`). Determinism matters for replays and for the port's own
+  validation.
 - Logging: `debug.txt` via `debug()`/`debug_ver()`; custom crash handler.
 
-**Total to port: ~9–10k lines of C++ decision logic.** Pathfinding and hot data
-structures (PMTable) stay in C++ as primitives exposed to Lua (see Phase 4).
+**Effort model.** "~9–10k LOC of decision logic to port" measures source size,
+not effort. The work splits into four masses with different risk profiles:
+
+| Workstream | LOC | Risk / effort profile |
+|---|---|---|
+| Embedding & lifecycle (Phase 2) | small | high risk, front-loaded |
+| ABI/API & bindings (Phase 3) | medium | highest risk; must be right |
+| Logic translation (Phase 4) | large | moderate risk, mechanical |
+| Validation & diagnostics (Phase 5) | medium | high sustained effort |
+
+Translating 400 lines of `tech.cpp` may well take less time than making the two
+versions comparable, observable and safe. Long-term, the dominant cost is
+**maintaining equivalence while upstream evolves** — hence the drift tooling in
+Phase 4.4.
+
+Pathfinding and hot data structures (PMTable) stay in C++ as primitives exposed
+to Lua (see Phase 4.3).
 
 ---
 
@@ -74,6 +120,9 @@ structures (PMTable) stay in C++ as primitives exposed to Lua (see Phase 4).
      `lua/` directory), touching existing files as little as possible.
    - In existing files, the touch is 1–3 lines per hooked function (the "seam"
      of Phase 4).
+   - Note: minimal seams reduce *textual* conflicts only. Semantic drift
+     (upstream changes a formula, RNG order, or a signature without touching
+     the seam) is handled by the drift report in Phase 4.4.
 3. Document the fork's goal and status in the fork's `Readme.md`.
 
 **Done when:** fork builds identically to upstream, branch created.
@@ -122,18 +171,10 @@ Arch-specific notes:
   `i686-w64-mingw32-g++` — confirm with `i686-w64-mingw32-g++ --version`.
 - `cmake_minimum_required(VERSION 3.31)` — fine, Arch ships a recent CMake.
 - Arch's Wine runs 32-bit binaries (WoW64/multilib). Enable `[multilib]` in
-  `pacman.conf` if not already enabled (also needed for LuaJIT, Phase 2).
+  `pacman.conf` if not already enabled (also needed to build LuaJIT's host
+  tools, Phase 2).
 
 ### 1.2 Build
-
-```sh
-cmake --preset ninja-develop
-cmake --build --preset ninja-develop
-# artifacts: build/develop/thinker.dll and thinker.exe
-```
-
-Builds to validate: `debug` (with `BUILD_DEBUG`, developer shortcuts Alt+D/M/V
-etc., essential for the following phases) and `develop`.
 
 Results observed in the actual build:
 
@@ -153,55 +194,50 @@ How it was done (prefix at `~/.wine-smac`, game at `drive_c/Games/SMAC`):
 1. Arch's Wine ≥ 11 is **WoW64-only**: `WINEARCH=win32` is no longer supported.
    Use a default prefix — 32-bit binaries run via WoW64 normally:
    `WINEPREFIX=~/.wine-smac wineboot -u`.
-2. GOG installer (Inno Setup) in silent mode:
-   `WINEPREFIX=~/.wine-smac wine setup_...exe /VERYSILENT /SUPPRESSMSGBOXES
-   /NORESTART /SP- /LANG=english '/DIR=C:\Games\SMAC'`.
-   Verify `terranx.exe` v2.0
+2. GOG installer (Inno Setup) in silent mode; verify `terranx.exe` v2.0
    (SHA-1 `4b19c1fe3266b5ebc4305cd182ed6e864e3a1c4a` — confirmed).
-3. Deploy with `tools/deploy.sh [develop|debug]`. **Note:** besides
-   `thinker.dll`/`thinker.exe`, the mod requires `docs/modmenu.txt` in the game
-   folder (it defines all Thinker dialogs, including Alt+T) and uses
-   `docs/basenames/`. `deploy.sh` copies both; `docs/alphax.txt` (optional rule
-   changes) and `docs/smac_mod/` are left out on purpose.
+3. Deploy with `tools/deploy.sh [develop|debug]`. The mod requires
+   `docs/modmenu.txt` in the game folder and uses `docs/basenames/`;
+   `deploy.sh` copies both.
 4. Launch and validate (done): game opens in windowed mode, mod loaded, Alt+T
-   works. Wine notes: `WINEDEBUG=-all` for performance; the GOG
-   `1.1_pracx_ddraw` release ships `ddraw.dll` and PRACX in the folder — they
-   did not interfere in testing.
+   works. `WINEDEBUG=-all` for performance; the GOG `1.1_pracx_ddraw` release
+   ships `ddraw.dll` and PRACX in the folder — they did not interfere.
 
 **Done when:** game runs via Wine with the locally compiled `thinker.dll`,
-Alt+T menu visible, a game playable for 50+ turns without crashing.
+Alt+T menu visible, a game playable for 50+ turns without crashing. ✅
 
 ---
 
-## Phase 2 — Embedding the Lua interpreter
+## Phase 2 — Embedding LuaJIT
 
-### 2.1 Interpreter choice: **LuaJIT 2.1** (recommended)
+### 2.1 Interpreter: LuaJIT 2.1, pinned, no fallback
 
-| Criterion | LuaJIT 2.1 | Lua 5.4 (PUC) |
-|---|---|---|
-| 32-bit x86 Windows target | LuaJIT's original platform, excellent support | OK |
-| Performance | Near C with the JIT (matters for `move_upkeep`/per-tile scoring) | 2–10x slower |
-| **FFI** | **Accesses engine structs directly in memory, no manual binding layer** | None; would require hundreds of manual C bindings |
-| Calling engine functions at fixed addresses | `ffi.cast` with `__cdecl`/`__stdcall`/`__thiscall` support on x86 | Requires a C wrapper per function |
-| Build | Cross-compile with an extra step (multilib host) | Trivial (vendor the .c files into the CMake glob) |
-| Language | Lua 5.1 + extensions | Lua 5.4 (goto, native integers) |
+LuaJIT is chosen for: native x86-32 Windows support (its original platform),
+JIT performance for per-tile scoring loops, and FFI for direct *read* access to
+the already-mapped engine structs. What FFI is and is not used for is defined
+precisely in Phase 3 — it is an implementation detail of the `api/` layer, not
+the architecture.
 
-FFI is the deciding factor: the game is a 32-bit process with all structures
-already mapped in headers; with LuaJIT, Lua reads/writes `Vehs[i]`, `Bases[i]`,
-`MAP*` directly and calls engine functions by address. This shrinks the binding
-layer from "thousands of lines of C glue" to "cdef declarations generated from
-the headers". JIT performance also removes the risk in hot loops (map sweeps of
-128x128+ per faction per turn).
+Rules:
 
-Documented fallback: if LuaJIT proves problematic under Wine (unlikely — it is
-widely used in 32-bit Windows games), switching to vendored Lua 5.4 only means
-redoing the binding layer (Phase 3), not the AI scripts — which is why Phase 3
-defines a high-level API that isolates the rest of the scripts from the FFI
-mechanism.
+- **Pin an exact commit** of the v2.1 branch as the submodule revision
+  (`LuaJIT commit: <hash>` recorded in `Technical.md`). Updates are deliberate,
+  never implicit. This makes builds reproducible.
+- **Do not depend on the JIT for initial viability.** The Phase 2A spike and
+  M2 acceptance run first with `jit.off()`, then with the JIT enabled, and
+  compare. This separates embedding problems, FFI problems, JIT compiler
+  problems, and Wine codegen problems from each other.
+- **No performance promise.** LuaJIT *can* approach C, but workloads dominated
+  by small FFI calls into C (which abort traces) may not. Performance is
+  measured (Phase 5.4), not assumed; the architecture minimizes Lua↔C boundary
+  crossings in hot paths precisely for this reason.
+- **Kill criterion:** if the spike fails in a way that cannot be resolved
+  (crashes attributable to LuaJIT itself under mingw-static/Wine/terranx that
+  survive `jit.off()`), the project is abandoned. No PUC Lua contingency.
 
 ### 2.2 Building LuaJIT
 
-1. Vendor LuaJIT as a git submodule at `third_party/luajit` (v2.1 branch).
+1. Vendor LuaJIT as a git submodule at `third_party/luajit`, pinned commit.
 2. Cross-compile for Windows i686, static link:
 
 ```sh
@@ -216,16 +252,76 @@ make -C third_party/luajit/src HOST_CC="gcc -m32" \
    runs the make above and produces `libluajit.a`;
    `target_link_libraries(thinkerlib PRIVATE luajit)` + include dir. Document in
    the fork's `Technical.md`.
-4. Smoke test: `luaL_dostring(L, "return 1+1")` called at startup, result logged
-   to `debug.txt`.
 
-### 2.3 Lifecycle and layout
+### Phase 2A — Feasibility spike (gate for everything else)
 
-- **Init:** in `ThinkerModule`/`DllMain` (`src/main.cpp:442`), after
-  `patch_setup` and `thinker.ini` parsing: create the `lua_State`, open the
-  standard libs + ffi, and load `lua/init.lua` from the game directory. A new
-  file pair `src/luaai.cpp/.h` encapsulates everything (state, pcall wrappers,
-  reload).
+> **Status: ✅ completed (2026-07-13)** — LuaJIT pinned at
+> `3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3` (v2.1), builds clean on both
+> presets, deployed. Checklist items 1–7 verified in `lua.log` (init, host
+> reads, C→Lua call, contained error with traceback, per-turn calls). Item 9
+> (JIT off, then on) verified across two manual play sessions. **Item 8
+> relaxed:** no autoplay facility exists yet (`test.cpp`/`extra_setup()` is an
+> empty scaffold), so the 100+-turn run was not automated; validation instead
+> covered ~15 manually-played turns (turns 19–33) split across the JIT
+> off/on sessions with zero crashes or unexpected errors, judged sufficient
+> for this gate. LuaJIT is confirmed stable in-process under mingw
+> static-link + Wine; the spike's purpose (de-risking the interpreter choice)
+> is satisfied. Automated long-run autoplay remains open — see Phase 5.3's
+> `autoplay_turns=N` — and should be picked up before the Phase 5.3
+> determinism harness needs it, not blocking Phase 2B.
+
+A disposable branch (or clearly marked experimental commits) containing **only**:
+
+1. Static LuaJIT linked into `thinker.dll`.
+2. Lua VM initialized **outside the loader lock** (see 2.3 — lazy init on
+   first use or in an already-patched engine callback, never in the real
+   `DllMain` callback path).
+3. `init.lua` loaded from the game directory, result logged to `debug.txt`.
+4. One `extern "C"` host function returning the current turn, called from Lua.
+5. One host function returning a simple value from a base, called from Lua.
+6. One C→Lua call into a pure Lua function, result logged.
+7. A deliberate Lua error, contained by `lua_pcall` + traceback, game continues.
+8. 100+ autoplayed turns without a crash.
+9. All of the above with `jit.off()`, then repeated with the JIT on.
+
+Explicitly **not** in the spike: hot reload, cdef generator, high-level API,
+shadow framework, packaging, CI. The spike answers one question early — *does
+LuaJIT work stably inside this process, with this compiler, this link, and this
+Wine?* — before any infrastructure is built on top of it. Per the kill
+criterion, a negative answer ends the project cheaply.
+
+### Phase 2B — Production runtime
+
+> **Status: ✅ completed (2026-07-13)** — `src/luaai.cpp/.h` rewritten from
+> the Phase 2A spike into the production lifecycle: `lua_ai`/`lua_shadow`/
+> `lua_strict` config options (`src/main.h`, `src/main.cpp`,
+> `docs/thinker.ini`, same 3-place pattern as `social_ai`); sandboxed VM
+> (`base`/`table`/`string`/`math`/`bit`, `io`/`os`/`debug`/`package` gated
+> behind `BUILD_DEBUG`); `math.random`/`randomseed` replaced with
+> error-raising stubs; deduplicated error logging keyed on
+> `(hook, turn, traceback)`; `lua_strict` policy (0/1/2); safe-point hot
+> reload on Alt+U (`src/gui.cpp`, sets a flag, applied at the top of the
+> next `mod_turn_upkeep`), with a generation counter. `lua/init.lua`
+> stripped of the Phase 2A spike fixtures (`spike_add`, `spike_error`,
+> `on_turn`, `host_current_turn`, `host_base_pop`) down to the sandbox
+> smoke test. In-game validation (manual play via Wine, `lua.log`
+> inspected): sandboxed init logs cleanly with no spike fixtures; a
+> deliberate `error()` in `init.lua` is contained, traceback-logged, and
+> deduplicated per turn (confirmed distinct at turn 44 and turn 50 across
+> two sessions); `lua_strict=1` logs the error once and then disables the
+> Lua runtime for the rest of the session without crashing. **Not
+> separately exercised:** `lua_ai=0` full bypass, the `io`/`os` sandbox
+> boundary in a `develop` (non-debug) build vs. a `debug` build, the
+> `math.random` stub, and same-turn (as opposed to cross-session) dedup —
+> these follow directly from code already reviewed and are low-risk;
+> accepted without a dedicated manual pass. `lua_shadow` remains wired but
+> inert until Phase 5.1.
+- **Init:** a `lua_init()` in the new `src/luaai.cpp/.h`, invoked from a safe
+  point after process startup is complete (e.g. lazily on the first hook call,
+  or from an existing patched engine callback that runs post-init). `DllMain`
+  itself registers nothing Lua-related. Rationale: `DllMain` runs under the
+  Windows loader lock; file I/O, runtime initialization and JIT activation
+  there are classic deadlock/UB territory, even if it might happen to work.
 - **Script layout** (installed alongside the game, shipped in the release zip):
 
 ```
@@ -233,229 +329,410 @@ make -C third_party/luajit/src HOST_CC="gcc -m32" \
   thinker.dll
   lua/
     init.lua          -- bootstrap, loads modules
-    ffi/types.lua     -- cdefs generated from the headers (Phase 3)
-    ffi/funcs.lua     -- engine/thinker functions by address
-    api/…             -- high-level API (game, map, rules, rand, log)
+    ffi/types.lua     -- cdefs GENERATED by the build (Phase 3)
+    ffi/funcs.lua     -- LuaHostApi binding (Phase 3)
+    api/…             -- high-level API (game, map, rules, rand, log, cmath)
     ai/…              -- the ported AI (tech.lua, social.lua, build.lua, move.lua…)
-    test/…            -- unit tests runnable outside the game
+    test/…            -- golden-trace runner and unit tests (Phase 5.2)
 ```
 
+- **Sandboxing:** open only the libraries the AI needs: `base`, `table`,
+  `string`, `math` (partially — see RNG and integer rules in Phase 3), `bit`.
+  `io`, `os`, `debug` and arbitrary `require` paths are available only in
+  development builds. `ffi` is loaded by the `ffi/` and `api/` layers, never
+  exposed to `ai/`.
 - **New `thinker.ini` options:**
   - `lua_ai=1` — toggles the Lua AI globally (0 = pure C++ behavior).
-  - `lua_shadow=0` — Phase 5 shadow mode (compares Lua vs C++ without affecting
-    the game).
-  - `lua_strict=0` — 0: a Lua error falls back to C++ and logs; 1: an error
-    opens a popup and exits (for development).
+  - `lua_shadow=0` — Phase 5 shadow mode.
+  - `lua_strict=0` — error policy:
+    - `0`: log, disable the failing hook for the session, fall back to C++
+      where the hook class permits (Phase 4.1);
+    - `1`: log, popup/debug trap, disable **all** Lua AI for the session;
+    - `2`: deliberate abort (development only).
 - **Error handling:** every hook call goes through `lua_pcall` with a traceback
-  handler. Error → full log to `debug.txt` (once per function/turn to avoid
-  flooding) → "not handled" return → the original C++ runs. **The game must
-  never break because of a script.**
-- **Hot reload:** developer shortcut (e.g. Alt+U, following the `debug.cpp`
-  pattern) that discards the `lua_State` and reloads `lua/`. Development
-  iteration without restarting the game — one of the project's biggest wins.
+  handler. Log deduplication key: `hook + traceback hash + turn` (not merely
+  "once per function/turn", which would hide distinct errors in the same hook).
+- **Containment statement (precise version):** *errors raised through the Lua
+  runtime are contained and must not terminate the game. Memory corruption from
+  unsafe native access cannot be recovered at runtime and is prevented by API
+  design (Phase 3's read/write asymmetry) and startup validation — not by
+  `pcall`.*
+- **Hot reload:** developer shortcut (e.g. Alt+U) that discards the `lua_State`
+  and reloads `lua/`, subject to hard rules:
+  - Reload only at a **safe point**: never inside a Lua callback, never
+    mid-faction-movement; the keypress sets a flag, the reload executes between
+    turns / before the next AI phase.
+  - **Architectural rule for the 1:1 phase:** no state required to continue the
+    game may live exclusively in the `lua_State`. Canonical state stays in the
+    engine structs and `plans[]` (this is already the plan — here it becomes a
+    stated invariant that makes reload trivially safe).
+  - A generation counter is incremented on reload; any handle/cache carrying an
+    old generation is rejected.
+  - No FFI callbacks are ever registered with C++ (the hook flow is always
+    C++→Lua via the registry, see Phase 4.1), so no dangling callback problem.
 - **Logging:** expose `log.debug(...)`/`log.ver(...)` writing to the same
   `debug.txt`, prefixed `lua:`, honoring the Alt+M verbose toggle.
+  (Implementation decision recorded in `IMPLEMENTATION_DETAILS.md` 2.6:
+  `debug.txt` only exists in debug builds, so Lua logging gets its own
+  always-available `lua.log` and *mirrors* to `debug.txt` when present.)
 
-**Done when:** `thinker.dll` with static LuaJIT links and runs under Wine;
-`init.lua` loads, logs to `debug.txt`, hot reload works, a deliberate script
-error does not bring the game down.
+**Done when:** Phase 2A spike passes (gate); production runtime has safe init,
+sandbox, error policy, dedup logging and safe-point hot reload; a deliberate
+script error does not bring the game down and is logged exactly once per
+distinct traceback per turn.
 
 ---
 
-## Phase 3 — Binding layer (FFI + high-level API)
+## Phase 3 — Binding layer (host API + FFI reads)
 
-Two layers, so the Lua AI never touches raw FFI:
+Guiding principle: **Lua is a client of a versioned Thinker API.** Three layers,
+with a strict asymmetry between reads and everything else:
 
-### 3.1 Low layer: cdefs and addresses
+- **Reads of engine state:** direct FFI against the mapped structs, inside
+  `api/` only. Reads with startup-validated layouts cannot corrupt memory; the
+  worst case is a wrong decision, which is exactly what shadow mode detects.
+  This is where FFI's value is — no per-field C wrapper for thousands of
+  field accesses, and no boundary crossing per field in hot loops.
+- **All writes to engine state and all calls to engine functions:** through
+  `extern "C"` wrappers in a `LuaHostApi` struct of function pointers, passed
+  to Lua at init. The AI calls a few dozen engine functions, not thousands —
+  wrapping them is cheap, and it eliminates the two genuinely dangerous FFI
+  uses: hand-declared calling conventions on x86-32 (`cdecl`/`stdcall`/
+  `fastcall`/`thiscall`, stack cleanup, struct returns, ECX/EDX) and unchecked
+  writes. A wrong signature "works" until it corrupts the stack on a rare path;
+  a wrapper compiled by the same toolchain that already calls these functions
+  in C++ cannot get the ABI wrong.
+- **Raw pointers never leave `ffi/`; persistent references are numeric IDs.**
 
-1. **cdef generator:** Python script at `tools/gen_ffi.py` that parses
-   `engine_types.h`, `engine_veh.h`, `engine_base.h`, `engine_enums.h` and emits
-   `lua/ffi/types.lua` (structs, enums and `sizeof` asserts). Generated, not
-   handwritten → when upstream changes a struct, regenerate. Validate at
-   startup: `assert(ffi.sizeof('VEH') == 52)` etc. against the existing
-   `static_assert`s in the C++ headers.
-2. **Engine globals:** address table (e.g. `Vehs = ffi.cast('VEH*', 0x...)`)
-   extracted from `engine.h`. Also generated by the script.
-3. **Functions by address:** engine (`can_arty`, `veh_skip`, `set_move_to`,
-   `base_find_3`, `action_...` etc.) and Thinker helpers that stay in C++
-   (pathfinding, PMTable). For the C++ helpers, export an `extern "C"` table of
-   function pointers (`struct LuaHostApi`) passed to Lua at init — more robust
-   than relying on DLL symbol exports.
+### 3.1 Low layer: generated cdefs and the host API
+
+1. **cdef generator — generate from the compiler, not from parsing.** A small
+   generator program (`tools/gen_ffi.cpp`) that `#include`s the same engine
+   headers with the same defines/packing as the real build, and *prints*:
+   - `lua/ffi/types.lua`: C-syntax struct/enum declarations for LuaJIT's
+     `ffi.cdef`, plus the fixed addresses of engine globals (`Vehs`, `Bases`,
+     `Factions`, `MapTiles`, …) from `engine.h`;
+   - a validation table: `sizeof` and `alignof` for every exposed struct, and
+     `offsetof` for **every exposed field**, plus enum widths, `sizeof(bool)`,
+     pointer size (must be 4), and the widths of types used in bitmasks.
+   Built and run as a build step (it targets the host; it only reads layout via
+   the cross-compiler's front end — if needed, compile it with
+   `i686-w64-mingw32-g++` and run under Wine to guarantee identical ABI).
+   This avoids writing a C++ header parser entirely: the compiler that produces
+   `thinker.dll` is the single source of truth for layout.
+2. **Startup validation:** `init.lua` asserts every generated
+   `sizeof`/`alignof`/`offsetof` against `ffi.sizeof`/`ffi.alignof`/
+   `ffi.offsetof`. Size alone is insufficient — two structs can share a size
+   with fields in different positions. Any mismatch: Lua AI refuses to enable,
+   loud log, C++ runs.
+3. **`LuaHostApi`:** versioned struct of `extern "C"` function pointers
+   covering (a) every engine function the AI calls (`can_arty`, `veh_skip`,
+   `set_move_to`, `base_find_3`, `action_*`, …), (b) every mutation of engine
+   state, (c) the C++ primitives that stay native (pathfinding, `TileSearch`,
+   `PMTable` queries — Phase 4.3). Includes `api_version`; `init.lua` checks it.
+   Every wrapper validates incoming IDs (`base_id`, `veh_id`, coordinates)
+   before dereferencing — handles can go stale after unit death or base capture.
 4. **RNG:** expose `rand.game(n)` → `game_randv(n)` and `rand.map(n)` → the LCG
-   in `random.cpp`. **Project rule: `math.random` is forbidden in `lua/ai/`**
-   (init may even override it with an error). This preserves the engine's RNG
-   stream → determinism and network sync identical to C++.
+   in `random.cpp`, via the host API. **`math.random` is forbidden in `lua/ai/`**
+   — `init.lua` replaces it with a function that raises. This preserves the
+   engine's RNG stream → determinism identical to C++.
+5. **Integer semantics (project rule).** C and Lua disagree on division and
+   modulo of negative integers: C truncates toward zero, Lua floors. In a
+   scoring codebase full of integer arithmetic this produces *silent*
+   divergences. Therefore:
+   - `api/cmath.lua` provides `idiv(a, b)` and `imod(a, b)` with C semantics;
+   - bare `/` and `%` are **banned in integer expressions in `lua/ai/`**
+     (enforced in code review; a luacheck-adjacent lint pass greps for them);
+   - all bitwise work uses the `bit` library (C-like 32-bit semantics);
+   - watch signedness and overflow: C++ `int` wraps at 32 bits, Lua numbers
+     don't — where the original code relies on wrap/truncation, replicate it
+     explicitly (`bit.tobit`).
 
 ### 3.2 High layer: idiomatic API
 
-Thin Lua modules over the FFI, with the semantics of the helpers already in
-`veh.h`/`base.h`/`map.h`:
+Thin Lua modules over the FFI reads + host API calls, with the semantics of the
+helpers already in `veh.h`/`base.h`/`map.h`:
 
 - `game`: iterators `game.vehs()`, `game.bases()`, `game.factions()`,
   `game.turn()`, access to `conf`.
 - `map`: `map.tile(x, y)` (with X-axis wrap like `mapsq`), `map.range`,
   `map.iter_near(x, y, r)`, tile flags (`is_fungus`, `items`, `region`...).
 - `veh`/`base`: methods mirroring the C++ ones (`veh:triad()`, `veh:speed()`,
-  `base:can_build(item)`, ...). Implement on demand, as the port requires.
+  `base:can_build(item)`, ...). Implemented on demand, as the port requires
+  (see milestone M3A: build the vertical slice for the pilot first, not the
+  whole API up front).
 - `path`: wrappers over the retained C++ primitives (`path.find`,
   `path.move_to`, `tilesearch.iterate(...)`, `mapdata`/`mapnodes` reads).
-- `rules`: access to the already-parsed `alphax.txt` tables (Units, Facility,
-  Tech, Social).
+- `rules`: access to the already-parsed `alphax.txt` tables.
 
-Determinism guideline: decisions must never depend on hash-table iteration
-order (`pairs`). The API provides index-ordered iterators; review this in the
-code review of every ported module.
+Boundary rules:
+
+- **`lua/ai/` may not `require('ffi')`** — enforced by the sandbox (Phase 2B)
+  and luacheck. All native access goes through `api/`. Since LuaJIT is now a
+  hard dependency, `api/` objects **may** be FFI metatypes crossing into `ai/`
+  when measurement favors it — the prohibition is on `ai/` touching the FFI
+  mechanism, not on the representation `api/` chooses. This keeps `ai/`
+  readable and auditable without paying an abstraction tax that no longer buys
+  anything.
+- **Determinism:** decisions must never depend on hash-table iteration order
+  (`pairs`). The API provides index-ordered iterators; reviewed in every ported
+  module.
 
 **Done when:** from inside the game, a script can list a faction's bases and
-units, read tiles, call `path.find` and get the same values the C++ `debug.txt`
-reports. Struct layout asserts pass.
+units, read tiles, call `path.find` via the host API and get the same values
+the C++ `debug.txt` reports. All layout asserts pass; `api_version` handshake
+works; a stale ID passed to a wrapper is rejected, not dereferenced.
 
 ---
 
 ## Phase 4 — Incremental AI port
 
-### 4.1 Hook mechanism (seam)
+### 4.1 Hook mechanism, taxonomy and contract
 
-Every C++ entry point gets a 2–3 line detour at the top:
+Every hooked C++ entry point is classified into one of three classes. The class
+determines the hook contract, the fallback rule and the shadow-mode strategy
+(Phase 5.1). Classification is recorded per function in `docs/LUA_PORTING.md`.
+
+**Class 1 — Pure query.** No state modification beyond RNG consumption
+(e.g. `mod_tech_val`, `facility_score`, `unit_score`). Contract: Lua returns a
+value; C++ uses it. Fallback on error: always safe.
+
+**Class 2 — Transactional decision.** Produces a decision plus a bounded,
+identifiable state delta (e.g. `select_build` outcomes, plan updates).
+Contract: **propose-then-commit** — Lua returns a proposal table and performs
+**no** mutation itself:
+
+```lua
+return { handled = true, build_item = item_id }
+```
+
+C++ validates the proposal (range checks, legality) and applies it. Fallback on
+error: safe, because nothing was mutated before the error.
+
+**Class 3 — Command/effect.** Issues orders, moves units, creates goals —
+broad or irreversible effects mid-execution (e.g. `combat_move`,
+`mod_enemy_veh`). Contract: Lua calls host-API mutators as it executes.
+**Fallback rule: once the first mutation has been issued, there is no fallback
+to C++ for that invocation** — falling back over a partially modified state is
+worse than completing or skipping. The hook wrapper tracks "mutations issued";
+on error after the first mutation it finishes the unit safely (e.g. `veh_skip`
+via host API) and logs, rather than re-running the C++ body. Errors *before*
+the first mutation fall back normally.
+
+Seam shape in C++ (unchanged in spirit, 2–3 lines per function):
 
 ```cpp
 int select_build(int base_id) {
     int value;
-    if (lua_ai_hook_i("select_build", &value, base_id)) {
-        return value; // decided by Lua
+    if (lua_ai_hook("select_build", &value, base_id)) {
+        return value; // proposed by Lua, validated and applied by this side
     }
-    // ... original C++ code untouched (fallback)
+    // ... original C++ code untouched (fallback / reference)
 }
 ```
 
-`lua_ai_hook_*` (in `luaai.cpp`) returns `false` if `lua_ai=0`, if the function
-is not registered on the Lua side, or if the pcall failed. This way each
-function migrates individually, and the original C++ remains as reference and
-fallback for the whole project (removal only in an optional cleanup phase).
+Implementation notes:
 
-Shared state during the transition: `plans[]` (AIPlans), `mapdata` (PMTable) and
-`mapnodes` remain the canonical data in C++, accessed by Lua via FFI — both
-sides see the same state, so half of a domain can be ported without desync.
+- `lua_ai_hook` returns `false` if `lua_ai=0`, if the hook is unregistered, or
+  if the pcall failed under the class's fallback rules.
+- **Hook resolution via the Lua registry:** hooks are resolved once at (re)load
+  into registry references — no per-call string lookup. In movement dispatch
+  this runs per unit per turn; the difference matters.
+- Avoid a zoo of `lua_ai_hook_i/_ii/_b/_v` variants: a small set of typed
+  argument/result descriptors (or per-domain structs) keeps call sites uniform.
+- Shared state during the transition: `plans[]` (AIPlans), `mapdata` (PMTable)
+  and `mapnodes` remain canonical in C++, read by Lua via FFI — both sides see
+  the same state, so half of a domain can be ported without desync.
 
 ### 4.2 Porting order (lowest risk to highest)
 
-Each item follows the same cycle: port 1:1 → shadow mode (Phase 5.1) until
-divergences reach zero → enable Lua by default on the branch → move to the next.
+Each item follows the same cycle: port 1:1 → golden traces pass (5.2) → shadow
+mode per class (5.1) until divergences reach zero at the applicable level →
+enable Lua by default on the branch → next.
 
 1. **Pilot — research AI** (`tech.cpp`: `mod_tech_val` scoring, `mod_tech_ai`;
-   ~400 relevant loc). Small, pure (score per tech), easy to compare. Validates
-   the whole pipeline (hook, FFI, RNG, shadow).
-2. **Social engineering** (`faction.cpp`: `mod_social_ai` and the social model
-   scoring; `mod_wants_to_attack`). Self-contained, runs once per faction per
-   turn.
+   ~400 relevant loc). Pure query, small, easy to compare. Validates the whole
+   pipeline (hook, FFI reads, host API, RNG, traces, shadow).
+2. **Social engineering** (`faction.cpp`: `mod_social_ai` scoring,
+   `mod_wants_to_attack`). Transactional/pure, once per faction per turn.
 3. **Production and plans** (`build.cpp` + `plan.cpp`): `governor_priorities`,
    `facility_score`, `unit_score`/`find_proto`, `select_colony`/`select_combat`,
    `select_build`, `find_project`, `mod_base_hurry`, then `plans_upkeep`,
-   `design_units`, `former_plans`. This is the heart of the single-player
-   challenge and where future AI improvements pay off the most.
+   `design_units`, `former_plans`. The heart of the single-player challenge.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +
-   `move_upkeep` + invasion plans. The largest and the most
-   performance-sensitive.
-5. **AI probe decisions** (`probe.cpp`, partial — only the AI's target/action
-   choices; resolution mechanics stay in C++).
+   `move_upkeep` + invasion plans. Class 3 territory: largest, most
+   performance-sensitive, ported last with the C++ baseline already measured.
+5. **AI probe decisions** (`probe.cpp`, partial — target/action choices only;
+   resolution mechanics stay in C++).
 
-### 4.3 What stays in C++ (primitives exposed to Lua)
+### 4.3 What stays in C++ (primitives exposed via host API)
 
 - All of `path.cpp` (A*, `Path::find`, low-level tactical movement).
 - `TileSearch` and the `PMTable`/`mapdata` fill in `move_upkeep` (O(map) sweeps
-  per turn). Lua orchestrates (decides *what* to do), C++ provides fast queries
-  (*how* to compute). If LuaJIT later proves fast enough, port these too — a
-  decision deferred to measurement, not guesswork.
+  per turn). Lua orchestrates (*what* to do), C++ computes (*how*). If LuaJIT
+  later proves fast enough, porting these is a measured decision, not a guess.
 - Combat itself (`veh_combat.cpp`), engine mechanics, everything UI/render.
 
-### 4.4 Lua code conventions
+### 4.4 Conventions and upstream drift detection
 
 - One module per domain (`ai/tech.lua`, `ai/social.lua`, `ai/build.lua`,
   `ai/move.lua`, `ai/plan.lua`), registering hooks in a central `ai.hooks`
-  table read by `luaai.cpp`.
-- 1:1 port commented with a reference to the original C++ function (name +
-  file), for auditing while upstream evolves.
-- `luacheck` in CI to catch accidental globals and silly mistakes.
+  table read by `luaai.cpp` at (re)load.
+- **Port provenance metadata**, machine-readable, in every ported function:
 
-**Done when (per module):** shadow mode with zero divergences over N autoplay
-turns (see 5.1) on at least 3 distinct saves + 1 new game with a fixed seed; no
-noticeable turn-time regression.
+```lua
+port.source = {
+    file = "src/tech.cpp",
+    func = "mod_tech_val",
+    upstream_commit = "15418b2…",
+}
+```
+
+- **Drift report** (`tools/port_drift.py`): extracts the body of each ported
+  C++ function at the current upstream revision, computes a normalized hash
+  (whitespace/comment-insensitive), and compares against the hash recorded at
+  `upstream_commit`. Output: the list of ported functions whose C++ bodies
+  changed and therefore need review. This catches semantic drift that clean
+  Git merges hide — the real long-term maintenance cost of the fork.
+- `luacheck` in CI (accidental globals) plus the integer-expression lint from
+  Phase 3.1.
+
+**Done when (per module):** golden traces pass; shadow mode clean at the
+class-appropriate level over N autoplay turns on at least 3 distinct saves + 1
+new game with a fixed seed; no noticeable turn-time regression; provenance
+metadata present; drift report clean at the pinned upstream commit.
 
 ---
 
 ## Phase 5 — Validation, testing and performance
 
-### 5.1 Shadow mode (the port's central tool)
+### 5.1 Shadow mode (per hook class)
 
-With `lua_shadow=1`, the hook runs **both** implementations and compares:
+`lua_shadow=1` behavior depends on the hook class:
 
-1. Save the RNG states (`game_rand_state()`, `random_state()`).
-2. Run the Lua version, capture the result, **restore the RNGs** (the Lua
-   decision must not consume the stream twice).
-3. Run the C++ (which is what counts for the game).
-4. Divergence → log to `debug.txt`: function, arguments, each side's result.
+**Class 1 (pure query):** simple compare —
 
-Constraint: functions with side effects (e.g. `combat_move` issues orders)
-cannot run twice; for those, shadow comparison is limited to the internal pure
-scoring functions, and whole-system validation is done by the determinism tests
-(5.3) toggling `lua_ai` between runs.
+1. Save RNG states (`game_rand_state()`, `random_state()`).
+2. Run Lua, capture result, **restore RNGs**.
+3. Run C++ (which is what counts for the game).
+4. Divergence → log: function, arguments, both results, RNG draws consumed.
 
-### 5.2 Unit tests outside the game
+Caveat honored: "pure" must be verified, not assumed — a scoring function that
+updates a cache is Class 2. Classification review is part of porting each
+function.
 
-The `lua/ai/*` modules depend only on the `api/*` layer; create `lua/test/mock/`
-with fake API implementations (synthetic map, test factions) and run with Arch's
-native `luajit` (`pacman -S luajit`) + a simple runner (or `busted`). Fast tests
-for scoring functions (facility_score, unit_score, tech_val) with cases
-extracted from real game logs. Runs in CI.
+**Class 2 (transactional):** compare result *and* delta —
 
-### 5.3 Determinism and regression
+1. Snapshot RNG + the identified touched state (bounded by the propose-then-
+   commit contract: since Lua only returns a proposal, in practice the Lua side
+   has no delta; the comparison is proposal vs. what C++ decides, plus C++'s
+   delta as ground truth).
+2. Run Lua → capture proposal → restore RNG.
+3. Run C++ → capture decision and delta.
+4. Compare proposal vs decision; log divergences with the state fingerprint.
 
-- Manual/scripted harness: same seed + same initial save, autoplay for N turns
-  (all factions AI, player as observer/autopilot; investigate the debug build's
-  facilities — `test.cpp`/`extra_setup` — and, if needed, add an
-  `autoplay_turns=N` flag that exits and saves on its own).
-- Compare: a state hash (unit positions, bases, tech, energy per faction,
-  extractable via a Lua script at end of turn) between two runs with `lua_ai=1`
-  (Lua determinism) and between `lua_ai=0` vs `lua_ai=1` (port fidelity, valid
-  as long as the port is 1:1).
-- Verbose `debug.txt` diffable between runs.
+**Class 3 (command/effect):** never run both sides.
+
+- Shadow-compare only the extracted **pure scoring functions** inside the
+  domain (these are ported as Class 1 internally).
+- Log a **decision trace** (unit, considered options, scores, chosen action)
+  from both implementations in *separate runs* and diff.
+- Whole-system fidelity comes from the determinism harness (5.3) toggling
+  `lua_ai` between runs.
+
+### 5.2 Golden traces first, mocks second
+
+Tests outside the game must be anchored in real engine behavior, not in a mock
+that can only confirm the port matches the mock. Priority order:
+
+1. **Golden traces:** the C++ side (debug build) logs, per instrumented
+   function, a JSON fixture:
+
+```json
+{
+  "function": "mod_tech_val",
+  "args": {"tech_id": 42, "faction_id": 3, "flag": 0},
+  "observed_state": {"...": "the fields the function actually read"},
+  "rng_before": 123, "rng_after": 456,
+  "result": 87
+}
+```
+
+2. **Replay runner:** Arch's native `luajit` (`pacman -S luajit`) loads
+   fixtures, injects `observed_state` through a fixture-backed `api/`
+   implementation, runs the ported function, compares result and RNG
+   consumption. Runs in CI.
+3. **Synthetic mocks** afterwards, to expand coverage into corner cases the
+   traces don't reach (extreme values, empty maps, missing prerequisites).
+
+### 5.3 Determinism and regression — graduated equivalence
+
+Bit-exact equality is the goal only where it is achievable. Known threats to
+exactness even in a faithful port: float/double vs Lua number conversions,
+integer division/modulo semantics (mitigated by 3.1's `idiv`/`imod` rule),
+C++ overflow/UB present in the original, RNG call order, iteration order.
+Therefore equivalence is measured in levels:
+
+1. Same function output (per call).
+2. Same state delta (per call).
+3. Same state hash at end of phase.
+4. Same state hash at end of turn.
+5. Same trajectory over N turns.
+
+**"Zero divergences" is required at level 1 for pure scoring and discrete
+choices.** For systemic validation, the harness reports the *first level at
+which divergence appears* — that localizes the bug instead of announcing "turn
+40 differs".
+
+Harness: same seed + same initial save, autoplay N turns (all factions AI;
+investigate the debug build's facilities — `test.cpp`/`extra_setup` — and, if
+needed, add an `autoplay_turns=N` flag that exits and saves on its own). State
+hash (unit positions, bases, tech, energy per faction) extracted by a Lua
+script at end of turn. Compare `lua_ai=1` vs `lua_ai=1` (Lua determinism) and
+`lua_ai=0` vs `lua_ai=1` (port fidelity, valid while the port is 1:1).
+Verbose `debug.txt` diffable between runs.
 
 ### 5.4 Performance
 
-- Instrument time per turn phase (upkeep, production, movement) per faction,
-  logged to debug. Measure the C++ baseline before porting movement.
-- Budget: Lua AI turn ≤ 1.5x the C++ time on huge maps with 7 factions in the
-  late game (the real target is "imperceptible to the eye").
-- Tools: `jit.p` (LuaJIT profiler) embeddable via script; check that hot loops
-  do not fall back to the interpreter (`jit.v`/`jit.dump` in development
-  builds).
+- Instrument time per turn phase (upkeep, production, movement) per faction.
+  **Measure the C++ baseline before porting movement.**
+- Budget: Lua AI turn ≤ 1.5x C++ on huge maps with 7 factions late-game (real
+  target: imperceptible).
+- Tools: `jit.p` profiler embeddable via script; `jit.v`/`jit.dump` in dev
+  builds to check hot loops stay compiled. Specific watch item: **trace aborts
+  caused by host-API calls inside hot loops** — the known LuaJIT failure mode
+  for this workload. Mitigation if it appears: batch queries, move the loop
+  body's data dependencies to FFI reads, or hoist the C call out of the loop.
+- `jit.off()` vs `jit.on()` comparison retained as a diagnostic.
 
 ### 5.5 Compatibility
 
-- Saves: the port does not change the save format (AI state already lives in
-  the engine structs/`plans[]`). Validate loading vanilla and Thinker C++
-  saves.
-- Multiplayer: out of scope to validate deeply, but keep the RNG rule (3.1) and
-  document that `lua_ai` must be identical across peers.
-- Native Windows: ask the community/a friend with real Windows for a smoke test
-  before any release (Wine is the dev environment, not the only target).
+- Saves: the port does not change the save format (AI state lives in engine
+  structs/`plans[]`). Validate loading vanilla and Thinker C++ saves.
+- Multiplayer: **not supported during the porting phase** (see Scope). The RNG
+  and determinism rules avoid gratuitous divergence, but no multiplayer
+  validation or script-synchronization mechanism is built now.
+- Native Windows: community smoke test before any release (Wine is the dev
+  environment, not the only target).
 
 ---
 
 ## Phase 6 — Documentation, packaging and DX
 
 1. `docs/LUA_API.md`: API reference (`game`, `map`, `veh`, `base`, `path`,
-   `rules`, `rand`, `log`) + hook lifecycle + rules (RNG, determinism,
-   prohibitions).
-2. `docs/LUA_PORTING.md`: C++ function → Lua module map, status per module
-   (port checklist), how to use shadow mode and hot reload.
-3. Update the fork's `Technical.md`: Arch build, LuaJIT, deploy via Wine.
+   `rules`, `rand`, `log`, `cmath`) + hook lifecycle and classes + project
+   rules (RNG, `idiv`/`imod`, no `ffi` in `ai/`, ordered iteration).
+2. `docs/LUA_PORTING.md`: C++ function → Lua module map, **hook class per
+   function**, port status checklist, provenance/drift workflow, how to use
+   shadow mode, golden traces and hot reload.
+3. Update the fork's `Technical.md`: Arch build, pinned LuaJIT commit and build
+   integration, cdef generator, deploy via Wine.
 4. Packaging: include `lua/` in the zips (`tools/makedevzip.sh`,
    `tools/makerelzip.sh`) and in `deploy.sh`.
-5. "Hello AI" example: a minimal commented script that overrides a simple hook,
-   as the entry point for other modders — this is the fork's end product.
+5. "Hello AI" example: a minimal commented script that overrides a simple
+   Class-1 hook — the entry point for other modders and the fork's end product.
 
 ---
 
@@ -463,25 +740,39 @@ extracted from real game logs. Runs in CI.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| FFI has no memory safety: a wrong cdef corrupts game memory | Hard-to-debug crash | Generated cdefs + `sizeof`/offset asserts at startup; crash handler already logs to `debug.txt`; debug builds with extra checks |
-| Thinker upstream does large rewrites | Painful rebases | Minimal, centralized seams; new code in new files; regenerate cdefs by script |
-| Movement performance in Lua | Slow turns in the late game | Pathfinding/PMTable stay in C++; LuaJIT; measure before/after; port movement last |
-| Silent behavioral divergence | "Different" AI without noticing | Per-function shadow mode; fixed-seed determinism tests; auditable 1:1 port |
-| LuaJIT + Wine/32-bit edge cases | Blocker in Phase 2 | Early smoke test (Phase 2 ends with Lua running in-game); documented Lua 5.4 fallback, isolated by the API layer |
-| RNG consumed differently | Desync/broken replays | `rand.*` mandatory, `math.random` banned, snapshot/restore in shadow mode |
+| LuaJIT unviable in this process (mingw static, 32-bit, Wine) | Project-fatal by design | Phase 2A spike answers this first, cheaply, with `jit.off()`/`jit.on()` separation; **kill criterion accepted — no fallback interpreter** |
+| Wrong cdef layout corrupts reads → wrong decisions | Silent misbehavior | cdefs generated by the build's own compiler; startup asserts on `sizeof`/`alignof`/`offsetof` per field; Lua AI refuses to enable on mismatch |
+| Memory corruption from native access | Unrecoverable crash | Reads-only FFI; all writes and calls via ABI-safe `LuaHostApi` wrappers; ID validation at every wrapper; raw pointers confined to `ffi/` |
+| Fallback over partially mutated state | Divergent game masked as "handled" | Hook taxonomy: propose-then-commit for Class 2; no-fallback-after-first-mutation for Class 3 |
+| Loader-lock issues at init | Deadlock/UB at startup | Lua VM initialized lazily / post-init, never in `DllMain` proper |
+| Integer semantics (div/mod, overflow) | Silent scoring divergence | `idiv`/`imod` mandatory in `ai/`; bare `/`/`%` banned on integers; `bit` for masks; `bit.tobit` where C++ relies on wrap |
+| Thinker upstream semantic drift | Lua port silently stale after clean merges | Provenance metadata + normalized body-hash drift report per ported function |
+| Movement performance in Lua | Slow late-game turns | Pathfinding/PMTable stay in C++; boundary crossings minimized in hot loops; C++ baseline measured first; movement ported last; profiler + trace-abort monitoring |
+| Silent behavioral divergence | "Different" AI unnoticed | Golden traces; per-class shadow mode; graduated equivalence levels with first-divergence localization; fixed-seed harness |
+| RNG consumed differently | Broken determinism/replays | `rand.*` mandatory, `math.random` raises; snapshot/restore in shadow mode; RNG draw counts compared in traces |
 
 ---
 
-## Milestones
+## Milestones (reordered)
 
-- **M1 — Local build:** ✅ completed (2026-07-10) — game runs via Wine with a DLL compiled on Arch.
-- **M2 — Lua embedded:** Phase 2 complete (init.lua, safe errors, hot reload).
-- **M3 — Bindings:** Phase 3 complete (a script reads game state and calls primitives).
-- **M4 — Pilot:** research AI in Lua enabled by default, clean shadow runs.
+- **M1 — Local build:** ✅ completed (2026-07-10) — game runs via Wine with a
+  DLL compiled on Arch.
+- **M2A — Runtime spike (gate):** ✅ completed (2026-07-13). LuaJIT stable
+  in-process, init outside loader lock, error contained, JIT off and on
+  verified (100+-turn criterion relaxed to manual play — see Phase 2A status).
+  *Negative outcome here would have ended the project; outcome was positive.*
+- **M2B — Production runtime:** ✅ completed (2026-07-13). Lifecycle,
+  sandbox, `lua_strict` policy, dedup logging, safe-point hot reload — see
+  Phase 2B status.
+- **M3A — Minimal vertical API:** only what `mod_tech_val`/`mod_tech_ai` need:
+  generated cdefs + validation for the involved structs, the required host-API
+  functions, `rand`, `log`, `cmath`. **Do not build the full map/veh/base/path
+  API up front** — its ideal shape is discovered by porting.
+- **M4 — Research pilot:** research AI in Lua enabled by default; golden traces
+  and shadow runs clean. From here the fork is already useful (custom research
+  AI can be experimented with).
+- **M3B — API expansion on demand:** the API grows as each subsequent domain
+  requires, with the same generate-validate discipline.
 - **M5 — Production/social in Lua:** porting-order modules 2 and 3 active.
 - **M6 — Movement in Lua:** port complete; C++ becomes legacy fallback.
-- **M7 — Fork release:** docs, zips with `lua/`, customization example.
-
-From M4 onward the fork is already useful (custom research AI can be
-experimented with); each following milestone widens the moddable surface without
-waiting for the whole project.
+- **M7 — Fork release:** docs, zips with `lua/`, "Hello AI" example.

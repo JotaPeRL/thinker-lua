@@ -67,6 +67,12 @@ int option_handler(void* user, const char* section, const char* name, const char
         cf->social_ai = atoi(value);
     } else if (MATCH("social_ai_bias")) {
         cf->social_ai_bias = clamp(atoi(value), 0, 1000);
+    } else if (MATCH("lua_ai")) {
+        cf->lua_ai = atoi(value);
+    } else if (MATCH("lua_shadow")) {
+        cf->lua_shadow = atoi(value);
+    } else if (MATCH("lua_strict")) {
+        cf->lua_strict = clamp(atoi(value), 0, 2);
     } else if (MATCH("tech_balance")) {
         cf->tech_balance = atoi(value);
     } else if (MATCH("base_hurry")) {
@@ -478,6 +484,7 @@ DLL_EXPORT BOOL APIENTRY DllMain(HINSTANCE UNUSED(hinstDLL), DWORD fdwReason, LP
             break;
 
         case DLL_PROCESS_DETACH:
+            lua_ai_shutdown();
             if (debug_log) {
                 fclose(debug_log);
             }

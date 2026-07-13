@@ -231,6 +231,9 @@ struct Config {
     int factions_enabled = 7;
     int social_ai = 1;
     int social_ai_bias = 10;
+    int lua_ai = 1;
+    int lua_shadow = 0; // reserved for Phase 5 shadow mode; no-op for now
+    int lua_strict = 0;
     int tech_balance = 0;
     int base_hurry = 0;
     int base_spacing = 3;
@@ -436,6 +439,7 @@ struct AIPlans {
 #include "tech.h"
 #include "test.h"
 #include "debug.h"
+#include "luaai.h"
 
 extern FILE* debug_log;
 extern Config conf;

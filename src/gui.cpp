@@ -712,6 +712,12 @@ LRESULT WINAPI ModWinProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     && *ReplayEventSize > 0) {
         show_replay();
 
+    } else if (msg == WM_CHAR && wParam == 'u' && alt_key_down()) {
+        // Only sets a flag; the actual reload runs at the top of the next
+        // mod_turn_upkeep call, never mid-callback (IMPLEMENTATION_PLAN.md,
+        // Phase 2B hot reload rules).
+        lua_ai_request_reload();
+
     } else if (DEBUG && !*GameHalted && msg == WM_KEYDOWN && wParam == 'Q'
     && ctrl_key_down() && shift_key_down()) {
         net_game_close(); // Close network multiplayer if active

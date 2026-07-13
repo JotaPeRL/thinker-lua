@@ -1008,6 +1008,7 @@ void __cdecl mod_random_events(int flag) {
 }
 
 void __cdecl mod_turn_upkeep() {
+    lua_ai_turn_upkeep(); // lazy Lua init: must never run under the loader lock
     debug("turn_upkeep %d bases: %d vehs: %d\n", (*CurrentTurn)+1, *BaseCount, *VehCount);
     snprintf(ThinkerVars->build_date, 12, MOD_DATE);
     if (*CurrentTurn == 0) {

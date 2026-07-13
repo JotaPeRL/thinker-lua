@@ -29,6 +29,10 @@ cp -v "$ROOT/docs/modmenu.txt" "$GAME_DIR/"
 mkdir -p "$GAME_DIR/basenames"
 cp "$ROOT/docs/basenames/"*.txt "$GAME_DIR/basenames/"
 
+# Lua runtime scripts (replace wholesale so stale files never linger)
+rm -rf "$GAME_DIR/lua"
+cp -rv "$ROOT/lua" "$GAME_DIR/lua"
+
 # Install default config only if none exists yet (do not clobber user settings)
 if [ ! -f "$GAME_DIR/thinker.ini" ]; then
     cp -v "$ROOT/docs/thinker.ini" "$GAME_DIR/"
