@@ -86,6 +86,35 @@ add_dependencies(thinkerlib luajit)
 target_include_directories(thinkerlib PRIVATE ${LUAJIT_DIR})
 target_link_libraries(thinkerlib PRIVATE ${LUAJIT_DIR}/libluajit.a)
 
+# ---------- gen_ffi (cdef generator, native host tool) ----------
+# Produces lua/ffi/types.lua from the engine struct headers. Compiled with
+# the *native* host compiler (not the project-wide i686-w64-mingw32-g++ set
+# above) at -m32: sizeof/alignof/offsetof are pure compiler-frontend values
+# that don't require running on the real target OS, and the real safety net
+# is the startup validation inside thinker.dll itself (src/luaai.cpp), which
+# re-checks every value emitted here against the actual mingw-compiled
+# LuaJIT at game launch (IMPLEMENTATION_PLAN.md Phase 3.1). Invoked as a raw
+# shell command rather than add_executable(), since CMAKE_CXX_COMPILER is
+# overridden project-wide and an add_executable() target would inherit it.
+find_program(HOST_CXX NAMES g++ c++)
+if(NOT HOST_CXX)
+    message(FATAL_ERROR "gen_ffi needs a native host C++ compiler (g++/c++) to build; none found on PATH")
+endif()
+
+add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/gen_ffi
+    COMMAND ${HOST_CXX} -m32 -std=gnu++11 -I${CMAKE_SOURCE_DIR}/src
+            -o ${CMAKE_BINARY_DIR}/gen_ffi ${CMAKE_SOURCE_DIR}/tools/gen_ffi.cpp
+    DEPENDS ${CMAKE_SOURCE_DIR}/tools/gen_ffi.cpp
+    COMMENT "Building gen_ffi (native host tool, -m32)"
+    VERBATIM)
+add_custom_command(OUTPUT ${CMAKE_SOURCE_DIR}/lua/ffi/types.lua
+    COMMAND ${CMAKE_BINARY_DIR}/gen_ffi > ${CMAKE_SOURCE_DIR}/lua/ffi/types.lua
+    DEPENDS ${CMAKE_BINARY_DIR}/gen_ffi
+    COMMENT "Generating lua/ffi/types.lua from engine struct layout"
+    VERBATIM)
+add_custom_target(gen_ffi_types DEPENDS ${CMAKE_SOURCE_DIR}/lua/ffi/types.lua)
+add_dependencies(thinkerlib gen_ffi_types)
+
 # ---------- Launch executable ----------
 file(GLOB THINKER_LAUNCH_SOURCES
     "src/launch.*"

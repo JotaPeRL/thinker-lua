@@ -6,6 +6,20 @@
  * the Windows loader lock (file I/O and JIT activation there are UB).
  */
 
+#include <cstdint>
+
+// Versioned struct of function pointers exposed to Lua as a single
+// lightuserdata (the `__host_api_ptr` global, cast by lua/ffi/funcs.lua).
+// Bump api_version on any layout change; Lua asserts it before trusting the
+// pointer (IMPLEMENTATION_PLAN.md Phase 3.1). Only RNG entries for now —
+// everything else the AI needs to call is added on demand as Phase 4 ports
+// each module and discovers exactly which wrappers it needs.
+struct LuaHostApi {
+    uint32_t api_version;
+    int32_t (*rand_game)(int32_t value);         // -> game_randv
+    int32_t (*rand_map)(int32_t low, int32_t high); // -> random_get
+};
+
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai
 // is 0), applies any pending reload request, then returns. No AI hooks are
 // called from here yet (Phase 4) — this only owns the runtime lifecycle.

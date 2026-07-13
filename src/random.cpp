@@ -6,6 +6,16 @@ uint32_t game_rand_state() {
     return ((uint32_t*)getptd())[5];
 }
 
+// Setter counterpart to game_rand_state(), needed for Phase 5 shadow mode
+// (snapshot the engine RNG stream, run the Lua side, restore it before the
+// C++ side runs for real). Host-API-only when wired up later -- never
+// exposed to lua/ai/, which must go through rand.* instead
+// (IMPLEMENTATION_DETAILS.md 3.5).
+void game_rand_restore(uint32_t saved) {
+    fp_none getptd = (fp_none)0x6491C3;
+    ((uint32_t*)getptd())[5] = saved;
+}
+
 int32_t game_randv(int32_t value) {
     // RNG state only advances when the value is within bounds
     return (value > 1 ? game_rand() % value : 0);

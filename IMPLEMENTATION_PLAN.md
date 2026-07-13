@@ -406,6 +406,49 @@ with a strict asymmetry between reads and everything else:
 
 ### 3.1 Low layer: generated cdefs and the host API
 
+> **Status: ✅ completed (2026-07-13)** — `tools/gen_ffi.cpp` compiles as a
+> native host binary (`g++ -m32`, not the project's `i686-w64-mingw32-g++`;
+> `sizeof`/`alignof`/`offsetof` are compiler-frontend values that don't need
+> the real target OS, and the startup validation below is the actual safety
+> net) and runs as a CMake build step producing `lua/ffi/types.lua`.
+> Includes only the portable, `#pragma pack(1)` struct headers
+> (`engine_types.h`/`engine_base.h`/`engine_veh.h`), not `engine.h` (avoids
+> its `<windows.h>` dependency); a small block of stub `extern` declarations
+> satisfies the inline C++ methods those headers mix in with their fields
+> (never called, only compiled). Field cdef types are derived from each
+> field's real declared type via a template (`CTypeName`/`FieldShape`), not
+> typed in by hand — this caught a real bug during implementation
+> (`CChassis::preq_tech` is `int16_t`, a hand-typed `"int32_t"` would have
+> produced a self-inconsistent cdef with no way to detect it before runtime).
+> Scoped to the tech-AI pilot's read surface (`Faction`, `MFaction`, `CTech`,
+> `CFacility`, `CReactor`, `CWeapon`, `UNIT`, `CChassis`, `Continent`,
+> `CRules`, `TechOwners`) per M3A — every generated `sizeof` cross-checked
+> against the existing hand-maintained `static_assert` table in
+> `engine.h:227-261` and matches exactly. Startup validation
+> (`lua/ffi/validate.lua`, run once from `init.lua`) asserts every
+> `sizeof`/`alignof`/`offsetof` via `ffi.*` and routes a mismatch through the
+> Phase 2B `lua_strict` error path. `LuaHostApi` (`src/luaai.h`) is a
+> minimal versioned struct — `api_version` plus `rand_game`/`rand_map` only;
+> wrapping the C++ helper functions the tech port will call
+> (`has_tech`/`is_human`/etc.) and re-exposing `UNIT`'s inline methods are
+> deferred to Phase 4, decided on demand as that code is written, per
+> `IMPLEMENTATION_DETAILS.md` 4.3. `game_rand_restore()` added to
+> `random.cpp`/`.h` next to `game_rand_state()` (Phase 5 shadow mode,
+> unused for now). `lua/api/cmath.lua` (`idiv`/`imod`) added. The sandbox
+> now opens `ffi` — caught a real LuaJIT quirk along the way:
+> `luaopen_ffi` (unlike `base`/`table`/`string`/`math`/`bit`) does not
+> self-register a global (`lib_ffi.c` comments "no global 'ffi' created!"
+> and returns the module table instead), so it needs its own 1-result open
+> call plus an explicit `lua_setglobal`, not the shared 0-result
+> `open_lib()` helper used for the other libraries. `package`/`require`
+> stays disabled outside debug builds as originally designed; the new
+> `lua/ffi/`, `lua/api/` modules load each other via `dofile` (base
+> library, always open) instead. All of the above validated in-game via
+> Wine (`lua.log`): clean layout validation, then
+> `rand.game(10)=7 rand.map(0,10)=7 cmath.idiv(-7,2)=-3 cmath.imod(-7,2)=-1`
+> — the `idiv`/`imod` values hand-verified against C truncating-division
+> semantics before the in-game run.
+
 1. **cdef generator — generate from the compiler, not from parsing.** A small
    generator program (`tools/gen_ffi.cpp`) that `#include`s the same engine
    headers with the same defines/packing as the real build, and *prints*:
@@ -764,10 +807,13 @@ Verbose `debug.txt` diffable between runs.
 - **M2B — Production runtime:** ✅ completed (2026-07-13). Lifecycle,
   sandbox, `lua_strict` policy, dedup logging, safe-point hot reload — see
   Phase 2B status.
-- **M3A — Minimal vertical API:** only what `mod_tech_val`/`mod_tech_ai` need:
-  generated cdefs + validation for the involved structs, the required host-API
-  functions, `rand`, `log`, `cmath`. **Do not build the full map/veh/base/path
-  API up front** — its ideal shape is discovered by porting.
+- **M3A — Minimal vertical API:** 🔨 in progress. Phase 3.1 done (2026-07-13):
+  generated cdefs + validation for the involved structs, `rand`, `cmath`. The
+  required host-API *functions* (`has_tech`/`is_human`/etc.) and `UNIT`'s
+  re-exposed methods are deferred to Phase 4, decided on demand as the tech
+  port is written — `log` (`log.debug`/`log.ver`) is also still pending, not
+  covered by Phase 3.1. **Do not build the full map/veh/base/path API up
+  front** — its ideal shape is discovered by porting.
 - **M4 — Research pilot:** research AI in Lua enabled by default; golden traces
   and shadow runs clean. From here the fork is already useful (custom research
   AI can be experimented with).

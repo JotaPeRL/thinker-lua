@@ -3,6 +3,7 @@
 #include "main.h"
 
 uint32_t game_rand_state();
+void game_rand_restore(uint32_t saved);
 int32_t game_randv(int32_t value);
 void random_reseed(uint32_t value);
 uint32_t pair_hash(uint32_t a, uint32_t b);

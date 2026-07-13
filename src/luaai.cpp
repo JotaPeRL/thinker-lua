@@ -14,6 +14,7 @@
 
 #include "main.h"
 #include "luaai.h"
+#include "random.h"
 
 #include <string>
 #include <unordered_set>
@@ -24,6 +25,14 @@ extern "C" {
 #include "lualib.h"
 #include "luajit.h"
 }
+
+// Populated once; game_randv/random_get already match the LuaHostApi
+// pointer signatures exactly, so no wrapper functions are needed.
+static LuaHostApi g_host_api = {
+    /* api_version */ 1,
+    /* rand_game   */ game_randv,
+    /* rand_map    */ random_get,
+};
 
 static lua_State* L = NULL;
 static FILE* lua_log = NULL;
@@ -71,8 +80,12 @@ static int forbidden_math_random(lua_State* LS) {
 // Opens only the libraries the AI needs (IMPLEMENTATION_DETAILS.md 2.8).
 // io/os/debug/package(require) are development-build only: BUILD_DEBUG
 // script authors get the escape hatch, shipped scripts never do. `ffi` is
-// never opened here at all — it belongs to lua/ffi|api internals (Phase 3),
-// never to lua/ai.
+// opened unconditionally as of Phase 3.1 (lua/ffi and lua/api need it) --
+// LuaJIT has no per-module sandboxing, so "lua/ai/ never touches ffi"
+// stays a lint/review convention (Phase 4.4/6's luacheck pass), not a
+// runtime wall; every build has `package`/`require` disabled, so lua/
+// modules load each other via the base-library `dofile`/`loadfile`
+// instead (those stay available in every build).
 // LuaJIT's own luaL_openlibs (lib_init.c) opens a library by pushing the
 // opener as a C function with the module name as its sole argument and
 // calling it — there is no luaL_requiref in this LuaJIT version (it
@@ -82,6 +95,20 @@ static void open_lib(lua_State* LS, const char* name, lua_CFunction fn) {
     lua_pushcfunction(LS, fn);
     lua_pushstring(LS, name);
     lua_call(LS, 1, 0);
+}
+
+// luaopen_ffi is different from the libraries above: LuaJIT lists it in its
+// own "preload" table rather than the eagerly-global-registering set (see
+// lib_ffi.c's luaopen_ffi, which literally comments "no global 'ffi'
+// created!" and instead returns the module table for require() to place
+// wherever it likes). Since package/require is never open in this sandbox,
+// open_lib()'s 0-result call would silently discard that table -- request
+// 1 result instead and set the global ourselves.
+static void open_ffi(lua_State* LS) {
+    lua_pushcfunction(LS, luaopen_ffi);
+    lua_pushstring(LS, LUA_FFILIBNAME);
+    lua_call(LS, 1, 1);
+    lua_setglobal(LS, LUA_FFILIBNAME);
 }
 
 static void open_sandbox(lua_State* LS) {
@@ -96,6 +123,7 @@ static void open_sandbox(lua_State* LS) {
     for (const luaL_Reg* lib = sandboxed_libs; lib->func; lib++) {
         open_lib(LS, lib->name, lib->func);
     }
+    open_ffi(LS);
 #if DEBUG
     static const luaL_Reg dev_only_libs[] = {
         {LUA_IOLIBNAME, luaopen_io},
@@ -153,6 +181,9 @@ static void create_lua_state() {
         return;
     }
     open_sandbox(L);
+
+    lua_pushlightuserdata(L, &g_host_api);
+    lua_setglobal(L, "__host_api_ptr");
 
     lua_pushcfunction(L, traceback_handler);
     int errfunc = lua_gettop(L);
