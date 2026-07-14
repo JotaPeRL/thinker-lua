@@ -1054,6 +1054,258 @@ change (nothing to register).
 
 ---
 
+### 4.10 `select_build` itself (porting-order item 3, final piece) — scoped, not yet implemented
+
+Full read of `select_build` (`src/build.cpp:867-1334`, 467 loc — the
+number quoted when this was first surveyed, 454, was a rough estimate;
+this is the exact span) plus its last unscoped dependency, `push_item`
+(`build.cpp:845-865`, its only caller). This section is meant to be
+sufficient on its own to start implementing next session without
+re-reading `select_build` from scratch — it's long because the function
+is long, not because the individual pieces are hard.
+
+#### 4.10.1 `VEH` — first exposure, scope confirmed narrow
+
+`VEH` is touched in exactly one place in `select_build`: the vehicle-count
+loop at `build.cpp:913-955`, iterating `Vehs[]` once to compute `formers`,
+`pods`, `landprobes`/`seaprobes`, `transports`, `allow_supply`,
+`scouts`, `defenders`, `near_formers`, `artifacts`, `all_crawlers`,
+`need_ferry`. Nowhere else in the function reads `Vehs[]`/`VEH` directly.
+That means `VEH`'s FFI footprint for this port is genuinely small — the
+size risk in `select_build` is everywhere else (see 4.10.2-4.10.4), not
+here.
+
+**New `VEH` fields** (first `emit_struct` block for `VEH`, mirroring how
+`BASE` was introduced in 4.7): `faction_id` (`uint8_t`), `unit_id`
+(`int16_t` — needed to delegate to the already-exposed `UNIT`/`tech.lua`
+accessors, see below), `home_base_id` (`int16_t`), `x`/`y` (`int16_t`,
+same trap already hit once for `BASE` — don't repeat it), `order`
+(`uint8_t`, compared against `ORDER_CONVOY = 3`, `engine_veh.h:259`).
+
+**`VEH`'s inline methods used here all delegate to already-exposed `UNIT`
+methods, except two.** `engine_veh.h:595-631`:
+- `veh:is_former()` / `is_probe()` / `is_supply()` / `is_transport()` /
+  `is_artifact()` / `is_colony()` → pure delegation to
+  `Units[unit_id].is_X()`. `is_colony` is already `tech.proto_is_colony`
+  (4.7). The other four are new one-liners on `UNIT` (`plan ==
+  PLAN_TERRAFORM/PLAN_PROBE/PLAN_SUPPLY/PLAN_NAVAL_TRANSPORT/PLAN_ARTIFACT`
+  respectively, `engine_veh.h:468-479`) — same tier as the `tech.proto_is_*`
+  functions already in `tech.lua`, add alongside them:
+  `proto_is_former`, `proto_is_probe`, `proto_is_supply`,
+  `proto_is_transport`, `proto_is_artifact`. `PLAN_SUPPLY`/`PLAN_PROBE`/
+  `PLAN_TERRAFORM` are already exposed (4.7, `unit_support_plan`);
+  `PLAN_NAVAL_TRANSPORT` already exposed (M4-era); new: `PLAN_ARTIFACT`
+  (`engine_veh.h:143`).
+- `veh:triad()` (`engine_veh.h:517`) → identical formula to
+  `UNIT::triad()`, i.e. reuse `tech.proto_triad(veh.unit_id)` directly,
+  no new function needed.
+- `veh:is_combat_unit()` (`engine_veh.h:595-597`) is **not** pure
+  delegation: `Units[unit_id].is_combat_unit() && unit_id != BSC_FUNGAL_TOWER`.
+  Needs a new `UNIT`-level `proto_is_combat_unit(unit_id)` in `tech.lua`
+  (`Weapon[weapon_id].offense_value ~= 0`, `engine_veh.h:449-450`) plus
+  the `BSC_FUNGAL_TOWER` (`= 19`) enum, then the `veh`-level wrapper adds
+  the exclusion.
+- `veh:is_garrison_unit()` (`engine_veh.h:598-600`) → delegates to
+  `Units[unit_id].is_garrison_unit()` = `(plan <= PLAN_RECON || (plan ==
+  PLAN_PROBE && is_armored())) && triad() == TRIAD_LAND`
+  (`engine_veh.h:455-457`), which itself needs a new `UNIT`-level
+  `proto_is_armored(unit_id)` (`Armor[armor_id].defense_value ~= 1`,
+  `engine_veh.h:446-447`). `PLAN_RECON`/`TRIAD_LAND` already exposed.
+- `veh:eval_garrison()` (`engine_veh.h:690-692`) = `(triad()==TRIAD_LAND
+  ? 2:1) + is_combat_unit() + is_armored()` — portable once the two
+  pieces above exist; note this one needs `is_armored()` at the **VEH**
+  level too, which is pure delegation to the new `proto_is_armored` above.
+
+None of this needs new host wrappers — every piece is a field read or a
+one-line boolean already backed by tables `tech.lua` has open.
+
+#### 4.10.2 The other `iterate_tiles`/`MAP` loop — same treatment as 4.8's
+
+Separate from `select_colony`'s land-site scan (4.8), `select_build` has
+its own tile loop for `FormerUnit` scoring (`build.cpp:1117-1124`):
+iterates `iterate_tiles(base->x, base->y, 1, 21)`, reads `m.sq->owner`,
+`base->worked_tiles`, `m.sq->items`, calls `select_item(m.x, m.y,
+faction_id, FM_Auto_Full, m.sq)` (`move.h:43`, itself takes a raw `MAP*`)
+and `is_ocean(m.sq)`, accumulating two counters (`num`, `sea`). Same
+reasoning as `ocean_colony_land_site`: not worth opening `MAP`/
+`iterate_tiles`/`FormerMode` to Lua for one loop. Plan: a new opaque
+wrapper, e.g. `former_tile_scan(base_id) -> {num, sea}` (two return
+values, or pack as `num*1000+sea`-style if `LuaHostApi`'s int-only
+return becomes awkward — decide at implementation time), replicating
+`build.cpp:1117-1124` verbatim in C++.
+
+#### 4.10.3 New fields (straightforward — one `emit_struct`/`FIELD` line each)
+
+**`BASE`** (extending 4.7-4.9's block): `pop_size` (`int8_t`),
+`nutrient_surplus`, `energy_surplus`, `energy_inefficiency`,
+`mineral_intake`, `eco_damage`, `specialist_total`, `worked_tiles`
+(all `int32_t`), `assimilation_turns_left` (`uint8_t`), `queue_items`
+(`int32_t[10]`, only `queue_items[0]` read here — via the `item()`/
+`item_is_project()` methods below).
+
+**`BASE` inline methods to re-port** (same tier as `gov_config`/
+`se_police`, `engine_base.h:221-234`): `item()` (`queue_items[0]`),
+`item_is_project()` (`queue_items[0] <= -SP_ID_First`),
+`drone_riots_active()` (`state_flags & BSTATE_DRONE_RIOTS_ACTIVE`),
+`drone_riots()` (`drone_total > talent_total`, both fields already
+exposed).
+
+**`Faction`** (extending prior blocks): `SE_effic_pending`,
+`SE_growth_pending`, `SE_alloc_labs`, `SE_alloc_psych`, `SE_planet_pending`,
+`clean_minerals_modifier` (all `int32_t`).
+
+**`AIPlans`** (new accessors, same one-field-per-wrapper pattern as
+`psi_score`/`defense_modifier`; note two of these are genuinely `float`,
+not `int` — see 4.10.5): `project_limit` (int), `enemy_mil_factor`
+(**float**), `enemy_base_range` (**float**), `enemy_bases` (int),
+`main_region` (int), `target_land_region` (int), `naval_start_x` (int),
+`naval_start_y` (int), `energy_limit` (int).
+
+**`CRules`**: `drones_induced_genejack_factory` (new). `artillery_max_rng`
+is already exposed (added in 4.7 for `unit_score`'s artillery scoring) —
+noted here only so it isn't mistakenly re-added.
+
+**`ResInfo` (`CResourceInfo`, `engine_types.h:599`, global at
+`Rules.h`-adjacent address `ResInfo`)**: only
+`ResInfo->recycling_tanks.{energy,nutrient,mineral}` is read
+(`FAC_RECYCLING_TANKS` scoring). This is a **new global struct**, not a
+field addition to an existing one — smallest reasonable slice is exposing
+just the `recycling_tanks` sub-struct (3 ints) rather than all of
+`CResourceInfo` (144 bytes per the existing `static_assert`,
+`engine.h:228` — almost certainly has many more resource-type sub-structs
+unrelated to this one score term).
+
+#### 4.10.4 New enums (all already visible via the four headers `gen_ffi.cpp` includes)
+
+`FAC_ORBITAL_DEFENSE_POD`, `SP_ID_First`, `SP_ID_Last`, `Fac_ID_Last`
+(bounds used in `push_item`/the facility loop), `PLAN_ARTIFACT`,
+`BSC_FUNGAL_TOWER`, `ORDER_CONVOY`, `GOV_MAY_PROD_FACILITIES`,
+`GOV_MAY_PROD_SP`, `GOV_ALLOW_COMBAT`, `GOV_MAY_PROD_EXPLORE_VEH`,
+`GOV_MAY_FORCE_PSYCH`, `GOV_MAY_PROD_COLONY_POD`, `RULES_SCN_NO_TECH_ADVANCES`
+(already have), `BIT_FOREST`, `BIT_SIMPLE`, `BIT_ADVANCED` (tile-item
+flags — only needed if 4.10.2's tile-scan wrapper is written in a way
+that re-derives them; likely stays entirely inside the opaque wrapper and
+never needs a Lua-side enum at all), `FAC_VIRTUAL_WORLD`,
+`FAC_CLONING_VATS` (already have), `FAC_TREE_FARM`/`FAC_HYBRID_FOREST`/
+`FAC_RECREATION_COMMONS`/`FAC_HOLOGRAM_THEATRE`/`FAC_RESEARCH_HOSPITAL`/
+`FAC_PARADISE_GARDEN`/`FAC_NETWORK_NODE`/`FAC_GENEJACK_FACTORY`/
+`FAC_ROBOTIC_ASSEMBLY_PLANT`/`FAC_NANOREPLICATOR`/`FAC_QUANTUM_CONVERTER`/
+`FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER`/
+`FAC_PERIMETER_DEFENSE`/`FAC_TACHYON_FIELD`/`FAC_GEOSYNC_SURVEY_POD`/
+`FAC_FLECHETTE_DEFENSE_SYS`/`FAC_PSI_GATE` — every `build_order` facility
+ID branched on by name in the scoring loop; most are only used as `int`
+constants for `t == FAC_X` comparisons and don't need special handling
+beyond appearing in the enum table once each. **Don't try to pre-verify
+every one of these against `engine_enums.h` by hand before starting** —
+follow the established discipline (3.1): let the generator/compiler catch
+a typo'd or missing name as a build error, same as every prior slice.
+
+#### 4.10.5 Opaque host wrappers needed (engine mechanics, not AI policy — established precedent)
+
+`mod_base_making(item_id, base_id)` (`base.h:23`), `can_build(base_id,
+item_id)` (`base.h:68`), `can_build_unit(base_id, unit_id)` (`base.h:69`),
+`has_ships(faction_id)` (`faction.h:13`), `adjacent_region(x, y, owner,
+threshold, ocean)` (`map.h:29` — another `MAP`-touching function, stays
+opaque like `map_range`/`is_ocean`), `allow_expand(faction_id)`
+(`faction.h:31`), `mod_psych_check(faction_id, &content_pop, &base_limit)`
+(`base.h:42` — **two int32_t out-params**; wrapper needs to return both,
+e.g. pack into one `int32_t` return via two 16-bit halves, or add a second
+`LuaHostApi` entry — decide at implementation time, same open question as
+4.10.2's tile scan), `facility_count(item_id, faction_id)` (`faction.h:17`),
+`mineral_output_modifier(base_id)` (`base.h:55`),
+`base_unused_space(base_id)` (`base.h:50`), `need_scouts(base_id, triad)`
+(`build.h:12`), `find_satellite(base_id)` (`build.h:9` — not read yet,
+budget time to check its body before assuming it's a clean wrapper
+candidate), `find_project(base_id, Wgov)` (`build.h:11` — **not** yet
+read either; takes a `WItem&` like `facility_score`/`governor_priorities`
+in 4.9, so it has the same "doesn't fit the hook contract" question, but
+unlike those two it might get called from a hooked `select_build`, which
+changes the calculus — read this one first when resuming).
+
+**Portable directly (small, already-legible, no new engine surface):**
+- `skip_facility(base, item_id)` (`build.cpp:6-9`, `static`): `base->
+  plr_owner() && item_id >= 1 && item_id <= 64 && conf.skip_gov_facility
+  & (1 << (item_id - 1))`. Needs a `conf.skip_gov_facility` host accessor
+  (same tier as `conf.ignore_reactor_power` etc.) since `conf` is
+  Thinker-internal.
+- `has_retool(base_id, item_id, retool)` (`build.cpp:30-32`, `static`):
+  `retool != -1 && retool != 0 && retool != mod_base_making(item_id,
+  base_id)` — trivial once `mod_base_making` is wrapped (above).
+- `push_item`'s own scoring body (`build.cpp:845-865`) — not a hook, a
+  plain helper the eventual `select_build` port calls locally to build up
+  its candidate list (see 4.10.6).
+
+#### 4.10.6 The priority queue has a simpler Lua equivalent than it looks
+
+`score_max_queue_t` (`std::priority_queue<SItem, ..., std::less<SItem>>`,
+`plan.h:5-34`) reads as "maintain a heap of scored candidates" but
+`select_build` only ever calls `.size()` and `.top()` **once**, at the
+very end (`build.cpp:1326-1328`) — never `.pop()`, never iterates.
+`SItem::operator<` breaks ties by `item_id` (`plan.h:9-12`). That means
+the C++ priority queue is doing no more work than a running
+"best-so-far" tracker would — exactly the `best_id`/`best_val` pattern
+`find_proto` (4.7) already uses. **No heap/priority-queue data structure
+needs porting to Lua at all**: track `(best_item_id, best_score)` across
+every `push_item`-equivalent call, updating on `score > best_score or
+(score == best_score and item_id > best_item_id)`, and that's
+`builds.top()`.
+
+#### 4.10.7 Float arithmetic — the first time it matters in this project
+
+`Wbase`/`Wthreat` (`build.cpp:963-975`) are genuine C `float` computations
+(`1.0f`, `4.0f`, `0.05f` literals; `AIPlans.enemy_mil_factor`/
+`enemy_base_range` are themselves `float` fields, 4.10.3). Every prior
+port has been integer arithmetic requiring `idiv`/`imod` specifically
+*because* Lua's native `/` floors instead of truncating — but for this
+block the **C code itself is doing float division**, not integer
+truncation, so plain Lua `/` is the *correct* translation here, not
+`idiv`. Double-check each division in this specific block against
+whether the C operands are `float`/`int` before reflexively reaching for
+`idiv` — using `idiv` on a genuinely-float expression would be the wrong
+kind of bug (introducing integer truncation where the original had
+none), the mirror image of every previous integer-division trap this
+project has documented.
+
+#### 4.10.8 Hook shape
+
+Class 2 per the plan's own table (`build.cpp` / `select_build` is the
+plan's canonical Class 2 example, `IMPLEMENTATION_PLAN.md` 4.1). Multiple
+early-return points (`build.cpp:1080`, `1089`, `1095`, plus the final
+`builds.top()`/fallback/`select_combat` returns) — needs the
+`report_and_return` lambda pattern (`mod_tech_val`, `select_colony`/
+`select_combat`), not `find_proto`'s single-exit pattern. Consumes RNG in
+several places (`random(32)` per `build_order` item, plus more inside
+individual branches) — snapshot/restore around the Lua call, same as
+every RNG-consuming hook so far. `select_build` itself already calls
+`plans_upkeep(faction_id)` unconditionally when `base->plr_owner()`
+(`build.cpp:875`) — that stays in C++ untouched (`plans_upkeep` is not in
+scope for this slice, still a `void` orchestration function with no
+hook-compatible shape, same family of problem as 4.9).
+
+#### 4.10.9 Recommended approach for next session
+
+Given the size (467 loc, ~50 new fields/enums/wrappers cataloged above),
+**don't attempt this as one sitting the way `unit_score`+`find_proto` was.**
+A reasonable split, in order:
+1. `VEH` `emit_struct` + the vehicle-count loop, as a standalone
+   correctness check (port just `build.cpp:867-961` into a scratch
+   function, print the counters, compare against the C++ `debug(
+   "select_build %3d %3d %3d %3d def: %d frm: %d ..."` line already in
+   the original at `build.cpp:977-981` — this line is a gift, it already
+   logs most of the loop's outputs, so a mismatch is localized before
+   the harder scoring loop is even touched).
+2. `push_item` + the running-best tracker (4.10.6) + `has_retool`/
+   `skip_facility`.
+3. The `build_order` scoring loop itself (`build.cpp:1047-1325`), which
+   is realistically its own multi-session effort given ~45 distinct
+   `t == FAC_X` branches each with their own small scoring formula.
+4. Wire the hook last, once 1-3 are individually confidence-checked —
+   the dual-run mismatch log localizes *that* something's wrong, not
+   *where*, and with this much surface a first-mismatch session could
+   otherwise turn into a long, unfocused hunt.
+
+---
+
 ## Phase 5 — validation
 
 ### 5.1 Shadow wrapper (in `lua_ai_hook`, C side — Class 1/2 only)

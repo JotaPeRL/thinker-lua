@@ -712,8 +712,18 @@ enable Lua by default on the branch → next.
    > int-out contract (one takes a struct input, the other returns a
    > struct via out-param), so there's no dual-run seam possible for
    > these two; validated by inspection only, see `IMPLEMENTATION_
-   > DETAILS.md` 4.9. `select_build` itself and the rest of this item
-   > remain untouched.
+   > DETAILS.md` 4.9. **`select_build` itself: fully scoped, not yet
+   > implemented** — `IMPLEMENTATION_DETAILS.md` 4.10 has the complete
+   > dependency catalog (full 467-loc read: `VEH`'s first-ever exposure,
+   > ~50 new fields/enums/wrappers, a second `MAP`-touching loop needing
+   > the same opaque-wrapper treatment as 4.8's, confirmation that the
+   > `std::priority_queue` output mechanism needs no real port — a
+   > running-best tracker suffices, the float-arithmetic block that's a
+   > first for this project, and a recommended 4-stage implementation
+   > order) — written specifically so implementation can start cold next
+   > session without re-reading `select_build` from scratch. The rest of
+   > this item (`find_project`, `mod_base_hurry`, `plans_upkeep`,
+   > `design_units`, `former_plans`) remains unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +
