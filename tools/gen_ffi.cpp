@@ -338,6 +338,12 @@ int main() {
         FIELD(Faction, diff_level),
         FIELD(Faction, SE_support_pending),
         FIELD(Faction, SE_police_pending), // backs BASE::SE_police(pending)
+        // Autoplay harness per-turn state hash (IMPLEMENTATION_PLAN.md
+        // "Consolidation gate" item a): energy_credits and tech_ranking
+        // ("twice the number of techs discovered", engine_types.h) are the
+        // per-faction tech/energy summary the hash line folds in.
+        FIELD(Faction, energy_credits),
+        FIELD(Faction, tech_ranking),
     }});
 
     // production/plans port, first slice (porting-order item 3,
@@ -372,6 +378,20 @@ int main() {
         FIELD(BASE, defend_goal),
     }});
 
+    // select_build itself (porting-order item 3, final piece,
+    // IMPLEMENTATION_DETAILS.md 4.10.1): VEH's first-ever exposure.
+    // Deliberately narrow -- select_build's only direct VEH reads are in
+    // its vehicle-count loop (build.cpp:913-955); everything else in VEH
+    // (waypoints, morale, combat state, ...) stays unexposed padding.
+    emit_struct(stdout, {"VEH", sizeof(VEH), alignof(VEH), {
+        FIELD(VEH, x),
+        FIELD(VEH, y),
+        FIELD(VEH, unit_id),
+        FIELD(VEH, faction_id),
+        FIELD(VEH, order),
+        FIELD(VEH, home_base_id),
+    }});
+
     printf("]]\n\n");
 
     printf("return {\n");
@@ -404,6 +424,12 @@ int main() {
     // Production/plans port, first slice (item 3, IMPLEMENTATION_DETAILS.md
     // 4.7): int* const, fixed address (src/engine.cpp).
     printf("    MultiplayerActive = 0x%08X,\n", 0x93F660);
+    // select_build itself (item 3, final piece, IMPLEMENTATION_DETAILS.md
+    // 4.10.1): int* const, fixed address (src/engine.cpp), same tier as
+    // BaseCount above. Vehs itself is mutable/re-pointable (3.2, same
+    // category as Bases) -- exposed via a LuaHostApi vehs_ptr() wrapper
+    // instead, fetched fresh by lua/api/veh.lua on every access.
+    printf("    VehCount = 0x%08X,\n", 0x9A64C8);
     printf("  },\n");
     // Array bounds for the exposed rule tables, from src/main.h (not
     // included here -- same provenance-by-comment convention as the
@@ -581,6 +607,12 @@ int main() {
     printf("    GOV_PRIORITY_DISCOVER = %d,\n", GOV_PRIORITY_DISCOVER);
     printf("    GOV_PRIORITY_BUILD = %d,\n", GOV_PRIORITY_BUILD);
     printf("    GOV_PRIORITY_CONQUER = %d,\n", GOV_PRIORITY_CONQUER);
+    // select_build itself (item 3, final piece, IMPLEMENTATION_DETAILS.md
+    // 4.10.1/4.10.4), step 1 (VEH + the vehicle-count loop).
+    printf("    PLAN_ARTIFACT = %d,\n", PLAN_ARTIFACT);
+    printf("    BSC_FUNGAL_TOWER = %d,\n", BSC_FUNGAL_TOWER);
+    printf("    ORDER_CONVOY = %d,\n", ORDER_CONVOY);
+    printf("    GOV_MAY_PROD_TERRAFORMERS = %d,\n", GOV_MAY_PROD_TERRAFORMERS);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

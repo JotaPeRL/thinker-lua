@@ -1054,7 +1054,18 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — scoped, not yet implemented
+### 4.10 `select_build` itself (porting-order item 3, final piece) — step 1 implemented, in-game verification pending
+
+> **Status (2026-07-14): step 1 of the 4-stage order in 4.10.9 (`VEH`
+> exposure + the vehicle-count loop, as a standalone correctness check)
+> implemented and building clean on both presets; in-game verification not
+> yet run.** See 4.10.10 for the full session record, exactly what was
+> touched, and what to check when resuming — read that first if you're
+> picking this back up. Steps 2-4 (push_item + running-best tracker, the
+> `build_order` scoring loop, wiring the real hook) are still
+> unimplemented; the rest of this section (4.10.1-4.10.9) is the original
+> scoping pass and remains accurate reference material for the parts not
+> yet done.
 
 Full read of `select_build` (`src/build.cpp:867-1334`, 467 loc — the
 number quoted when this was first surveyed, 454, was a rough estimate;
@@ -1306,6 +1317,155 @@ A reasonable split, in order:
 
 ---
 
+### 4.10.10 Step 1 session record (2026-07-14) — implemented, in-game verification pending
+
+Implements exactly step 1 of 4.10.9's plan: `VEH`'s first-ever FFI exposure
+plus a standalone correctness check for `select_build`'s own vehicle-count
+loop (`build.cpp:913-955`). **Not a hook** — `select_build` itself is still
+pure C++, unhooked; this only adds a temporary, throwaway call that logs
+counters for a human to diff against a debug line already in the original.
+Steps 2-4 (push_item + running-best tracker, the `build_order` scoring
+loop, wiring the real hook) are untouched.
+
+**Why this isn't wired through the usual dual-run mismatch pattern:**
+every other seam in this project (`find_proto`, `select_colony`,
+`select_combat`, ...) compares a single `int` result via `lua_ai_hook`'s
+int-args-in/int-result-out contract. The vehicle-count loop produces ~12
+separate counters (`formers`, `pods`, `landprobes`, `seaprobes`,
+`transports`, `allow_supply`, `scouts`, `defenders`, `near_formers`,
+`artifacts`, `need_ferry`, `all_crawlers`), and packing all of them into
+one comparable int would be exactly the kind of fragile ad hoc encoding the
+project avoids. Since `select_build` itself already emits
+`debug("select_build %3d %3d %3d %3d def: %d frm: %d prb: %d crw: %d
+pods: %d ... scouts: %d ...")` (`build.cpp:977-981`, covering six of the
+twelve: `def`/`frm`/`prb`(landprobes+seaprobes)/`crw`(all_crawlers)/
+`pods`/`scouts`), the cheapest correct check is: have the Lua port log the
+same six fields (plus the other six as bonus coverage) in its own line,
+and diff the two log files by eye for the same `(turn, base_id)` — no new
+comparison machinery, at the cost of it being a manual check instead of an
+automated mismatch line. This is a deliberately narrower kind of
+verification than every other item in this file (same category as 4.9's
+"validated by inspection", not 4.7/4.8's live dual-run).
+
+**Files touched:**
+
+- `tools/gen_ffi.cpp`: `VEH`'s first `emit_struct` block —
+  `x`/`y`/`unit_id`/`faction_id`/`order`/`home_base_id` only (the loop's
+  entire direct-field footprint, per 4.10.1's scan). New enums
+  `PLAN_ARTIFACT`/`BSC_FUNGAL_TOWER`/`ORDER_CONVOY`/
+  `GOV_MAY_PROD_TERRAFORMERS` (all already visible via the already-included
+  `engine_veh.h`/`engine_base.h`, no new `#include`). New fixed-address
+  global `VehCount = 0x9A64C8` (`int* const`, same tier as `BaseCount` —
+  `Vehs` itself stays out of `globals` since it's mutable/re-pointable,
+  3.2).
+- `src/luaai.h` / `src/luaai.cpp`: one new `LuaHostApi` entry, `vehs_ptr()`
+  (mirrors `bases_ptr()` exactly — returns `Vehs`' current pointer value,
+  re-fetched by Lua on every access rather than cached). `api_version`
+  7 → 8.
+- `lua/ffi/funcs.lua`: matching cdef entry + binding for `vehs_ptr`,
+  `HOST_API_VERSION` bumped to 8.
+- `lua/api/tech.lua`: 8 new `UNIT`-level predicates, re-porting more of
+  `engine_veh.h`'s inline methods the same way `proto_offense_value`/etc.
+  already do — `proto_is_former`/`proto_is_probe`/`proto_is_supply`/
+  `proto_is_transport`/`proto_is_artifact` (plain `plan == PLAN_X`
+  comparisons), `proto_is_combat_unit` (`Weapon[weapon_id].offense_value ~=
+  0`), `proto_is_armored` (`Armor[armor_id].defense_value ~= 1`), and
+  `proto_is_garrison_unit` (composes the two: `(plan <= PLAN_RECON or
+  (plan == PLAN_PROBE and proto_is_armored)) and proto_triad ==
+  TRIAD_LAND`) — exactly the dependency chain 4.10.1 traced through
+  `VEH::is_garrison_unit()` → `UNIT::is_garrison_unit()`.
+- `lua/api/veh.lua` (new file): `count()`/`get(veh_id)` (re-fetching
+  `Vehs` via `vehs_ptr()` on every call, same pattern as
+  `lua/api/base.lua`'s `get()`), plus `VEH`'s own inline methods
+  (`is_former`, `is_colony`, `is_probe`, `is_supply`, `is_transport`,
+  `is_artifact`, `triad`) as pure delegation to the `tech.lua` predicates
+  above on `veh.unit_id`, and the two non-delegating ones per 4.10.1:
+  `is_combat_unit` (delegates, then additionally excludes
+  `BSC_FUNGAL_TOWER`) and `eval_garrison` (`(triad==TRIAD_LAND and 2 or 1)
+  + is_combat_unit + is_armored`).
+- `lua/ai/build.lua`: new `vehicle_counts_check(base_id, sea_base)`,
+  replicating `build.cpp:913-955` field-for-field (same
+  if/elseif structure, same three independent conditions per vehicle —
+  the home-base classification, the distance-based counters, and the
+  sea-base ferry check). `sea_base` is passed in from C++ rather than
+  recomputed, since it depends on `region_at()`, not wrapped for Lua yet
+  (deferred alongside `adjacent_region`/`allow_expand`, 4.10.5); the
+  initial value of `allow_supply` *is* computed in Lua though (`not
+  sea_base and gov & GOV_MAY_PROD_TERRAFORMERS`), since that only needed
+  the already-exposed `base_api.gov_config` plus one new enum — cheap
+  enough not to defer. Logs one line via `log.debug` with the six fields
+  the existing C++ debug line already has (`def`, `frm`, `prb`, `crw`,
+  `pods`, `scouts`) plus six bonus fields (`lprb`/`sprb` split,
+  `trn`/`near_frm`/`art`/`ferry`/`supply`) not in the original line but
+  cheap to include since the loop computes them anyway. Uses `idiv` for
+  the `(defenders+2)/8` truncating division per the project's integer
+  rule, even though `defenders` is always non-negative here (so floor and
+  truncate coincide) — consistent with the rule rather than relying on
+  that coincidence.
+- `lua/ai/init.lua`: registers `vehicle_counts_check` as a hook (needed
+  so `register_hooks()` resolves it into `hook_refs` and
+  `lua_ai_hook("vehicle_counts_check", ...)` can find it — it's not a real
+  AI decision hook, just reusing the existing dispatch plumbing to get a
+  Lua function called from C++ with zero new C++ infrastructure).
+- `src/build.cpp`: one `lua_ai_hook("vehicle_counts_check", &dummy,
+  {base_id, sea_base})` call inserted right after the vehicle-count loop
+  closes, before `WItem Wgov; governor_priorities(...)`. The result is
+  discarded (`dummy`) — this call exists purely for its side effect (the
+  Lua-side `log.debug` call), not for a value C++ uses.
+
+**Validated so far (this session, no game launch):**
+
+- Both presets (`ninja-develop`, `ninja-debug`) build clean — no new
+  warnings, no errors.
+- Every touched/new Lua file (`lua/api/veh.lua`, `lua/api/tech.lua`,
+  `lua/ai/build.lua`, `lua/ai/init.lua`, `lua/ffi/funcs.lua`) passes
+  `luajit -e "assert(loadfile('<file>'))"` (syntax only, same caveat as
+  every prior slice — this catches syntax errors, not semantic ones,
+  since it can't load the sandbox/ffi globals outside the game process).
+- The generated `lua/ffi/types.lua` was inspected directly: `VEH`'s
+  offsets are `x=0, y=2, unit_id=10, faction_id=14, order=17,
+  home_base_id=46`, `sizeof=52, alignof=1` — hand cross-checked against
+  `engine_veh.h:482-513`'s field declarations one by one and matches
+  exactly (no gaps in reasoning here the way the `CChassis::preq_tech`
+  int16_t/int32_t mixup from 3.1 could hide one). `VehCount`,
+  `PLAN_ARTIFACT`, `BSC_FUNGAL_TOWER`, `ORDER_CONVOY`,
+  `GOV_MAY_PROD_TERRAFORMERS` all present in the generated `globals`/
+  `enums` tables with the expected values.
+- Deployed to `~/.wine-smac/drive_c/Games/SMAC` (`tools/deploy.sh
+  develop`).
+
+**Not yet done — pick up here next session:**
+
+1. **Launch the game and actually play some turns** (existing saves from
+   prior sessions exist under `saves/`, faction "Lal of the Peacekeepers",
+   or start fresh — `conf.autoplay=1` and `lua_strict=0` are already set
+   in the deployed `thinker.ini`). No automation exists for this: driving
+   the Wine GUI (New Game screen, or loading a save) needs manual clicks,
+   same as every previous "in-game verified" entry in this file.
+2. **Check `lua.log` for errors first** — no `error in 'vehicle_counts_check'`
+   lines, and confirm `register_hooks: N hook(s) registered` includes the
+   new one (N should be 8, one more than the prior session's 7).
+3. **Diff the counters.** For a handful of `(turn, base_id)` pairs, find
+   the matching `vehicle_counts base:N ...` line in `lua.log` and the
+   `select_build ... base_id ...` line in `debug.txt`, and compare `def`,
+   `frm`, `prb`, `crw`, `pods`, `scouts` field by field. A mismatch
+   localizes the bug to the vehicle-count loop or the `VEH`
+   predicates/fields before the harder `build_order` scoring loop (step 3)
+   is even touched — exactly the point of doing this as its own step.
+4. **If clean:** proceed to step 2 of 4.10.9's order (`push_item` + the
+   running-best tracker + `has_retool`/`skip_facility`). If not: the
+   mismatch is somewhere in `lua/api/veh.lua`, the new `tech.lua`
+   predicates, or `vehicle_counts_check` itself — the loop is short enough
+   that bisecting by commenting out branches should localize it quickly.
+5. Once `select_build` is eventually fully ported and hooked, this
+   temporary seam (the `lua_ai_hook("vehicle_counts_check", ...)` call in
+   `build.cpp`, the registration in `lua/ai/init.lua`, and arguably
+   `vehicle_counts_check` itself) should be removed — it was only ever a
+   scaffolding check for this one step, not permanent AI logic, same fate
+   as the other temporary dual-run instrumentation elsewhere in this file.
+
+---
+
 ## Phase 5 — validation
 
 ### 5.1 Shadow wrapper (in `lua_ai_hook`, C side — Class 1/2 only)
@@ -1517,10 +1677,183 @@ relinked clean after this change.
 
 - State hash: end-of-turn Lua script iterating factions/bases/vehs writing one
   line per turn to a hash log; two runs with the same seed must produce
-  identical files (`cmp`).
+  identical files (`cmp`). **Implemented, see 5.3.2.**
 - Report divergence at the **first level** it appears (plan 5.3's five levels:
   per-call output → per-call delta → phase hash → turn hash → N-turn
   trajectory) to localize bugs instead of "turn 40 differs".
+
+### 5.3.2 Autoplay harness script + per-turn state hash (2026-07-15) —
+implemented, mechanics smoke-tested end to end, turn-advancing run not yet
+done
+
+> **Consolidation gate (IMPLEMENTATION_PLAN.md) item (a), first half.**
+> Builds the tooling item (a) needs: `tools/autoplay_run.sh` (deploy,
+> launch under Xvfb, watchdog, classify, collect, restore) and its
+> dependency, the per-turn state-hash dump from Lua
+> (`lua/harness/state_hash.lua`). **Not done in this pass:** the actual
+> `autoplay_demote_human` retest / "one real unattended all-AI run" item
+> (a) also asks for — that needs a game actually in progress, which this
+> script cannot reach on its own (see the KNOWN GAP below), so it's left
+> for the manual follow-up the session that requested this work already
+> flagged as separate.
+
+**Per-turn state hash (`lua/harness/state_hash.lua`, new module, new
+`lua/harness/` directory).** Not an AI decision — nothing to propose, no
+class, no fallback question — so it deliberately lives outside `lua/ai/`
+despite being wired through the exact same `lua_ai_hook` dispatch
+`lua/ai/build.lua`'s `vehicle_counts_check` (4.10.10) already established
+as the way to get a Lua function called from a C++ seam with zero new
+host-API plumbing: `lua/ai/init.lua` just adds one more entry
+(`turn_state_hash = state_hash.dump`) to the table `register_hooks()`
+already reads. C++ side: one `lua_ai_hook("turn_state_hash", &dummy,
+{*CurrentTurn})` call inserted into `mod_turn_upkeep`
+(`src/game.cpp:1011`), right after `lua_ai_turn_upkeep()`/
+`autoplay_demote_human()` and before the turn's own processing touches
+anything — so it captures the end state of the turn that just completed,
+matching the plan's "end-of-turn" wording literally, and fires exactly
+once per turn transition regardless of `conf.autoplay` (useful for manual
+determinism checks too, not just autoplay runs).
+
+Folds in, all read in index order (`0..count-1` / `1..MaxPlayerNum-1`,
+never `pairs()` — the plan's iteration-order determinism rule applied here
+too, since a nondeterministic hash would defeat the harness's purpose even
+though this isn't a decision): every base's `faction_id`/`x`/`y`, every
+vehicle's `faction_id`/`x`/`y`/`unit_id`, and per faction `tech_ranking`
+("twice the number of techs discovered", the closest existing field to a
+tech-progress summary) and `energy_credits`. Two new `Faction` fields
+needed for this (`tools/gen_ffi.cpp`): `energy_credits`, `tech_ranking` —
+everything else (`BASE.faction_id/x/y`, `VEH.faction_id/x/y/unit_id`,
+`Faction.base_count`) was already exposed by earlier slices (4.7/4.8/
+4.10.1). No `LuaHostApi`/`api_version` change — nothing here needed a host
+wrapper, only FFI field reads through the existing `lua/api/base.lua`/
+`veh.lua`/`faction.lua` accessors.
+
+**Hash function: FNV-1a-style mix using only `bit.bxor`/`bit.rol`, no
+multiply.** A textbook FNV-1a uses a multiplicative step, but Lua numbers
+are doubles and the running hash can reach values where a multiply-then-
+`bit.tobit` truncation would go through a double-precision product that
+isn't exactly representable — not a correctness problem for this specific
+use (the hash only needs to be internally reproducible run-to-run, there's
+no C++ reference hash to match bit-for-bit, unlike every dual-run mismatch
+check elsewhere in `lua/ai/`), but avoidable, so avoided: `bit.rol` is a
+LuaJIT `bit` library extension (32-bit rotate) that's exact, same as
+`bxor`. Formatted with `bit.tohex(h)`, not `string.format("%x", h)` —
+`tohex` always produces the unsigned 8-hex-digit form directly, sidestepping
+a sign-representation question `%x` on a `bit.*`-returned (signed 32-bit)
+Lua number would otherwise raise.
+
+**`tools/autoplay_run.sh`.** Bash, not Lua — orchestrates the process
+outside the game, per the plan's own description of item (a). Flow:
+validate the requested preset's build exists → `tools/deploy.sh` → back up
+any existing `thinker.ini` (via `mktemp`) and write a harness one (starts
+from `docs/thinker.ini`, forces `autoplay=1`/`lua_ai=1`/`lua_strict=0`
+with `sed`, preserving CRLF explicitly — `docs/thinker.ini` is CRLF, a
+plain `sed -i 's/.../replacement/'` without a trailing `\r` in the
+replacement silently drops just that one line to LF, confirmed and fixed
+during implementation) → remove stale `lua.log`/`autoplay.log`/
+`debug.txt` from any prior session (they're append-mode; a leftover file
+would make the very first watchdog poll see an already-advanced turn
+number) → `setsid xvfb-run -a env -u WAYLAND_DISPLAY WINEPREFIX=... wine
+thinker.exe -windowed` in the background, exactly the command form the
+session that requested this specified → discover the Xvfb display number
+`xvfb-run -a` allocated by diffing `/tmp/.X*-lock` before/after (needed
+for screenshots; `xvfb-run` doesn't expose the number it picked any other
+way) → watchdog loop polling `lua.log` for the last `state_hash turn=N`
+line, resetting a stall timer on every new `N` → classify `COMPLETED`
+(reached the target turn), `STALL` (no new turn within the timeout —
+capture a screenshot, see below) or `CRASH` (the process group died on its
+own) → `kill -TERM`/`-KILL` the **whole process group** (`setsid` gives
+`xvfb-run`/`Xvfb`/`wine`/`wineserver` one group so a single negative-PID
+`kill` takes all of it down, regardless of whether `xvfb-run`'s own
+cleanup trap runs) → copy `lua.log`/`autoplay.log`/`debug.txt`/`saves/`
+plus a `state_hashes.log` (just the hash lines, grepped out, for the
+`cmp`-between-runs check plan 5.3 describes) into
+`runs/<UTC timestamp>-<preset>/` → restore the original `thinker.ini` via
+an `EXIT` trap (fires on normal completion, an early error exit, or
+Ctrl+C — a harness run must never leave `autoplay=1` permanently applied
+to whatever `thinker.ini` the user had).
+
+**Screenshot capture prefers `xwd`+`convert` (what the requesting session
+specified) but falls back to ImageMagick's `import`.** Confirmed during
+implementation: this machine has `convert` but not `xwd` (`xorg-xwd` is a
+separate, uninstalled package) — `import -window root` produces the same
+result without the extra dependency, so the script tries the specified
+tool first and only falls back if it's missing, rather than requiring an
+install this session didn't otherwise need.
+
+**Process-liveness mechanics, confirmed by reading `setsid`'s actual
+behavior, not assumed:** `setsid CMD` (no `-f`) calls the `setsid()`
+syscall and then `execvp`s `CMD` in the *same* process — it does not fork
+— so the backgrounded PID bash captures (`RUN_PID=$!`) is directly
+`xvfb-run`'s own PID, which is also the new session/process-group leader.
+That's what makes `kill -0 $RUN_PID` a correct liveness check and
+`kill -TERM -$RUN_PID` (negative PID = process-group signal) a correct
+"take down everything" call, without needing to separately track Xvfb's
+or wine's PIDs.
+
+**Smoke-tested this session — STALL path only, exit code 2 as designed
+(`COMPLETED`→0, `STALL`→2, `CRASH`→3):** `tools/autoplay_run.sh --preset
+debug --timeout 25 --poll 3 --turns 999999`. No New Game was started (see
+KNOWN GAP below), so no `state_hash` line was ever going to appear — this
+run exercises exactly the deploy → launch → display-discovery → watchdog →
+STALL-classify → screenshot → kill → collect → restore pipeline, not the
+Lua state-hash code itself (that needs an actual in-progress game, i.e.
+the still-open manual step). Confirmed clean: deploy copied the new
+`lua/harness/` directory alongside the existing `lua/ai`/`lua/api`/
+`lua/ffi`; Xvfb allocated `:99`, discovered correctly; the watchdog
+correctly saw no `state_hash` lines and declared `STALL` at the 25s mark;
+`stall.png` came out a valid 640x480 PNG via the `import` fallback;
+`ps aux | grep wine` showed **zero** leftover processes after the kill
+(no orphaned `wineserver`/`Xvfb`); `thinker.ini` was restored to its
+exact pre-run content (diffed byte-for-byte against a pre-run copy,
+confirmed **not** silently left as the harness's forced-`autoplay=1`
+version — the fact that the restored file also happened to have
+`autoplay=1`/`lua_strict=0` is coincidental, carried over from the *prior
+manual session's* hand-edited `thinker.ini`, not evidence the restore was
+a no-op). `runs/<UTC timestamp>-debug/` contained `outcome.txt`,
+`stall.png`, `saves/` (copied even though empty/irrelevant here — no game
+was started) and `xvfb-run.out`; deleted after inspection (test artifact,
+not meant to be kept in the repo — `runs/` is gitignored, see below).
+
+**KNOWN GAP, stated plainly rather than glossed over: this script cannot
+reach an in-progress game on its own.** Checked `src/main.cpp`'s argv
+parsing (`CommandLineToArgvW`) before assuming otherwise: only
+`-smac`/`-native`/`-screen`/`-windowed` are handled — there is no
+command-line flag to auto-load a save or skip the main/New Game menu, and
+Xvfb is headless (no human can click into it without attaching a VNC
+viewer or similar to the allocated display). The six-primitive dialog-
+bypass shims (5.3.1) only intercept *in-game* modal popups, not the main
+menu itself, which isn't one of the six. So today, a harness run against
+a fresh Xvfb session will sit at the main menu until the timeout fires a
+`STALL` — exactly what the smoke test above demonstrated. Getting to an
+actual "one real unattended all-AI run" therefore still needs one
+interactive session first (attach a VNC viewer to the Xvfb display this
+script prints, or run the same launch command on a real display once) to
+get through the New Game screen and reach a state where turns are already
+advancing — this script only automates *after* that point. `--save FILE`
+is accepted and forwarded as an extra `wine` argument on the chance the
+engine honors a bare save path on its command line, but this is
+**unverified** — not tested this session, don't assume it works without
+checking. Auto-loading a save on every harness run remains unimplemented;
+flagged here rather than left for the next session to discover the hard
+way.
+
+**Files touched:** `tools/gen_ffi.cpp` (`Faction.energy_credits`/
+`tech_ranking`), `lua/harness/state_hash.lua` (new), `lua/ai/init.lua`
+(one new registry entry), `src/game.cpp` (`mod_turn_upkeep` seam),
+`tools/autoplay_run.sh` (new), `.gitignore` (`runs/`). Both build presets
+(`ninja-develop`, `ninja-debug`) compile clean; `lua/harness/state_hash.lua`
+and `lua/ai/init.lua` pass a native-`luajit` `loadfile` syntax check;
+`lua/ffi/types.lua` inspected directly for the two new `Faction` offsets.
+
+**Not yet done — pick up here:** the actual unattended all-AI run itself
+(needs the manual New-Game-screen step above first, then re-run
+`tools/autoplay_run.sh` against the resulting in-progress save/session);
+confirm the `COMPLETED` and `CRASH` classification paths for real (only
+`STALL` was exercised); confirm `state_hash` lines actually appear in
+`lua.log` and that `cmp`-ing `state_hashes.log` across two same-seed runs
+produces identical files, which is the entire point of this mechanism and
+hasn't been checked against a real game yet.
 
 ### 5.4 Performance instrumentation
 

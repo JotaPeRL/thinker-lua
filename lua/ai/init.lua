@@ -5,6 +5,11 @@ local tech = dofile("lua/ai/tech.lua")
 local social = dofile("lua/ai/social.lua")
 local war = dofile("lua/ai/war.lua")
 local build = dofile("lua/ai/build.lua")
+-- Not an AI module -- the autoplay determinism harness's per-turn state
+-- hash (IMPLEMENTATION_PLAN.md "Consolidation gate" item a). Registered
+-- here anyway because register_hooks() only reads this one table; see
+-- lua/harness/state_hash.lua for why.
+local state_hash = dofile("lua/harness/state_hash.lua")
 
 return {
     mod_tech_val = tech.mod_tech_val,
@@ -14,4 +19,6 @@ return {
     find_proto = build.find_proto,
     select_colony = build.select_colony,
     select_combat = build.select_combat,
+    vehicle_counts_check = build.vehicle_counts_check,
+    turn_state_hash = state_hash.dump,
 }

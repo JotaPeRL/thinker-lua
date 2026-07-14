@@ -1011,6 +1011,14 @@ void __cdecl mod_random_events(int flag) {
 void __cdecl mod_turn_upkeep() {
     lua_ai_turn_upkeep(); // lazy Lua init: must never run under the loader lock
     autoplay_demote_human(); // conf.autoplay: hand *CurrentPlayerFaction to Thinker AI too
+    // Autoplay harness per-turn state hash (IMPLEMENTATION_PLAN.md
+    // "Consolidation gate" item a): fires before this turn's own
+    // processing touches anything, so it captures the end state of the
+    // turn that just completed. Not a decision hook -- result discarded,
+    // same "reuse the dispatch plumbing for its side effect" pattern as
+    // build.cpp's vehicle_counts_check seam.
+    int lua_state_hash_dummy;
+    lua_ai_hook("turn_state_hash", &lua_state_hash_dummy, {*CurrentTurn});
     debug("turn_upkeep %d bases: %d vehs: %d\n", (*CurrentTurn)+1, *BaseCount, *VehCount);
     snprintf(ThinkerVars->build_date, 12, MOD_DATE);
     if (*CurrentTurn == 0) {

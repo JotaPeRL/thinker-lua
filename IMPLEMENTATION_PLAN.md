@@ -490,6 +490,20 @@ with a strict asymmetry between reads and everything else:
    - watch signedness and overflow: C++ `int` wraps at 32 bits, Lua numbers
      don't — where the original code relies on wrap/truncation, replicate it
      explicitly (`bit.tobit`).
+6. **Float-narrowing rule.** Lua numbers are always doubles; C++ `float`
+   locals/fields are 32-bit and *narrow on every assignment/operation*,
+   which changes rounding versus computing the same expression in double
+   precision throughout. Where the original C++ computes in `float` (first
+   seen in `select_build`'s `Wbase`/`Wthreat` block,
+   `IMPLEMENTATION_DETAILS.md` 4.10.7), the Lua port must replicate the
+   narrowing at the **exact same points** the C++ narrows — after each
+   `float`-typed intermediate, not just on the final result — via
+   `ffi.new('float', x)` round-trips (`x = tonumber(ffi.new('float', x))`).
+   Getting this wrong is a silent precision divergence, the float-arithmetic
+   sibling of the integer-division trap above. **Audit this when
+   `select_build` resumes** (Phase 4.2 porting-order item 3, currently
+   frozen — see the Consolidation gate below) — it is the only ported
+   function known to need it so far, and it hasn't been implemented yet.
 
 ### 3.2 High layer: idiomatic API
 
@@ -712,18 +726,38 @@ enable Lua by default on the branch → next.
    > int-out contract (one takes a struct input, the other returns a
    > struct via out-param), so there's no dual-run seam possible for
    > these two; validated by inspection only, see `IMPLEMENTATION_
-   > DETAILS.md` 4.9. **`select_build` itself: fully scoped, not yet
-   > implemented** — `IMPLEMENTATION_DETAILS.md` 4.10 has the complete
-   > dependency catalog (full 467-loc read: `VEH`'s first-ever exposure,
-   > ~50 new fields/enums/wrappers, a second `MAP`-touching loop needing
-   > the same opaque-wrapper treatment as 4.8's, confirmation that the
+   > DETAILS.md` 4.9. **`select_build` itself: fully scoped**
+   > (`IMPLEMENTATION_DETAILS.md` 4.10 has the complete dependency catalog —
+   > full 467-loc read: `VEH`'s first-ever exposure, ~50 new
+   > fields/enums/wrappers, a second `MAP`-touching loop needing the same
+   > opaque-wrapper treatment as 4.8's, confirmation that the
    > `std::priority_queue` output mechanism needs no real port — a
    > running-best tracker suffices, the float-arithmetic block that's a
    > first for this project, and a recommended 4-stage implementation
-   > order) — written specifically so implementation can start cold next
-   > session without re-reading `select_build` from scratch. The rest of
-   > this item (`find_project`, `mod_base_hurry`, `plans_upkeep`,
-   > `design_units`, `former_plans`) remains unsurveyed.
+   > order), **step 1 of that 4-stage order implemented (2026-07-14),
+   > in-game verification pending.** `VEH` exposed in the FFI (first time,
+   > `x`/`y`/`unit_id`/`faction_id`/`order`/`home_base_id`) plus the 8 new
+   > `tech.lua` UNIT-level predicates and the new `lua/api/veh.lua` module
+   > it backs; `select_build`'s own vehicle-count loop
+   > (`build.cpp:913-955`) ported to `lua/ai/build.lua`'s
+   > `vehicle_counts_check`, called from a temporary (non-hook) seam in
+   > `select_build` that just logs its counters for manual comparison
+   > against the C++ `debug("select_build ...")` line a few statements
+   > later — `select_build` itself is still not hooked. `LuaHostApi` bumped
+   > to `api_version=8` (`vehs_ptr`, mirroring `bases_ptr`). Both presets
+   > build clean, every touched Lua file passed a native-`luajit`
+   > `loadfile` syntax check, and the generated `VEH` offsets were hand
+   > cross-checked against `engine_veh.h`'s field declarations (exact
+   > match). **Not yet done: the actual in-game run** — needs a manual Wine
+   > play session comparing `lua.log`'s `vehicle_counts base:N def:...
+   > frm:... prb:...` lines against `debug.txt`'s `select_build ... def:
+   > ... frm: ... prb: ...` lines for the same base/turn. See
+   > `IMPLEMENTATION_DETAILS.md` 4.10.10 for the full session record and
+   > exactly what to check when resuming. The rest of the 4-stage order
+   > (push_item + running-best tracker, the `build_order` scoring loop
+   > itself, then wiring the real hook) remains unimplemented, and
+   > `find_project`/`mod_base_hurry`/`plans_upkeep`/`design_units`/
+   > `former_plans` remain unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +
@@ -768,6 +802,84 @@ port.source = {
 class-appropriate level over N autoplay turns on at least 3 distinct saves + 1
 new game with a fixed seed; no noticeable turn-time regression; provenance
 metadata present; drift report clean at the pinned upstream commit.
+
+---
+
+## Consolidation gate (2026-07-14)
+
+**Porting is frozen** — no more of `select_build` (stages 2-4), movement, or
+any later porting-order item — until the items below land, in this order.
+Five domains (research, social engineering, war decisions, and two
+production/plans slices) are ported and "in-game verified clean" in the
+session-record sense, but every one of them is validated only by temporary
+dual-run instrumentation over manual play sessions on a single game
+trajectory. None has met its module-level "Done when" (golden traces, real
+shadow mode, the 3-save + 1-new-game matrix). Accumulating a sixth and
+seventh ported-but-not-formally-validated domain on top of that debt makes
+the eventual validation pass strictly harder to attribute divergences in,
+for no benefit — this gate exists to pay that debt down before it grows
+further.
+
+a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
+   5.3.1 left this as "rebuilt and redeployed; retest pending" after fixing
+   the human-faction-exclusion bug), plus one real unattended all-AI run.
+   Termination is always an **external kill by the harness script**, never
+   an in-game exit: the per-turn state hash (below) gives an
+   externally-observable progress signal, and the existing
+   `autosave_interval=1` already makes every turn's state durable, so a
+   kill from outside loses nothing needed for diagnosis or resumption. The
+   previously deferred `autoplay_turns` internal-exit idea (auto-save-and-
+   `ControlTurnA`/`ControlTurnB`-exit from inside `mod_turn_upkeep`,
+   Phase 5.3) is **dropped** — external kill supersedes it, and it was
+   already flagged as poorly-understood.
+
+   > **Status (2026-07-15): `tools/autoplay_run.sh` and its per-turn
+   > state-hash dependency implemented; the in-game `demote_human` retest
+   > itself not yet run (manual, tracked separately).** See
+   > `IMPLEMENTATION_DETAILS.md`'s new session entry for the harness's
+   > mechanics, a smoke test of the deploy/launch/watchdog/kill/artifact
+   > pipeline (STALL path only — no automated New Game / Load Game
+   > navigation exists, so an actual turn-advancing run still needs one
+   > manual step first), and a known gap left honestly unsolved rather
+   > than papered over.
+
+b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
+   five hand-rolled per-hook mismatch-logging blocks (`src/tech.cpp`,
+   `src/faction.cpp` x2, `src/build.cpp` x3) with the actual
+   `lua_shadow`-gated generic wrapper from Phase 5.1, instead of deleting
+   the temporary code once each is separately declared "done" — one
+   generic mechanism, applied everywhere at once. Do the **typed
+   hook-descriptor refactor (Phase 4.1)** in the same pass: 4.9 already
+   proved the int-args-in/int-result-out contract is too narrow
+   (`facility_score`/`governor_priorities` couldn't be hooked at all,
+   and 4.10's vehicle-count check needed a 12-counter side-channel log
+   instead of a real comparison) — fix the contract once, here, rather
+   than carrying two hook-shape generations forward into shadow mode.
+
+c. **Golden traces (Phase 5.2), starting with the two functions currently
+   "validated by inspection" only** — `governor_priorities` and
+   `facility_score` (`IMPLEMENTATION_DETAILS.md` 4.9) — since they have no
+   dual-run seam at all today and are therefore the least-validated code
+   in the port so far, not the most.
+
+d. **All five ported domains re-validated on the harness**, per each
+   module's actual "Done when" (Phase 4.4): 3+ distinct saves/maps plus 1
+   new game with a fixed seed, **including at least one game where
+   `rule_psi` factions exist** (an under-exercised branch class across
+   every dual-run session so far). Only then formally close M4 and
+   porting-order items 1, 2, 2b, and 3-partial (the `find_proto`/
+   `select_colony`/`select_combat`/`unit_score` slice — not the
+   still-unfinished `select_build` itself).
+
+e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
+   (Phase 4.4/6) — needed before any upstream merge is even attempted, and
+   currently entirely unwritten despite five domains already carrying
+   `port.source` metadata that nothing reads yet.
+
+**Resuming after the gate:** `select_build` stages 2-4 pick up exactly
+where `IMPLEMENTATION_DETAILS.md` 4.10.9's 4-stage order left off (step 1
+done, steps 2-4 open); re-read 4.10's float-arithmetic note (3.7, below)
+before touching `Wbase`/`Wthreat`.
 
 ---
 
