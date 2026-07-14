@@ -13,6 +13,10 @@ local MapCloudCover = ffi.cast("int32_t*", types.globals.MapCloudCover)
 local SunspotDuration = ffi.cast("int32_t*", types.globals.SunspotDuration)
 local DiffLevel = ffi.cast("int32_t*", types.globals.DiffLevel)
 local MapAreaSqRoot = ffi.cast("int32_t*", types.globals.MapAreaSqRoot)
+-- War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md 4.6):
+-- FactionRankings is an int[MaxPlayerNum] array (ranking position -> faction
+-- id), not a scalar -- indexed directly, like the other array fields.
+local FactionRankings = ffi.cast("int32_t*", types.globals.FactionRankings)
 
 return {
     turn = function() return CurrentTurn[0] end,
@@ -21,4 +25,5 @@ return {
     sunspot_duration = function() return SunspotDuration[0] end,
     diff_level = function() return DiffLevel[0] end,
     map_area_sq_root = function() return MapAreaSqRoot[0] end,
+    faction_ranking = function(i) return FactionRankings[i] end,
 }

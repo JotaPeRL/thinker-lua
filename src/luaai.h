@@ -53,6 +53,17 @@ struct LuaHostApi {
     int32_t (*defense_modifier)(int32_t faction_id); // -> plans[faction_id].defense_modifier
     int32_t (*keep_fungus)(int32_t faction_id);       // -> plans[faction_id].keep_fungus
     int32_t (*social_ai_bias)();                      // -> conf.social_ai_bias
+    // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
+    // 4.6): great_beelzebub/great_satan stay opaque (engine "who's the
+    // dominant threat" heuristics, not the attack decision itself, same
+    // precedent as social_calc); has_agenda is trivial but kept as a
+    // wrapper for consistency with is_human/has_treaty; hq_region replaces
+    // evaluate_attack's own Bases[]/has_fac_built/region_at scan so BASE
+    // never needs FFI exposure for this port (deferred to item 3).
+    int32_t (*great_beelzebub)(int32_t faction_id, int32_t is_aggressive);
+    int32_t (*great_satan)(int32_t faction_id, int32_t is_aggressive);
+    int32_t (*has_agenda)(int32_t faction_id_1, int32_t faction_id_2, uint32_t status);
+    int32_t (*hq_region)(int32_t faction_id); // -1 if no HQ built
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

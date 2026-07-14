@@ -35,10 +35,14 @@ typedef struct {
     int32_t (*defense_modifier)(int32_t faction_id);
     int32_t (*keep_fungus)(int32_t faction_id);
     int32_t (*social_ai_bias)();
+    int32_t (*great_beelzebub)(int32_t faction_id, int32_t is_aggressive);
+    int32_t (*great_satan)(int32_t faction_id, int32_t is_aggressive);
+    int32_t (*has_agenda)(int32_t faction_id_1, int32_t faction_id_2, uint32_t status);
+    int32_t (*hq_region)(int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 4
+local HOST_API_VERSION = 5
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -70,4 +74,8 @@ return {
     defense_modifier = function(faction_id) return api.defense_modifier(faction_id) end,
     keep_fungus = function(faction_id) return api.keep_fungus(faction_id) end,
     social_ai_bias = function() return api.social_ai_bias() end,
+    great_beelzebub = function(faction_id, is_aggressive) return api.great_beelzebub(faction_id, is_aggressive) end,
+    great_satan = function(faction_id, is_aggressive) return api.great_satan(faction_id, is_aggressive) end,
+    has_agenda = function(f1, f2, status) return api.has_agenda(f1, f2, status) end,
+    hq_region = function(faction_id) return api.hq_region(faction_id) end,
 }

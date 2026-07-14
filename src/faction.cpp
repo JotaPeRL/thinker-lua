@@ -1718,7 +1718,19 @@ static int __cdecl evaluate_attack(int faction_id, int faction_id_tgt, int facti
 }
 
 int __cdecl mod_wants_to_attack(int faction_id, int faction_id_tgt, int faction_id_unk) {
+    // TEMPORARY porting-order-item-2b verification instrumentation, same
+    // dual-run mismatch pattern as mod_tech_val/mod_social_ai
+    // (IMPLEMENTATION_DETAILS.md 4.6). No RNG consumed by evaluate_attack,
+    // so unlike mod_tech_ai this needs no snapshot/restore around the Lua
+    // call.
+    int lua_value;
+    bool lua_handled = lua_ai_hook("mod_wants_to_attack", &lua_value,
+        {faction_id, faction_id_tgt, faction_id_unk});
     int value = evaluate_attack(faction_id, faction_id_tgt, faction_id_unk);
+    if (lua_handled && lua_value != value) {
+        debug("lua/cpp mod_wants_to_attack mismatch: faction=%d target=%d unk=%d lua=%d cpp=%d\n",
+            faction_id, faction_id_tgt, faction_id_unk, lua_value, value);
+    }
 
     debug("wants_to_attack turn: %d factions: %d %d %d value: %d\n",
         *CurrentTurn, faction_id, faction_id_tgt, faction_id_unk, value);

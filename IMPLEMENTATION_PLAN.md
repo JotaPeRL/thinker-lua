@@ -660,9 +660,12 @@ enable Lua by default on the branch → next.
    > `mod_social_ai` calls combined, covering both `pop_boom` 0/1 and both
    > `sf=-1`/a real proposed-and-applied social-model change) — zero `lua/cpp
    > mod_social_ai mismatch` lines in either. See `IMPLEMENTATION_DETAILS.md`
-   > 4.5 for the numbers. `mod_wants_to_attack` (item 2b) still untouched;
-   > temporary dual-run instrumentation still in place pending real Phase 5.1
-   > shadow mode, same as M4/tech.
+   > 4.5 for the numbers. `mod_wants_to_attack` (item 2b) also in-game
+   > verified clean now (123 calls, turns 90-92, zero mismatches, both
+   > outcomes exercised) — see `IMPLEMENTATION_DETAILS.md` 4.6. Porting-order
+   > item 2 and its 2b follow-up are both done in this sense; temporary
+   > dual-run instrumentation still in place pending real Phase 5.1 shadow
+   > mode, same as M4/tech.
    > `social_score()` + `mod_social_ai`'s selection loop ported to
    > `lua/ai/social.lua`, registered as a Class-2-shaped `mod_social_ai`
    > hook with the same temporary dual-run pattern as item 1 (M4); the
@@ -671,7 +674,8 @@ enable Lua by default on the branch → next.
    > (category + model choice) is a packed int (`sf*4+sm2`, or `-1` for "no
    > change"), so `lua_ai_hook`'s existing int-args/int-result signature
    > needed no changes. `mod_wants_to_attack` deferred to follow-up item
-   > **2b** (large, self-contained, ~180 loc), untouched. `LuaHostApi`
+   > **2b** (large, self-contained, ~180 loc) — now implemented, see
+   > `IMPLEMENTATION_DETAILS.md` 4.6. `LuaHostApi`
    > bumped to `api_version=4` with 11 new entries (`social_calc`,
    > `society_avail`, `social_upheaval`, `has_project`, `has_free_facility`,
    > `has_aircraft`, `mineral_factor`, `un_charter`, `defense_modifier`,

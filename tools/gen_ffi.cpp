@@ -248,6 +248,13 @@ int main() {
         FIELD(MFaction, thinker_last_mc_turn),
         FIELD(MFaction, rule_drone),
         FIELD(MFaction, rule_talent),
+        // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
+        // 4.6): rule_flags backs MFaction::is_alien() (rule_flags &
+        // RFLAG_ALIEN), ported directly in lua/ai/war.lua rather than kept
+        // as a host wrapper -- it's a one-field flag check, same tier as
+        // is_human()'s FactionStatus bitmask read.
+        FIELD(MFaction, rule_flags),
+        FIELD(MFaction, rule_morale),
     }});
 
     emit_struct(stdout, {"CRules", sizeof(CRules), alignof(CRules), {
@@ -296,6 +303,18 @@ int main() {
         FIELD(Faction, social_support),
         FIELD(Faction, social_psych),
         FIELD(Faction, social_effic),
+        // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
+        // 4.6): evaluate_attack's own field reads, re-derived directly from
+        // its body (faction.cpp:1539-1718), not from the earlier scope note.
+        FIELD(Faction, major_atrocities),
+        FIELD(Faction, player_flags),
+        FIELD(Faction, mil_strength_1),
+        FIELD(Faction, best_armor_value),
+        FIELD(Faction, region_force_rating),
+        FIELD(Faction, region_total_combat_units),
+        FIELD(Faction, tech_commerce_bonus),
+        FIELD(Faction, integrity_blemishes),
+        FIELD(Faction, SE_morale_pending),
     }});
 
     printf("]]\n\n");
@@ -324,6 +343,9 @@ int main() {
     printf("    SunspotDuration = 0x%08X,\n", 0x9A6800);
     printf("    DiffLevel = 0x%08X,\n", 0x9A64C4);
     printf("    MapAreaSqRoot = 0x%08X,\n", 0x949888);
+    // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
+    // 4.6): int* const, same provenance-by-comment convention (src/engine.cpp).
+    printf("    FactionRankings = 0x%08X,\n", 0x9A64EC);
     printf("  },\n");
     // Array bounds for the exposed rule tables, from src/main.h (not
     // included here -- same provenance-by-comment convention as the
@@ -411,6 +433,17 @@ int main() {
     printf("    SOCIAL_M_PLANNED = %d,\n", SOCIAL_M_PLANNED);
     printf("    SOCIAL_M_GREEN = %d,\n", SOCIAL_M_GREEN);
     printf("    RULES_SCN_NO_TECH_ADVANCES = %d,\n", RULES_SCN_NO_TECH_ADVANCES);
+    // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md 4.6).
+    printf("    DIPLO_UNK_40 = %d,\n", DIPLO_UNK_40);
+    printf("    DIPLO_ATROCITY_VICTIM = %d,\n", DIPLO_ATROCITY_VICTIM);
+    printf("    DIPLO_HAVE_SURRENDERED = %d,\n", DIPLO_HAVE_SURRENDERED);
+    printf("    DIPLO_UNK_4000000 = %d,\n", DIPLO_UNK_4000000);
+    printf("    DIPLO_UNK_20000000 = %d,\n", DIPLO_UNK_20000000);
+    printf("    PFLAG_TEAM_UP_VS_HUMAN = %d,\n", PFLAG_TEAM_UP_VS_HUMAN);
+    printf("    AGENDA_UNK_200 = %d,\n", AGENDA_UNK_200);
+    printf("    RULES_INTENSE_RIVALRY = %d,\n", RULES_INTENSE_RIVALRY);
+    printf("    RFLAG_ALIEN = %d,\n", RFLAG_ALIEN);
+    printf("    FAC_HEADQUARTERS = %d,\n", FAC_HEADQUARTERS);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

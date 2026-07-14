@@ -18,6 +18,7 @@
 #include "faction.h"
 #include "tech.h"
 #include "map.h"
+#include "base.h"
 
 #include <string>
 #include <unordered_set>
@@ -95,11 +96,39 @@ static int32_t host_social_ai_bias() {
     return conf.social_ai_bias;
 }
 
+// War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md 4.6).
+static int32_t host_great_beelzebub(int32_t faction_id, int32_t is_aggressive) {
+    return great_beelzebub(faction_id, is_aggressive);
+}
+
+static int32_t host_great_satan(int32_t faction_id, int32_t is_aggressive) {
+    return great_satan(faction_id, is_aggressive);
+}
+
+static int32_t host_has_agenda(int32_t faction_id_1, int32_t faction_id_2, uint32_t status) {
+    return has_agenda(faction_id_1, faction_id_2, status);
+}
+
+// Replicates evaluate_attack's own last-match-wins scan over Bases[]
+// (faction.cpp:1630-1638) exactly, rather than calling find_hq() (which may
+// tie-break differently) -- keeps the dual-run comparison exact. BASE stays
+// out of the FFI (deferred to porting-order item 3); this is the one field
+// Lua needs from it, computed entirely in C++.
+static int32_t host_hq_region(int32_t faction_id) {
+    int32_t region = -1;
+    for (int i = 0; i < *BaseCount; i++) {
+        if (has_fac_built(FAC_HEADQUARTERS, i) && Bases[i].faction_id == faction_id) {
+            region = region_at(Bases[i].x, Bases[i].y);
+        }
+    }
+    return region;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 4,
+    /* api_version          */ 5,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -124,6 +153,10 @@ static LuaHostApi g_host_api = {
     /* defense_modifier     */ host_defense_modifier,
     /* keep_fungus          */ host_keep_fungus,
     /* social_ai_bias       */ host_social_ai_bias,
+    /* great_beelzebub      */ host_great_beelzebub,
+    /* great_satan          */ host_great_satan,
+    /* has_agenda           */ host_has_agenda,
+    /* hq_region            */ host_hq_region,
 };
 
 static lua_State* L = NULL;

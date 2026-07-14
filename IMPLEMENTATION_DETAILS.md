@@ -537,6 +537,130 @@ fields + the new host-API wrappers), `lua/ai/social.lua` (new file: ported
 
 ---
 
+### 4.6 War-decision port (porting-order item 2b) — in-game verified clean
+
+> **Status (2026-07-14): implemented and building clean on both presets;
+> in-game dual-run verification done, zero mismatches.** `evaluate_attack` ported to
+> `lua/ai/war.lua`, registered as `mod_wants_to_attack` (`lua/ai/init.lua`),
+> same temporary dual-run mismatch pattern as `mod_tech_val`/
+> `mod_social_ai` (`src/faction.cpp`'s `mod_wants_to_attack` seam, added
+> around the existing call to `evaluate_attack` rather than threaded through
+> every return point inside it, since -- unlike `mod_tech_val` -- the seam
+> lives in the small wrapper function, not the sprawling one). `LuaHostApi`
+> bumped to `api_version=5` with 4 new entries (`great_beelzebub`,
+> `great_satan`, `has_agenda`, `hq_region`). `tools/gen_ffi.cpp` gained 9
+> new `Faction` fields (`major_atrocities`, `player_flags`,
+> `mil_strength_1`, `best_armor_value`, `region_force_rating`,
+> `region_total_combat_units`, `tech_commerce_bonus`,
+> `integrity_blemishes`, `SE_morale_pending`), 2 new `MFaction` fields
+> (`rule_flags`, `rule_morale`), the `FactionRankings` global flagged back
+> in 4.5 as "add for item 2b", and 9 new enums -- all re-derived directly
+> from `evaluate_attack`'s body while implementing, matching the plan below
+> exactly except for one addition the scoping pass had missed: `Faction::
+> mil_strength_1` (used comparing `Factions[i].mil_strength_1` against
+> `plr_tgt->mil_strength_1` in the first loop) wasn't listed below and had
+> to be added during implementation -- same kind of under-specification
+> already seen in 4.5's scoping pass, caught the same way (re-reading the
+> C++ body directly instead of trusting the earlier field list). `game.lua`
+> gained a `faction_ranking(i)` accessor for `FactionRankings` (an
+> `int[MaxPlayerNum]` array, not a scalar, so it doesn't fit the existing
+> bare-scalar-global accessors already there). Every new/changed Lua file
+> passed a native-`luajit` `loadfile` syntax check.
+>
+> **In-game run (same session as the autoplay/social-AI testing, continued
+> from turn 90):** `lua.log` showed `register_hooks: 4 hook(s) registered`
+> and `mod_wants_to_attack` in the first-call diagnostic line. `debug.txt`:
+> 123 `wants_to_attack` calls across turns 90-92, **zero**
+> `lua/cpp mod_wants_to_attack mismatch` lines. Both outcomes exercised (46
+> `value=0`, 77 `value=1` — not a degenerate run where only one branch of
+> the boolean ever fires). **One path still unexercised:** `faction_id_unk`
+> was `0` in all 123 calls, so the `faction_id_unk > 0` branches (the
+> third-party-ally adjustments to `compare`/`factor_force_rating` via
+> `Factions[faction_id_unk].region_force_rating[region]`) never ran —
+> not a sign of a problem, just untested; would need a call site that
+> passes a real third faction (diplomacy-triggered `evaluate_attack` calls)
+> to cover.
+
+`evaluate_attack` (`src/faction.cpp:1539-1718`, ~180 loc, static helper) +
+`mod_wants_to_attack` (`faction.cpp:1720-1726`, the logging wrapper Thinker
+calls). **Class 1 (pure query)** — simpler contract than item 2's Class 2:
+no mutation, no `random()` calls found anywhere in the function body, so no
+RNG snapshot/restore needed for the dual-run check (unlike `mod_tech_ai`).
+Same dual-run verification pattern as items 1 and 2: temporary instrumentation
+in the `faction.cpp` seam, C++ stays authoritative, Lua's value is only
+compared and logged on mismatch, until confidence is established.
+
+**Already available, no new work:** `has_treaty`, `is_human`,
+`climactic_battle`, `game.rules()` (`*GameRules`), `MaxPlayerNum`,
+`MaxRegionLandNum` (`counts`), and on `Faction`: `AI_fight`,
+`region_total_bases`, `best_weapon_value`.
+
+**New `Faction` fields needed** (`tools/gen_ffi.cpp`'s `FIELD(Faction, ...)`
+list): `best_armor_value`, `region_force_rating` (array, indexed by region),
+`region_total_combat_units` (array), `tech_commerce_bonus`,
+`integrity_blemishes`, `SE_morale_pending`, `major_atrocities`,
+`player_flags`. Read-only field access, no new `FieldShape` handling
+expected (all plain scalars or 1D arrays, same shape as `region_total_bases`
+already has).
+
+**New `MFaction` field needed:** `rule_morale`.
+
+**Three helpers deliberately kept opaque (host wrappers, not ported)** —
+same precedent as `social_calc` in 4.5, engine mechanics rather than the
+attack decision itself:
+- `great_beelzebub(faction_id, is_aggressive)` / `great_satan(faction_id,
+  is_aggressive)` (`faction.cpp:834,853`) — "who is the dominant AI threat"
+  heuristics; pull in `diff_level`, `DIFF_TRANSCEND`/`DIFF_LIBRARIAN`,
+  `aah_ooga()`, `climactic_battle()`. Porting the whole tree isn't worth it
+  for two boolean reads.
+- `has_agenda(faction_id_1, faction_id_2, status)` (`faction.cpp:388`) is
+  trivial (`Factions[f1].diplo_agenda[f2] & status`) — could go either way
+  (port as an FFI field read on a new `diplo_agenda[9]` field, or keep as a
+  wrapper like `is_human`/`has_treaty` already are). Default: wrapper, for
+  consistency with the rest of this module; revisit only if it turns out to
+  matter.
+
+**HQ region lookup — new single-purpose wrapper, `BASE` FFI deliberately
+deferred:** the function needs the map region each faction's HQ base sits
+in (`faction.cpp:1628-1638`: loops `Bases[]`, checks
+`has_fac_built(FAC_HEADQUARTERS, i)`, then `region_at(x, y)`). `BASE` is not
+in the FFI yet (same gap noted in 4.5) and item 3 (production/plans) will
+need it for real, across many fields — exposing one field's worth here
+just to unblock this port would likely need redoing once item 3 starts.
+Instead: one new host wrapper, `hq_region(faction_id) -> region_id | -1`,
+doing `find_hq()` (`faction.h:35`, already exists) + coordinate lookup +
+`region_at()` (`map.cpp:269`) entirely in C++. Matches the
+`defense_modifier`/`keep_fungus` precedent (single-field accessors) from
+4.5.
+
+**New globals/enums:** `FactionRankings` (`engine.h:452`, already flagged
+in 4.5 as "needed only for item 2b, add then" — now's the time),
+`RULES_INTENSE_RIVALRY`, `AGENDA_UNK_200`, plus whatever `DIPLO_*` flags
+`evaluate_attack`'s `has_treaty()` calls use that aren't already in the
+enum table (check against the existing list before assuming any are
+missing).
+
+**Integration wrinkle worth knowing about, not a blocker:**
+`lua/ai/tech.lua:270,273` already calls `faction.mod_wants_to_attack(...)`
+(asking C++'s answer as an input to its own scoring). Once the dual-run
+seam is added inside `mod_wants_to_attack` itself, those two call sites
+will transitively trigger the new Lua hook and dual-run logging too, nested
+inside tech scoring — expected, not a sign of a wiring bug if the log looks
+busier than a naive per-turn call count would suggest.
+
+**Files to touch when implementing:** `tools/gen_ffi.cpp` (fields/enums/
+globals above), `src/luaai.h` + `src/luaai.cpp` (new `LuaHostApi` entries:
+`great_beelzebub`, `great_satan`, `has_agenda` or the field instead,
+`hq_region`; `api_version` bump to 5), `src/faction.cpp` (seam in
+`mod_wants_to_attack`, dual-run instrumentation mirroring the existing
+pattern), `lua/api/faction.lua` (accessors for the new fields + wrappers),
+`lua/ai/social.lua` or a new `lua/ai/war.lua` (port `evaluate_attack`,
+provenance metadata pointing at `src/faction.cpp` / `evaluate_attack` /
+the same `upstream_commit` used elsewhere), `lua/ai/init.lua` (register
+the hook).
+
+---
+
 ## Phase 5 — validation
 
 ### 5.1 Shadow wrapper (in `lua_ai_hook`, C side — Class 1/2 only)

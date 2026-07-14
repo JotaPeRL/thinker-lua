@@ -63,4 +63,11 @@ return {
     social_ai_bias = funcs.social_ai_bias,
     social_calc = social_calc,
     social_upheaval = social_upheaval,
+    -- War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
+    -- 4.6): great_beelzebub/great_satan/has_agenda stay opaque host calls;
+    -- hq_region replaces evaluate_attack's own Bases[]/region_at scan.
+    great_beelzebub = funcs.great_beelzebub,
+    great_satan = funcs.great_satan,
+    has_agenda = funcs.has_agenda,
+    hq_region = funcs.hq_region,
 }
