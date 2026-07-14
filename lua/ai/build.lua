@@ -487,6 +487,45 @@ local function select_combat(base_id, sea_base, build_ships)
     return find_proto(base_id, E.TRFLAG_LAND, E.WMODE_COMBAT, last_defend)
 end
 
+-- Production/plans port, third slice (porting-order item 3,
+-- IMPLEMENTATION_DETAILS.md 4.9): plan.cpp:8-13/15-31. Neither fits
+-- lua_ai_hook's int-args-in/int-result-out contract (facility_score takes
+-- a WItem *input*, governor_priorities is void with a WItem *output*), so
+-- unlike every other function in this file, these are NOT hooked -- plain
+-- library functions only, validated by inspection now, not a live
+-- dual-run (see 4.9 for why). WItem is a plain table here
+-- ({AI_growth=.., AI_tech=.., AI_wealth=.., AI_power=.., AI_fight=..}),
+-- not an FFI struct: lua/ai/ never touches ffi, and there's no engine
+-- memory backing a WItem to justify one -- it's a short-lived scoring
+-- accumulator in the C++ original too.
+local function facility_score(item_id, wgov)
+    local p = tech.facility(item_id)
+    return wgov.AI_fight * p.AI_fight
+        + wgov.AI_growth * p.AI_growth + wgov.AI_power * p.AI_power
+        + wgov.AI_tech * p.AI_tech + wgov.AI_wealth * p.AI_wealth
+end
+
+local function governor_priorities(base_id)
+    local base = base_api.get(base_id)
+    local f = faction.get(base.faction_id)
+    local gov = base.governor_flags
+    local wgov = {}
+    if faction.is_human(base.faction_id) then
+        wgov.AI_growth = bit.band(gov, E.GOV_PRIORITY_EXPLORE) ~= 0 and 4 or 1
+        wgov.AI_tech = bit.band(gov, E.GOV_PRIORITY_DISCOVER) ~= 0 and 4 or 1
+        wgov.AI_wealth = bit.band(gov, E.GOV_PRIORITY_BUILD) ~= 0 and 4 or 1
+        wgov.AI_power = bit.band(gov, E.GOV_PRIORITY_CONQUER) ~= 0 and 4 or 1
+        wgov.AI_fight = clamp((idiv(base.defend_goal, 2) - 1) * 2, -2, 2)
+    else
+        wgov.AI_growth = f.AI_growth ~= 0 and 4 or 1
+        wgov.AI_tech = f.AI_tech ~= 0 and 4 or 1
+        wgov.AI_wealth = f.AI_wealth ~= 0 and 4 or 1
+        wgov.AI_power = f.AI_power ~= 0 and 4 or 1
+        wgov.AI_fight = clamp(2 * f.AI_fight, -2, 2)
+    end
+    return wgov
+end
+
 port.need_police = need_police
 port.unit_support_plan = unit_support_plan
 port.check_retool = check_retool
@@ -498,4 +537,6 @@ port.unit_score = unit_score
 port.find_proto = find_proto
 port.select_colony = select_colony
 port.select_combat = select_combat
+port.facility_score = facility_score
+port.governor_priorities = governor_priorities
 return port

@@ -706,8 +706,14 @@ enable Lua by default on the branch → next.
    > coordinates until now); fixed, re-verified clean over turns 101-105,
    > zero mismatches. Also switched `lua_strict` to `0` for iterative
    > testing (a single hook error no longer kills the whole session's Lua
-   > AI). See `IMPLEMENTATION_DETAILS.md` 4.8. `select_build` itself and
-   > the rest of this item remain untouched.
+   > AI). See `IMPLEMENTATION_DETAILS.md` 4.8. Third slice
+   > (`governor_priorities`+`facility_score`): implemented as plain
+   > unhooked library functions — neither fits `lua_ai_hook`'s int-in/
+   > int-out contract (one takes a struct input, the other returns a
+   > struct via out-param), so there's no dual-run seam possible for
+   > these two; validated by inspection only, see `IMPLEMENTATION_
+   > DETAILS.md` 4.9. `select_build` itself and the rest of this item
+   > remain untouched.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +

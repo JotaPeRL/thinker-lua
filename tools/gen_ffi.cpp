@@ -367,6 +367,9 @@ int main() {
         // DETAILS.md 4.8).
         FIELD(BASE, defend_range),
         FIELD(BASE, mineral_intake_2),
+        // Production/plans port, third slice (item 3, IMPLEMENTATION_
+        // DETAILS.md 4.9).
+        FIELD(BASE, defend_goal),
     }});
 
     printf("]]\n\n");
@@ -573,6 +576,11 @@ int main() {
     printf("    GOV_MAY_PROD_LAND_DEFENSE = %d,\n", GOV_MAY_PROD_LAND_DEFENSE);
     printf("    GOV_MAY_PROD_NAVAL_COMBAT = %d,\n", GOV_MAY_PROD_NAVAL_COMBAT);
     printf("    RFLAG_AQUATIC = %d,\n", RFLAG_AQUATIC);
+    // Production/plans port, third slice (item 3, IMPLEMENTATION_DETAILS.md 4.9).
+    printf("    GOV_PRIORITY_EXPLORE = %d,\n", GOV_PRIORITY_EXPLORE);
+    printf("    GOV_PRIORITY_DISCOVER = %d,\n", GOV_PRIORITY_DISCOVER);
+    printf("    GOV_PRIORITY_BUILD = %d,\n", GOV_PRIORITY_BUILD);
+    printf("    GOV_PRIORITY_CONQUER = %d,\n", GOV_PRIORITY_CONQUER);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

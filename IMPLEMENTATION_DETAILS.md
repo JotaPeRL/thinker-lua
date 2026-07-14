@@ -998,6 +998,62 @@ faction.lua` or `base.lua` (wrapper accessors), `lua/ai/build.lua`
 
 ---
 
+### 4.9 Production/plans port, third slice: `governor_priorities`/`facility_score` — implemented (not dual-run verifiable, by design)
+
+> **Status (2026-07-14): implemented, building clean on both presets,
+> syntax-checked.** Both fields/enums landed in `tools/gen_ffi.cpp`
+> (`BASE.defend_goal`, 4 `GOV_PRIORITY_*`) exactly as scoped, no surprises
+> this time. No `LuaHostApi` change (`api_version` stays at 7) — nothing
+> here needed a host wrapper. No in-game run possible or meaningful: as
+> explained below, neither function fits the hook contract, so there is no
+> seam to exercise and no `lua.log`/`debug.txt` signal to check.
+
+The last two `select_build` helpers cheap enough to be worth doing before
+`select_build` itself. Both are tiny: `facility_score` (`plan.cpp:8-13`, 6
+loc) needs nothing new — every `CFacility` field it reads (`AI_fight`,
+`AI_growth`, `AI_power`, `AI_tech`, `AI_wealth`) has been in the FFI since
+the tech pilot. `governor_priorities` (`plan.cpp:15-31`, 17 loc) needs one
+new `BASE` field (`defend_goal`) and four enums
+(`GOV_PRIORITY_EXPLORE`/`DISCOVER`/`BUILD`/`CONQUER`) — everything else
+(`governor_flags`, `is_human`, `Faction.AI_growth/AI_tech/AI_wealth/
+AI_power/AI_fight`) is already exposed.
+
+**Neither can be hooked — this is the load-bearing difference from every
+prior item.** `find_proto`/`select_colony`/`select_combat` all return a
+single `int`, fitting `lua_ai_hook`'s int-args-in/int-result-out contract
+exactly, even with no external caller. `facility_score` returns `int` but
+takes a `WItem&` *input*; `governor_priorities` is `void` and writes into
+a `WItem&` *output* (5 fields: `AI_growth`, `AI_tech`, `AI_wealth`,
+`AI_power`, `AI_fight`). Packing 5 small ints into one for the sake of a
+temporary dual-run check would need a new hook shape — exactly the
+"zoo of `lua_ai_hook_i/_ii/_b/_v` variants" the plan (4.1) rules out.
+
+**Consequence: these two ship as plain, unhooked Lua library functions,
+validated by inspection now, not by a live dual-run.** They'll get real
+in-game exercise transitively once `select_build` itself is ported and
+hooked (it calls both), or via Phase 5.2's golden-trace/replay runner once
+that exists — neither of which changes today. This is a deliberate,
+narrower kind of "done" than every other function in this file: implemented
+and syntax-checked, not dual-run-verified. Low risk given the size (23 loc
+combined, no RNG, no branching deeper than one `if`/`else`), but worth
+stating plainly rather than letting the usual "in-game verified clean"
+header imply something that didn't happen this time.
+
+**`WItem` representation in Lua:** a plain table (`{AI_growth=.., AI_tech=..,
+AI_wealth=.., AI_power=.., AI_fight=..}`), not an FFI struct — `lua/ai/`
+never touches `ffi` and there's no engine-memory backing to justify one
+here; `WItem` only ever exists as a short-lived scoring accumulator both in
+C++ and now in Lua.
+
+**Files to touch when implementing:** `tools/gen_ffi.cpp` (`BASE.
+defend_goal`, 4 `GOV_PRIORITY_*` enums), `lua/ai/build.lua` (extend:
+`facility_score`, `governor_priorities`, both unhooked), no `LuaHostApi`/
+`luaai.cpp`/`luaai.h` changes needed (nothing new to wrap — both are pure
+field reads once the two additions above land), no `lua/ai/init.lua`
+change (nothing to register).
+
+---
+
 ## Phase 5 — validation
 
 ### 5.1 Shadow wrapper (in `lua_ai_hook`, C side — Class 1/2 only)
