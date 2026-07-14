@@ -1480,6 +1480,13 @@ int __cdecl mod_social_ai(int faction_id, int a2, int a3, int a4, int a5, CSocia
     }
     debug("social_params %d %d %8s defense: %d creche: %d pop_boom: %d want_pop: %3d pop_total: %3d\n",
         *CurrentTurn, faction_id, m->filename, def_value, has_creche, pop_boom, want_pop, pop_total);
+    // TEMPORARY porting-order-item-2 verification instrumentation, same
+    // dual-run mismatch pattern as src/tech.cpp's mod_tech_val/mod_tech_ai
+    // (IMPLEMENTATION_PLAN.md Phase 4 verification notes). pop_boom is
+    // final at this point and nothing has been mutated yet, so this is
+    // safe to run before C++'s own selection loop below.
+    int lua_prop;
+    bool lua_handled = lua_ai_hook("mod_social_ai", &lua_prop, {faction_id, pop_boom ? 1 : 0});
     int score_diff = 1 + (*CurrentTurn + 11*faction_id) % 6;
     int sf = -1;
     int sm2 = -1;
@@ -1503,6 +1510,11 @@ int __cdecl mod_social_ai(int faction_id, int a2, int a3, int a4, int a5, CSocia
                 soc.models[sf] = sm2;
             }
         }
+    }
+    int cpp_prop = (sf >= 0) ? sf * MaxSocialModelNum + sm2 : -1;
+    if (lua_handled && lua_prop != cpp_prop) {
+        debug("lua/cpp mod_social_ai mismatch: faction=%d pop_boom=%d lua=%d cpp=%d\n",
+            faction_id, pop_boom, lua_prop, cpp_prop);
     }
     int cost;
     if (sf >= 0 && f->energy_credits > (cost = social_upheaval(faction_id, &soc))) {

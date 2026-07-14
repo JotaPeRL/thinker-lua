@@ -616,15 +616,73 @@ Implementation notes:
 
 ### 4.2 Porting order (lowest risk to highest)
 
+> **Item 1 (research pilot) status: 🔨 in-game verified (2026-07-13), formal
+> validation still open.** `mod_tech_val`/`mod_tech_ai` ported 1:1 to
+> `lua/ai/tech.lua`, registered as Class 1 hooks via `lua/ai/init.lua` and
+> `luaai.cpp`'s registry (`register_hooks()`, `lua_ai_hook()`,
+> `LuaHostApi` bumped to `api_version=3` with `revised_tech_cost`/
+> `tech_balance_enabled` added). Both hooks in `src/tech.cpp` now carry
+> **temporary** dual-run instrumentation: every call runs both Lua and C++,
+> C++'s value still governs, and a mismatch is logged
+> (`lua/cpp mod_tech_val mismatch: ...` / `lua/cpp mod_tech_ai mismatch: ...`)
+> — this is a manual stand-in for Phase 5.1's shadow mode, not shadow mode
+> itself. `mod_tech_ai` additionally consumes the map RNG (`random_get`,
+> once per available tech via Lua's `rand.map()`); its dual-run follows the
+> plan's 5.1 Class-1 shadow procedure precisely — snapshot `random_state()`
+> before the Lua run, `random_reseed()` back to it before the real C++ run —
+> so comparing both sides doesn't burn the RNG stream twice or desync it.
+> Verified via `lua.log`/`debug.txt` across two Wine play sessions (the
+> second one after adding `mod_tech_ai`'s comparison): both sessions show
+> `register_hooks: 2 hook(s) registered`, both hooks logged
+> `invoked and handled` (confirming they actually ran, not just registered),
+> **zero `mismatch` lines in either session**, no
+> `error in 'mod_tech_val'`/`'mod_tech_ai'` lines. **Not yet done:**
+> multi-session/multi-faction coverage beyond these two sessions (many
+> `tech_val` branches — `climactic_battle`, `tech_balance_enabled`,
+> weapon-preq loops — may be under-exercised so far); the real Phase 5.1/
+> 5.2 machinery (golden traces, `lua_shadow` flag) this instrumentation
+> stands in for; removing the temporary dual-run code once formal
+> validation lands; provenance entries in `docs/LUA_PORTING.md` (Phase 6).
+
 Each item follows the same cycle: port 1:1 → golden traces pass (5.2) → shadow
 mode per class (5.1) until divergences reach zero at the applicable level →
 enable Lua by default on the branch → next.
 
 1. **Pilot — research AI** (`tech.cpp`: `mod_tech_val` scoring, `mod_tech_ai`;
    ~400 relevant loc). Pure query, small, easy to compare. Validates the whole
-   pipeline (hook, FFI reads, host API, RNG, traces, shadow).
+   pipeline (hook, FFI reads, host API, RNG, traces, shadow). See status note
+   above.
 2. **Social engineering** (`faction.cpp`: `mod_social_ai` scoring,
    `mod_wants_to_attack`). Transactional/pure, once per faction per turn.
+
+   > **Status: ✅ in-game verified clean (2026-07-14).** Two Wine play
+   > sessions (turns 9-13 and turns 80-89, all 7 AI factions, ~145
+   > `mod_social_ai` calls combined, covering both `pop_boom` 0/1 and both
+   > `sf=-1`/a real proposed-and-applied social-model change) — zero `lua/cpp
+   > mod_social_ai mismatch` lines in either. See `IMPLEMENTATION_DETAILS.md`
+   > 4.5 for the numbers. `mod_wants_to_attack` (item 2b) still untouched;
+   > temporary dual-run instrumentation still in place pending real Phase 5.1
+   > shadow mode, same as M4/tech.
+   > `social_score()` + `mod_social_ai`'s selection loop ported to
+   > `lua/ai/social.lua`, registered as a Class-2-shaped `mod_social_ai`
+   > hook with the same temporary dual-run pattern as item 1 (M4); the
+   > `pop_boom`/`want_pop` base-iteration stays in C++ (no `BASE` struct in
+   > the FFI yet), passed in as a plain int hook argument. The proposal
+   > (category + model choice) is a packed int (`sf*4+sm2`, or `-1` for "no
+   > change"), so `lua_ai_hook`'s existing int-args/int-result signature
+   > needed no changes. `mod_wants_to_attack` deferred to follow-up item
+   > **2b** (large, self-contained, ~180 loc), untouched. `LuaHostApi`
+   > bumped to `api_version=4` with 11 new entries (`social_calc`,
+   > `society_avail`, `social_upheaval`, `has_project`, `has_free_facility`,
+   > `has_aircraft`, `mineral_factor`, `un_charter`, `defense_modifier`,
+   > `keep_fungus`, `social_ai_bias`). `tools/gen_ffi.cpp` gained a 2D-array
+   > `FieldShape` specialization (`Faction::social_psych` is `int32_t[8][9]`,
+   > flattened to a `[72]` cdef field, indexed `i*9+j` from Lua). Full
+   > detail, including corrections to the original scope found while
+   > implementing (a few fields/enums it missed, a few it over-listed), is
+   > in `IMPLEMENTATION_DETAILS.md` 4.5 — read that before touching this
+   > again. Both build presets compile clean; every touched Lua file passed
+   > a native-`luajit` syntax check.
 3. **Production and plans** (`build.cpp` + `plan.cpp`): `governor_priorities`,
    `facility_score`, `unit_score`/`find_proto`, `select_colony`/`select_combat`,
    `select_build`, `find_project`, `mod_base_hurry`, then `plans_upkeep`,
@@ -739,6 +797,61 @@ that can only confirm the port matches the mock. Priority order:
 
 ### 5.3 Determinism and regression — graduated equivalence
 
+> **Autoplay spike status: ✅ dialog-bypass mechanism implemented
+> (2026-07-14), in-game verification pending.** Motivation: validating the
+> social-engineering port (4.2 item 2) needs many turns/factions, and an
+> all-AI game (every faction computer-controlled — a native game feature,
+> `is_human()` just reads a setup-time bitmask, `faction.cpp:109`) can run
+> unattended *except* that several event/announcement dialogs fire
+> unconditionally, not gated on `is_human`, and block the message loop
+> waiting for a click. Rather than trying to enumerate every such path up
+> front (acknowledged as impossible in general — this is deliberately an
+> iterative spike, not a project), a grep across all of `src/` found that
+> every popup/dialog call funnels through exactly six raw engine
+> primitives: `POP2`, `popp`, `popp_2`, `interlude`, `X_pop_9`,
+> `X_pops_18`. New `conf.autoplay` option (0/1, `main.h`/`main.cpp`/
+> `docs/thinker.ini`) + new `src/autoplay.cpp`/`.h`: `engine.cpp`'s
+> definitions of those six globals now point at thin shims instead of the
+> raw addresses (kept as `<name>_engine`) — a 6-line change, zero call
+> sites touched, since the redirection happens once at the pointer
+> definition, not per caller. When `conf.autoplay` is on, each shim logs
+> the call (function + label argument) to `autoplay.log` in the game
+> folder and returns a safe default (`0`) instead of opening the real
+> modal; when off, it forwards to the real engine function unchanged —
+> `autoplay=0` is a no-op by construction. Both build presets compile and
+> link clean. **Iteration model, not a finished catalog:** if some path
+> still hangs, `autoplay.log`'s last line names exactly which of the six
+> primitives and which label was reached right before it — add a
+> label-specific case in that one shim (`src/autoplay.cpp`), rebuild,
+> retry. Expected to converge quickly given the funnel is this narrow.
+> **Caveat (not a bug, a scope limit):** the shims key only on
+> `conf.autoplay`, not on `is_human` — if a human faction exists in the
+> same session with `autoplay=1`, dialogs meant for that human's own
+> choices (diplomacy proposals, the SOCIETY social-engineering picker,
+> event notices) are auto-dismissed too, same as AI-facing ones. This
+> option is for unattended all-AI sessions only; leave it at the default
+> `0` for normal human play. **Deliberately not implemented in this
+> pass:** the `autoplay_turns=N` auto-save-and-exit idea below — forcing
+> an exit via `ControlTurnA`/`ControlTurnB` outside `end_of_game`'s own
+> sequence (which also does `report_score`/`hall_of_fame`/replay
+> bookkeeping first) isn't well-understood enough yet to do blind; that
+> was a separate ask from the dialog-hang problem this spike actually
+> targets, and stopping unattended runs manually is sufficient for now.
+> **Not yet done:** an actual unattended all-AI play session confirming
+> turns advance without any hang; if one is found, treat it as the next
+> iteration of this spike, not a regression.
+>
+> **Correction found on first test (2026-07-14):** the New Game screen has
+> no "0 human players" option — a faction must always be picked to
+> control. That faction then kept running with *no* Thinker AI at all
+> (not just undismissed popups): `thinker_enabled()` (`faction.cpp:142`)
+> separately excludes any human-marked faction from the whole AI stack.
+> Fixed with `autoplay_demote_human()` (`src/autoplay.cpp`, called from
+> the `mod_turn_upkeep` seam): with `conf.autoplay=1` it clears the picked
+> faction's human bit every turn, handing it to Thinker AI like any other
+> — see `IMPLEMENTATION_DETAILS.md` 5.3.1 for the mechanism. Rebuilt and
+> redeployed; retest pending.
+
 Bit-exact equality is the goal only where it is achievable. Known threats to
 exactness even in a faithful port: float/double vs Lua number conversions,
 integer division/modulo semantics (mitigated by 3.1's `idiv`/`imod` rule),
@@ -844,9 +957,15 @@ Verbose `debug.txt` diffable between runs.
   where `debug_verbose` defaults on). **Do not build the full map/veh/
   base/path API up front** — its ideal shape is discovered by porting.
   Nothing blocks M4 (research pilot) from starting now.
-- **M4 — Research pilot:** research AI in Lua enabled by default; golden traces
-  and shadow runs clean. From here the fork is already useful (custom research
-  AI can be experimented with).
+- **M4 — Research pilot:** 🔨 in progress (2026-07-13) — `mod_tech_val`/
+  `mod_tech_ai` ported and hooked, both now with dual-run mismatch
+  instrumentation, in-game verified clean (zero mismatches) over two manual
+  play sessions (see Phase 4.2 item-1 status note). Still open: broader
+  autoplay/multi-faction coverage, the real Phase 5.1/5.2 machinery (golden
+  traces, `lua_shadow` flag) this temporary dual-run stands in for, and
+  removing that temporary instrumentation once formal validation lands. Not
+  yet "enabled by default" in the Done-when sense — treat as pilot-proven,
+  not closed.
 - **M3B — API expansion on demand:** the API grows as each subsequent domain
   requires, with the same generate-validate discipline.
 - **M5 — Production/social in Lua:** porting-order modules 2 and 3 active.

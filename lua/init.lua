@@ -6,12 +6,16 @@
 -- never open, so modules load each other with dofile/loadfile (base
 -- library, always available), not require.
 --
--- No AI hooks exist yet (Phase 4). This wires up the binding layer:
--- validates the generated engine-struct cdefs against this build's real
--- LuaJIT layout before anything else trusts them. lua/api/* (rand, cmath,
--- faction, tech, map, log) and lua/ffi/funcs.lua (the LuaHostApi
--- handshake) are loaded on demand by AI code as Phase 4 is written, not
--- eagerly here.
+-- This wires up the binding layer: validates the generated engine-struct
+-- cdefs against this build's real LuaJIT layout before anything else
+-- trusts them. lua/api/* (rand, cmath, faction, tech, map, game, log) and
+-- lua/ffi/funcs.lua (the LuaHostApi handshake) are loaded on demand by AI
+-- code, not eagerly here.
+--
+-- AI hooks (lua/ai/*) are NOT loaded from here: src/luaai.cpp's
+-- register_hooks() loads lua/ai/init.lua directly, as a separate step
+-- right after this file finishes, and reads its returned table into the
+-- C++-side registry (IMPLEMENTATION_PLAN.md Phase 4.1).
 
 host_log("lua/init.lua loaded")
 

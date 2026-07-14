@@ -7,6 +7,7 @@
  */
 
 #include <cstdint>
+#include <initializer_list>
 
 // Versioned struct of function pointers exposed to Lua as a single
 // lightuserdata (the `__host_api_ptr` global, cast by lua/ffi/funcs.lua).
@@ -33,6 +34,25 @@ struct LuaHostApi {
     int (*mod_tech_avail)(int tech_id, int faction_id);
     int (*tech_is_preq)(int preq_tech_id, int parent_tech_id, int range);
     int (*bad_reg)(int region);
+    bool (*revised_tech_cost)();
+    int (*tech_balance_enabled)(); // -> conf.tech_balance
+    // Social engineering (porting-order item 2, IMPLEMENTATION_DETAILS.md
+    // 4.5): engine mechanics that stay C++, exposed read-only to the
+    // social_score/mod_social_ai Lua port. models[4]/out_values[11]/cost
+    // wrappers build/read a local CSocialCategory/CSocialEffect from a flat
+    // int array -- see src/luaai.cpp for why that's safe (CSocialEffect's
+    // values[11] union member).
+    void (*social_calc)(const int32_t* models, int32_t faction_id, int32_t* out_values);
+    int32_t (*society_avail)(int32_t sf, int32_t sm, int32_t faction_id);
+    int32_t (*social_upheaval)(int32_t faction_id, const int32_t* models);
+    bool (*has_project)(int32_t item_id, int32_t faction_id);
+    bool (*has_free_facility)(int32_t item_id, int32_t faction_id);
+    bool (*has_aircraft)(int32_t faction_id);
+    int32_t (*mineral_factor)(int32_t faction_id, int32_t se_industry);
+    bool (*un_charter)();
+    int32_t (*defense_modifier)(int32_t faction_id); // -> plans[faction_id].defense_modifier
+    int32_t (*keep_fungus)(int32_t faction_id);       // -> plans[faction_id].keep_fungus
+    int32_t (*social_ai_bias)();                      // -> conf.social_ai_bias
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai
@@ -48,3 +68,16 @@ void lua_ai_shutdown();
 // the next lua_ai_turn_upkeep() call). Called from the Alt+U key handler;
 // never reloads synchronously, since a keypress can land mid-callback.
 void lua_ai_request_reload();
+
+// Class 1 (pure query) hook dispatch (IMPLEMENTATION_PLAN.md Phase 4.1).
+// Looks up `name` in the registry populated from lua/ai/init.lua's
+// returned table at (re)load, calls it with `args` pushed as plain Lua
+// numbers, and writes the result to *out. Returns false ("not handled":
+// caller must run its own C++ body instead) when lua_ai=0, the hook
+// isn't registered, the Lua call returned nil, or it errored (Class 1
+// contract: always safe to fall back, since nothing is mutated before
+// this returns) -- errors still go through the same dedup/lua_strict
+// path as any other Lua error. One function instead of a family of
+// `_i`/`_ii`/`_b` variants, per the plan's explicit rule -- every hook
+// needed so far is int-args-in, int-result-out.
+bool lua_ai_hook(const char* name, int* out, std::initializer_list<int> args);

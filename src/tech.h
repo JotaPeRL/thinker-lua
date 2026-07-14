@@ -3,6 +3,7 @@
 #include "main.h"
 
 const char* tech_str(int tech_id);
+bool revised_tech_cost();
 int __cdecl has_tech(int tech_id, int faction_id);
 int __cdecl tech_level(int tech_id, int lvl);
 int __cdecl tech_category(int tech_id);

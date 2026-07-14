@@ -234,6 +234,8 @@ struct Config {
     int lua_ai = 1;
     int lua_shadow = 0; // reserved for Phase 5 shadow mode; no-op for now
     int lua_strict = 0;
+    int autoplay = 0; // Phase 5.3 spike: bypass modal popups, log to autoplay.log
+
     int tech_balance = 0;
     int base_hurry = 0;
     int base_spacing = 3;

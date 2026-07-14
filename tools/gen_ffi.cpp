@@ -104,6 +104,15 @@ template<typename T, size_t N> struct FieldShape<T[N]> {
     using Elem = T;
     static constexpr size_t count = N;
 };
+// 2D array fields (e.g. Faction::social_psych[8][9]) flatten to a single
+// cdef array of N*M elements -- Lua indexes it arr[i*M+j] to reproduce C's
+// row-major layout. More specialized than FieldShape<T[N]> (which would
+// otherwise match with Elem deduced as the inner array type), so overload
+// resolution picks this one for genuine 2D array members.
+template<typename T, size_t N, size_t M> struct FieldShape<T[N][M]> {
+    using Elem = T;
+    static constexpr size_t count = N * M;
+};
 
 template<typename MemberT>
 static FieldDesc make_field(const char* name, size_t offset) {
@@ -222,6 +231,7 @@ int main() {
         FIELD(UNIT, chassis_id),
         FIELD(UNIT, weapon_id),
         FIELD(UNIT, armor_id),
+        FIELD(UNIT, reactor_id),
         FIELD(UNIT, preq_tech),
     }});
 
@@ -232,6 +242,12 @@ int main() {
     emit_struct(stdout, {"MFaction", sizeof(MFaction), alignof(MFaction), {
         FIELD(MFaction, rule_psi),
         FIELD(MFaction, rule_population),
+        FIELD(MFaction, soc_priority_category),
+        FIELD(MFaction, soc_priority_model),
+        FIELD(MFaction, soc_priority_effect),
+        FIELD(MFaction, thinker_last_mc_turn),
+        FIELD(MFaction, rule_drone),
+        FIELD(MFaction, rule_talent),
     }});
 
     emit_struct(stdout, {"CRules", sizeof(CRules), alignof(CRules), {
@@ -255,6 +271,31 @@ int main() {
         FIELD(Faction, SE_probe_base),
         FIELD(Faction, unk_47),
         FIELD(Faction, region_visible_tiles),
+        // Social engineering (porting-order item 2, IMPLEMENTATION_DETAILS.md
+        // 4.5): SE_Politics..SE_Future is the "current" category/model
+        // array (CSocialCategory overlay); SE_economy..SE_research is the
+        // "current" effect-value array (CSocialEffect overlay) -- both are
+        // plain consecutive int32_t runs, not separate struct types, see
+        // 4.5's "key insight". social_support/social_psych/social_effic are
+        // the AI's score lookup tables (social_psych is 2D, flattened here).
+        FIELD(Faction, SE_Politics),
+        FIELD(Faction, SE_Economics),
+        FIELD(Faction, SE_Values),
+        FIELD(Faction, SE_Future),
+        FIELD(Faction, SE_economy),
+        FIELD(Faction, SE_effic),
+        FIELD(Faction, SE_support),
+        FIELD(Faction, SE_talent),
+        FIELD(Faction, SE_morale),
+        FIELD(Faction, SE_police),
+        FIELD(Faction, SE_growth),
+        FIELD(Faction, SE_planet),
+        FIELD(Faction, SE_probe),
+        FIELD(Faction, SE_industry),
+        FIELD(Faction, SE_research),
+        FIELD(Faction, social_support),
+        FIELD(Faction, social_psych),
+        FIELD(Faction, social_effic),
     }});
 
     printf("]]\n\n");
@@ -277,6 +318,12 @@ int main() {
     printf("    GameRules = 0x%08X,\n", 0x9A649C);
     printf("    MapCloudCover = 0x%08X,\n", 0x94A2B4);
     printf("    BaseCount = 0x%08X,\n", 0x9A64CC);
+    // Social engineering (porting-order item 2): plain scalar globals,
+    // addresses confirmed against src/engine.cpp (same provenance-by-comment
+    // convention as the addresses above).
+    printf("    SunspotDuration = 0x%08X,\n", 0x9A6800);
+    printf("    DiffLevel = 0x%08X,\n", 0x9A64C4);
+    printf("    MapAreaSqRoot = 0x%08X,\n", 0x949888);
     printf("  },\n");
     // Array bounds for the exposed rule tables, from src/main.h (not
     // included here -- same provenance-by-comment convention as the
@@ -290,8 +337,80 @@ int main() {
     printf("    MaxArmorNum = %d,\n", 14);         // main.h:126
     printf("    MaxReactorNum = %d,\n", 4);        // main.h:127
     printf("    MaxFacilityNum = %d,\n", 64);      // main.h:143
+    // MaxFacilityNum (main.h) is NOT the Facility[] array bound -- it
+    // undercounts, since the same array also holds Secret Project
+    // records at higher indices (e.g. FAC_HUNTER_SEEKER_ALGORITHM=85,
+    // FAC_ASCENT_TO_TRANSCENDENCE=102 both exceed 64). Found the hard
+    // way: an M4 in-game run hit "facility_id out of range: 85".
+    // FAC_EMPTY_SP_64 is the highest member of that enum (padding slots
+    // for unused Secret Project data) -- read from the compiler, not
+    // hand-typed, so this can't silently drift the way the hand-typed
+    // 64 above did.
+    printf("    MaxFacilityArrayNum = %d,\n", FAC_EMPTY_SP_64 + 1);
     printf("    MaxProtoNum = %d,\n", 512);        // main.h:116
     printf("    MaxRegionNum = %d,\n", 128);       // main.h:106
+    printf("    MaxRegionLandNum = %d,\n", 64);    // main.h:107
+    printf("    MaxSocialCatNum = %d,\n", 4);      // main.h:146
+    printf("    MaxSocialModelNum = %d,\n", 4);    // main.h:147
+    printf("    MaxSocialEffectNum = %d,\n", 11);  // main.h:148
+    printf("    GrowthPopBoom = %d,\n", 6);        // main.h:158
+    printf("  },\n");
+    // Enum constants the tech-AI port (M4) branches on. Values come
+    // straight from engine_enums.h (already included above for the
+    // struct headers) rather than being hand-typed into Lua -- the same
+    // discipline as `counts`, for the same reason (a hand-typed value
+    // can silently drift from the real one; a compiler-read value can't).
+    printf("  enums = {\n");
+    printf("    TECH_None = %d,\n", TECH_None);
+    printf("    TECH_CentMed = %d,\n", TECH_CentMed);
+    printf("    TECH_PlaEcon = %d,\n", TECH_PlaEcon);
+    printf("    TECH_AlphCen = %d,\n", TECH_AlphCen);
+    printf("    TECH_DocInit = %d,\n", TECH_DocInit);
+    printf("    TECH_EnvEcon = %d,\n", TECH_EnvEcon);
+    printf("    FAC_ASCENT_TO_TRANSCENDENCE = %d,\n", FAC_ASCENT_TO_TRANSCENDENCE);
+    printf("    FAC_HUNTER_SEEKER_ALGORITHM = %d,\n", FAC_HUNTER_SEEKER_ALGORITHM);
+    printf("    FAC_DREAM_TWISTER = %d,\n", FAC_DREAM_TWISTER);
+    printf("    FAC_HYBRID_FOREST = %d,\n", FAC_HYBRID_FOREST);
+    printf("    FAC_TREE_FARM = %d,\n", FAC_TREE_FARM);
+    printf("    FAC_CENTAURI_PRESERVE = %d,\n", FAC_CENTAURI_PRESERVE);
+    printf("    FAC_TEMPLE_OF_PLANET = %d,\n", FAC_TEMPLE_OF_PLANET);
+    printf("    FAC_HAB_COMPLEX = %d,\n", FAC_HAB_COMPLEX);
+    printf("    FAC_HABITATION_DOME = %d,\n", FAC_HABITATION_DOME);
+    printf("    FAC_RECYCLING_TANKS = %d,\n", FAC_RECYCLING_TANKS);
+    printf("    FAC_CHILDREN_CRECHE = %d,\n", FAC_CHILDREN_CRECHE);
+    printf("    FAC_RECREATION_COMMONS = %d,\n", FAC_RECREATION_COMMONS);
+    printf("    REC_FUSION = %d,\n", REC_FUSION);
+    printf("    REC_QUANTUM = %d,\n", REC_QUANTUM);
+    printf("    BSC_FORMERS = %d,\n", BSC_FORMERS);
+    printf("    CHS_FOIL = %d,\n", CHS_FOIL);
+    printf("    WPN_TERRAFORMING_UNIT = %d,\n", WPN_TERRAFORMING_UNIT);
+    printf("    WPN_SUPPLY_TRANSPORT = %d,\n", WPN_SUPPLY_TRANSPORT);
+    printf("    DIPLO_VENDETTA = %d,\n", DIPLO_VENDETTA);
+    printf("    DIPLO_COMMLINK = %d,\n", DIPLO_COMMLINK);
+    printf("    DIPLO_PACT = %d,\n", DIPLO_PACT);
+    printf("    DIPLO_TREATY = %d,\n", DIPLO_TREATY);
+    printf("    DIPLO_WANT_REVENGE = %d,\n", DIPLO_WANT_REVENGE);
+    printf("    RULES_BLIND_RESEARCH = %d,\n", RULES_BLIND_RESEARCH);
+    printf("    TFLAG_SECRETS = %d,\n", TFLAG_SECRETS);
+    printf("    PLAN_NAVAL_TRANSPORT = %d,\n", PLAN_NAVAL_TRANSPORT);
+    printf("    PLAN_DEFENSE = %d,\n", PLAN_DEFENSE);
+    printf("    PLAN_OFFENSE = %d,\n", PLAN_OFFENSE);
+    // Social engineering (porting-order item 2, IMPLEMENTATION_DETAILS.md 4.5).
+    printf("    FAC_CHILDREN_CRECHE = %d,\n", FAC_CHILDREN_CRECHE);
+    printf("    FAC_PUNISHMENT_SPHERE = %d,\n", FAC_PUNISHMENT_SPHERE);
+    printf("    FAC_COMMAND_NEXUS = %d,\n", FAC_COMMAND_NEXUS);
+    printf("    FAC_LONGEVITY_VACCINE = %d,\n", FAC_LONGEVITY_VACCINE);
+    printf("    FAC_CYBORG_FACTORY = %d,\n", FAC_CYBORG_FACTORY);
+    printf("    FAC_CLONING_VATS = %d,\n", FAC_CLONING_VATS);
+    printf("    FAC_TELEPATHIC_MATRIX = %d,\n", FAC_TELEPATHIC_MATRIX);
+    printf("    FAC_MANIFOLD_HARMONICS = %d,\n", FAC_MANIFOLD_HARMONICS);
+    printf("    DIFF_LIBRARIAN = %d,\n", DIFF_LIBRARIAN);
+    printf("    SOCIAL_C_ECONOMICS = %d,\n", SOCIAL_C_ECONOMICS);
+    printf("    SOCIAL_M_FRONTIER = %d,\n", SOCIAL_M_FRONTIER);
+    printf("    SOCIAL_M_SIMPLE = %d,\n", SOCIAL_M_SIMPLE);
+    printf("    SOCIAL_M_PLANNED = %d,\n", SOCIAL_M_PLANNED);
+    printf("    SOCIAL_M_GREEN = %d,\n", SOCIAL_M_GREEN);
+    printf("    RULES_SCN_NO_TECH_ADVANCES = %d,\n", RULES_SCN_NO_TECH_ADVANCES);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

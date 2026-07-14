@@ -21,6 +21,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 
 extern "C" {
 #include "lua.h"
@@ -29,22 +30,100 @@ extern "C" {
 #include "luajit.h"
 }
 
+// Trivial passthrough for conf.tech_balance -- a captureless lambda
+// converts implicitly to a plain function pointer, so this doesn't need
+// a named free function the way revised_tech_cost() (real logic, already
+// existed in tech.cpp) does.
+static int host_tech_balance_enabled() {
+    return conf.tech_balance;
+}
+
+// Social engineering (porting-order item 2, IMPLEMENTATION_DETAILS.md 4.5).
+// social_calc/social_upheaval take a flat 4-int model array from Lua and
+// build a local CSocialCategory to call the real engine function with --
+// CSocialCategory is 4 consecutive int32_t (models[4]), so a memcpy is
+// exact. CSocialEffect's values[11] union member means out_values can be
+// written through directly via reinterpret_cast, no separate marshalling.
+static void host_social_calc(const int32_t* models, int32_t faction_id, int32_t* out_values) {
+    CSocialCategory cat;
+    memcpy(cat.models, models, sizeof(cat.models));
+    social_calc(&cat, reinterpret_cast<CSocialEffect*>(out_values), faction_id, 0, 0);
+}
+
+static int32_t host_society_avail(int32_t sf, int32_t sm, int32_t faction_id) {
+    return society_avail(sf, sm, faction_id);
+}
+
+static int32_t host_social_upheaval(int32_t faction_id, const int32_t* models) {
+    CSocialCategory cat;
+    memcpy(cat.models, models, sizeof(cat.models));
+    return social_upheaval(faction_id, &cat);
+}
+
+static bool host_has_project(int32_t item_id, int32_t faction_id) {
+    return has_project((FacilityId)item_id, faction_id);
+}
+
+static bool host_has_free_facility(int32_t item_id, int32_t faction_id) {
+    return has_free_facility((FacilityId)item_id, faction_id);
+}
+
+static bool host_has_aircraft(int32_t faction_id) {
+    return has_aircraft(faction_id);
+}
+
+static int32_t host_mineral_factor(int32_t faction_id, int32_t se_industry) {
+    return mineral_factor(faction_id, se_industry);
+}
+
+static bool host_un_charter() {
+    return un_charter();
+}
+
+// plans[]/conf are Thinker-internal (not FFI-mapped, see
+// IMPLEMENTATION_DETAILS.md 3.4/4.5) -- exposed as single-field accessors
+// rather than pulling AIPlans/Config into the FFI generator.
+static int32_t host_defense_modifier(int32_t faction_id) {
+    return plans[faction_id].defense_modifier;
+}
+
+static int32_t host_keep_fungus(int32_t faction_id) {
+    return plans[faction_id].keep_fungus;
+}
+
+static int32_t host_social_ai_bias() {
+    return conf.social_ai_bias;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version         */ 2,
-    /* rand_game           */ game_randv,
-    /* rand_map            */ random_get,
-    /* is_human            */ is_human,
-    /* has_treaty          */ has_treaty,
-    /* climactic_battle    */ climactic_battle,
-    /* mod_wants_to_attack */ mod_wants_to_attack,
-    /* has_tech            */ has_tech,
-    /* tech_level          */ tech_level,
-    /* mod_tech_avail      */ mod_tech_avail,
-    /* tech_is_preq        */ tech_is_preq,
-    /* bad_reg             */ bad_reg,
+    /* api_version          */ 4,
+    /* rand_game            */ game_randv,
+    /* rand_map             */ random_get,
+    /* is_human             */ is_human,
+    /* has_treaty           */ has_treaty,
+    /* climactic_battle     */ climactic_battle,
+    /* mod_wants_to_attack  */ mod_wants_to_attack,
+    /* has_tech             */ has_tech,
+    /* tech_level           */ tech_level,
+    /* mod_tech_avail       */ mod_tech_avail,
+    /* tech_is_preq         */ tech_is_preq,
+    /* bad_reg              */ bad_reg,
+    /* revised_tech_cost    */ revised_tech_cost,
+    /* tech_balance_enabled */ host_tech_balance_enabled,
+    /* social_calc          */ host_social_calc,
+    /* society_avail        */ host_society_avail,
+    /* social_upheaval      */ host_social_upheaval,
+    /* has_project          */ host_has_project,
+    /* has_free_facility    */ host_has_free_facility,
+    /* has_aircraft         */ host_has_aircraft,
+    /* mineral_factor       */ host_mineral_factor,
+    /* un_charter           */ host_un_charter,
+    /* defense_modifier     */ host_defense_modifier,
+    /* keep_fungus          */ host_keep_fungus,
+    /* social_ai_bias       */ host_social_ai_bias,
 };
 
 static lua_State* L = NULL;
@@ -54,6 +133,12 @@ static bool disabled_for_session = false;
 static bool reload_requested = false;
 static int generation = -1;
 static std::unordered_set<size_t> logged_errors;
+
+// Class 1 hook registry: hook name -> LUA_REGISTRYINDEX ref, resolved once
+// per (re)load (register_hooks(), called from create_lua_state()) so
+// per-turn dispatch is a single lua_rawgeti, never a per-call string
+// lookup (IMPLEMENTATION_PLAN.md Phase 4.1).
+static std::unordered_map<std::string, int> hook_refs;
 
 // Runtime logging: its own file, always available (debug.txt only exists in
 // debug builds), mirrored to debug.txt when that log is open.
@@ -194,6 +279,41 @@ static void handle_lua_error(const char* hook_name, const char* traceback) {
     }
 }
 
+// Loads lua/ai/init.lua (if present) and registers every entry of the
+// table it returns as a Class 1 hook. Runs after lua/init.lua so the
+// sandbox and every lua/api/* module it may need are already usable.
+// Absence of the file (no AI hooks ported yet) is not an error -- an
+// empty hook_refs just means lua_ai_hook() always reports "not handled".
+static void register_hooks() {
+    hook_refs.clear();
+
+    lua_pushcfunction(L, traceback_handler);
+    int errfunc = lua_gettop(L);
+    if (luaL_loadfile(L, "lua/ai/init.lua") != 0 || lua_pcall(L, 0, 1, errfunc) != 0) {
+        const char* msg = lua_tostring(L, -1);
+        handle_lua_error("lua_ai_hooks_init", msg);
+        lua_settop(L, errfunc - 1);
+        return;
+    }
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            // key at -2, value at -1
+            if (lua_type(L, -2) == LUA_TSTRING && lua_isfunction(L, -1)) {
+                const char* name = lua_tostring(L, -2);
+                lua_pushvalue(L, -1); // luaL_ref pops its argument
+                int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+                hook_refs[name] = ref;
+            }
+            lua_pop(L, 1); // pop value, keep key for lua_next
+        }
+    }
+    lua_settop(L, errfunc - 1);
+    // TEMPORARY M4 diagnostic: confirm hooks actually registered (lua.log
+    // only records errors, so silence elsewhere doesn't prove this ran).
+    lua_logf("register_hooks: %d hook(s) registered\n", (int)hook_refs.size());
+}
+
 // (Re)creates the Lua state: opens the sandbox, then loads lua/init.lua.
 // Used both for the first lazy init and for every later reload, so a
 // failed/erroring init.lua behaves identically in both cases.
@@ -220,6 +340,7 @@ static void create_lua_state() {
         return;
     }
     lua_settop(L, 0);
+    register_hooks();
     lua_logf("Lua AI runtime initialized (gen %d)\n", generation);
 }
 
@@ -249,6 +370,7 @@ void lua_ai_turn_upkeep() {
 }
 
 void lua_ai_shutdown() {
+    hook_refs.clear();
     if (L) {
         lua_close(L);
         L = NULL;
@@ -261,4 +383,44 @@ void lua_ai_shutdown() {
 
 void lua_ai_request_reload() {
     reload_requested = true;
+}
+
+bool lua_ai_hook(const char* name, int* out, std::initializer_list<int> args) {
+    if (!conf.lua_ai || disabled_for_session || !L) {
+        return false;
+    }
+    auto it = hook_refs.find(name);
+    if (it == hook_refs.end()) {
+        return false;
+    }
+
+    lua_pushcfunction(L, traceback_handler);
+    int errfunc = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, it->second);
+    for (int arg : args) {
+        lua_pushinteger(L, arg);
+    }
+    if (lua_pcall(L, (int)args.size(), 1, errfunc) != 0) {
+        const char* msg = lua_tostring(L, -1);
+        handle_lua_error(name, msg);
+        lua_settop(L, errfunc - 1);
+        return false;
+    }
+
+    bool handled = false;
+    if (lua_isnumber(L, -1)) {
+        *out = lua_tointeger(L, -1);
+        handled = true;
+    }
+    lua_settop(L, errfunc - 1);
+
+    // TEMPORARY M4 diagnostic: confirm each hook is actually being
+    // *invoked*, not just registered (register_hooks() only proves the
+    // latter). Logged once per hook name so this doesn't spam lua.log --
+    // mod_tech_val can be called hundreds of times per turn.
+    static std::unordered_set<std::string> logged_first_call;
+    if (handled && logged_first_call.insert(name).second) {
+        lua_logf("lua_ai_hook: '%s' invoked and handled (result=%d)\n", name, *out);
+    }
+    return handled;
 }

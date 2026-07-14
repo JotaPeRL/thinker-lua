@@ -1,5 +1,6 @@
 
 #include "gui.h"
+#include "autoplay.h"
 
 const int32_t MainWinHandle = (int32_t)(&MapWin->oMainWin.field_4); // 0x939444
 
@@ -517,6 +518,7 @@ int __thiscall mod_calc_dim(Console* This) {
 }
 
 int __cdecl mod_blink_timer() {
+    autoplay_try_end_turn(); // experimental, conf.autoplay only -- see autoplay.cpp
     if (!*GameHalted && !VehBattleState[1]) {
         if (Win_is_visible(BaseWin)) {
             return TutWin_draw_arrow(TutWin);

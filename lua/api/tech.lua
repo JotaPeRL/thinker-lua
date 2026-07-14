@@ -16,6 +16,10 @@ local Weapon = ffi.cast("CWeapon*", types.globals.Weapon)
 local Armor = ffi.cast("CArmor*", types.globals.Armor)
 local Chassis = ffi.cast("CChassis*", types.globals.Chassis)
 local Units = ffi.cast("UNIT*", types.globals.Units)
+local TechOwners = ffi.cast("uint8_t*", types.globals.TechOwners)
+-- Distinct from game.rules() (the *GameRules bitmask, a plain int) --
+-- Rules is a whole CRules rule-table struct.
+local Rules = ffi.cast("CRules*", types.globals.Rules)
 
 local function bounded(name, id, max)
     assert(id >= 0 and id < max, name .. " out of range: " .. tostring(id))
@@ -26,8 +30,11 @@ local function get(tech_id)
     return Tech[tech_id]
 end
 
+-- Note: bounded against MaxFacilityArrayNum, not MaxFacilityNum --
+-- MaxFacilityNum undercounts (Secret Projects share this array at
+-- higher indices). See tools/gen_ffi.cpp for the full story.
 local function facility(facility_id)
-    bounded("facility_id", facility_id, types.counts.MaxFacilityNum)
+    bounded("facility_id", facility_id, types.counts.MaxFacilityArrayNum)
     return Facility[facility_id]
 end
 
@@ -63,6 +70,13 @@ local function proto_speed(unit_id)
     return chassis(proto(unit_id).chassis_id).speed
 end
 
+-- TechOwners is a bitfield byte per tech_id, one bit per faction slot
+-- (MaxPlayerNum=8 fits exactly in a uint8_t).
+local function owners(tech_id)
+    bounded("tech_id", tech_id, types.counts.MaxTechnologyNum)
+    return TechOwners[tech_id]
+end
+
 return {
     get = get,
     facility = facility,
@@ -73,8 +87,12 @@ return {
     proto_offense_value = proto_offense_value,
     proto_defense_value = proto_defense_value,
     proto_speed = proto_speed,
+    owners = owners,
+    rules = function() return Rules[0] end,
     has_tech = funcs.has_tech,
     tech_level = funcs.tech_level,
     tech_is_preq = funcs.tech_is_preq,
     mod_tech_avail = funcs.mod_tech_avail,
+    revised_tech_cost = funcs.revised_tech_cost,
+    tech_balance_enabled = funcs.tech_balance_enabled,
 }

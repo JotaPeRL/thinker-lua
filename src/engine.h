@@ -1441,6 +1441,7 @@ typedef int(__cdecl *Fenv_open)(char*, char*);
 extern Famovie_project amovie_project;
 extern Famovie_project_2 amovie_project_2;
 extern Fsprite_draw_func sprite_draw_func;
+extern FPOP2 POP2_engine; // raw engine fn; POP2 itself is shimmed, see autoplay.h
 extern FPOP2 POP2;
 extern FPOP3 POP3;
 extern fp_none load_inverts;
@@ -1547,6 +1548,7 @@ extern Fsend_session2_packet send_session2_packet;
 extern Flist_was_dblclicked list_was_dblclicked;
 extern Fxrange xrange;
 extern Fparse_it parse_it;
+extern Fpopp popp_engine; // raw engine fn; popp itself is shimmed, see autoplay.h
 extern Fpopp popp;
 extern Fpopt popt;
 extern Fpopv popv;
@@ -1732,6 +1734,7 @@ extern Fbattle_fight_2 battle_fight_2;
 extern FPOP3_2 POP3_2;
 //extern Fget_adjective get_adjective;
 //extern Fget_noun get_noun;
+extern Fpopp_2 popp_2_engine; // raw engine fn; popp_2 itself is shimmed, see autoplay.h
 extern Fpopp_2 popp_2;
 extern Fsay_stats_3_2 say_stats_3_2;
 //extern Fbitmask bitmask;
@@ -1775,6 +1778,7 @@ extern fp_none wait_2;
 extern Frandom_events random_events;
 extern fp_none alien_fauna;
 extern fp_none do_fungal_towers;
+extern Finterlude interlude_engine; // raw engine fn; interlude itself is shimmed, see autoplay.h
 extern Finterlude interlude;
 extern fp_none ascent;
 extern fp_none set_time_controls;
@@ -2262,6 +2266,7 @@ extern FX_pop_5 X_pop_5;
 extern FX_pop_6 X_pop_6;
 extern FX_pop_7 X_pop_7;
 extern FX_pop_8 X_pop_8;
+extern FX_pop_9 X_pop_9_engine; // raw engine fn; X_pop_9 itself is shimmed, see autoplay.h
 extern FX_pop_9 X_pop_9;
 extern FX_pops X_pops;
 extern FX_pops_2 X_pops_2;
@@ -2280,6 +2285,7 @@ extern FX_pops_14 X_pops_14;
 extern FX_pops_15 X_pops_15;
 extern FX_pops_16 X_pops_16;
 extern FX_pops_17 X_pops_17;
+extern FX_pops_18 X_pops_18_engine; // raw engine fn; X_pops_18 itself is shimmed, see autoplay.h
 extern FX_pops_18 X_pops_18;
 extern FX_pop_ask X_pop_ask;
 extern FX_pop_ask_2 X_pop_ask_2;

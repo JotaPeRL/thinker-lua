@@ -22,10 +22,23 @@ typedef struct {
     int32_t (*mod_tech_avail)(int32_t tech_id, int32_t faction_id);
     int32_t (*tech_is_preq)(int32_t preq_tech_id, int32_t parent_tech_id, int32_t range);
     int32_t (*bad_reg)(int32_t region);
+    bool (*revised_tech_cost)();
+    int32_t (*tech_balance_enabled)();
+    void (*social_calc)(const int32_t* models, int32_t faction_id, int32_t* out_values);
+    int32_t (*society_avail)(int32_t sf, int32_t sm, int32_t faction_id);
+    int32_t (*social_upheaval)(int32_t faction_id, const int32_t* models);
+    bool (*has_project)(int32_t item_id, int32_t faction_id);
+    bool (*has_free_facility)(int32_t item_id, int32_t faction_id);
+    bool (*has_aircraft)(int32_t faction_id);
+    int32_t (*mineral_factor)(int32_t faction_id, int32_t se_industry);
+    bool (*un_charter)();
+    int32_t (*defense_modifier)(int32_t faction_id);
+    int32_t (*keep_fungus)(int32_t faction_id);
+    int32_t (*social_ai_bias)();
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 2
+local HOST_API_VERSION = 4
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -44,4 +57,17 @@ return {
     mod_tech_avail = function(tech_id, faction_id) return api.mod_tech_avail(tech_id, faction_id) end,
     tech_is_preq = function(preq, parent, range) return api.tech_is_preq(preq, parent, range) end,
     bad_reg = function(region) return api.bad_reg(region) end,
+    revised_tech_cost = function() return api.revised_tech_cost() end,
+    tech_balance_enabled = function() return api.tech_balance_enabled() end,
+    social_calc = function(models, faction_id, out_values) return api.social_calc(models, faction_id, out_values) end,
+    society_avail = function(sf, sm, faction_id) return api.society_avail(sf, sm, faction_id) end,
+    social_upheaval = function(faction_id, models) return api.social_upheaval(faction_id, models) end,
+    has_project = function(item_id, faction_id) return api.has_project(item_id, faction_id) end,
+    has_free_facility = function(item_id, faction_id) return api.has_free_facility(item_id, faction_id) end,
+    has_aircraft = function(faction_id) return api.has_aircraft(faction_id) end,
+    mineral_factor = function(faction_id, se_industry) return api.mineral_factor(faction_id, se_industry) end,
+    un_charter = function() return api.un_charter() end,
+    defense_modifier = function(faction_id) return api.defense_modifier(faction_id) end,
+    keep_fungus = function(faction_id) return api.keep_fungus(faction_id) end,
+    social_ai_bias = function() return api.social_ai_bias() end,
 }

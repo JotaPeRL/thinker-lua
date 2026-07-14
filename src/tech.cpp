@@ -2,7 +2,9 @@
 #include "tech.h"
 
 
-static bool revised_tech_cost() {
+// Not `static` since the Lua tech-AI port (M4) also needs it, via
+// LuaHostApi -- see src/luaai.cpp.
+bool revised_tech_cost() {
     // Not supported during multiplayer
     return conf.revised_tech_cost && !*MultiplayerActive;
 }
@@ -364,10 +366,22 @@ determines whether a simplistic or extended calculation is required for technolo
 Return Value: Value of tech_id to the specified faction
 */
 int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
+    // TEMPORARY M4 verification instrumentation: run both sides, log a
+    // mismatch, but let C++ still govern (revert once confirmed clean --
+    // see IMPLEMENTATION_PLAN.md Phase 4 verification notes).
+    int lua_value;
+    bool lua_handled = lua_ai_hook("mod_tech_val", &lua_value, {tech_id, faction_id, simple_calc});
+    auto report_and_return = [&](int cpp_value) -> int {
+        if (lua_handled && lua_value != cpp_value) {
+            debug("lua/cpp mod_tech_val mismatch: tech=%d faction=%d simple=%d lua=%d cpp=%d\n",
+                tech_id, faction_id, simple_calc, lua_value, cpp_value);
+        }
+        return cpp_value;
+    };
     Faction* f = &Factions[faction_id];
     MFaction* m = &MFactions[faction_id];
     if (tech_id == 9999) {
-        return 2;
+        return report_and_return(2);
     }
     int value;
     if (tech_id < MaxTechnologyNum) {
@@ -418,7 +432,7 @@ int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
         }
         if (simple_calc) {
             assert(value == tech_val(tech_id, faction_id, simple_calc));
-            return value;
+            return report_and_return(value);
         }
         if (base_count) {
             for (int region = 1; region < MaxRegionLandNum; region++) {
@@ -448,7 +462,7 @@ int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
             }
         }
         if (has_tech(tech_id, faction_id)) {
-            return value;
+            return report_and_return(value);
         }
         if (climactic_battle()
         && tech_is_preq(tech_id, Facility[FAC_ASCENT_TO_TRANSCENDENCE].preq_tech, 2)) {
@@ -607,10 +621,23 @@ int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
             + u->reactor_id - 2;
         assert(value == tech_val(tech_id, faction_id, simple_calc));
     }
-    return value;
+    return report_and_return(value);
 }
 
 int __cdecl mod_tech_ai(int faction_id) {
+    // TEMPORARY M4 verification instrumentation, mirroring mod_tech_val's
+    // dual-run mismatch check above -- but this hook draws from the map
+    // RNG (random_get, once per available tech) via lua's rand.map(), so
+    // per IMPLEMENTATION_PLAN.md 5.1's Class-1 shadow procedure the RNG
+    // must be snapshotted before the Lua run and restored before the C++
+    // run, or running both sides would burn the stream twice and desync
+    // it from what a Lua-only (or C++-only) run would have consumed.
+    uint32_t saved_rng = random_state();
+    int lua_tech_id;
+    bool lua_handled = lua_ai_hook("mod_tech_ai", &lua_tech_id, {faction_id});
+    if (lua_handled) {
+        random_reseed(saved_rng);
+    }
     int tech_id = -1;
     int best_value = INT_MIN;
     for (int i = 0; i < MaxTechnologyNum; i++) {
@@ -621,6 +648,10 @@ int __cdecl mod_tech_ai(int faction_id) {
             if (*GameRules & RULES_BLIND_RESEARCH) {
                 if (is_human(faction_id) && i == Units[BSC_FORMERS].preq_tech
                 && (Factions[faction_id].AI_growth || Factions[faction_id].AI_wealth)) {
+                    if (lua_handled && lua_tech_id != i) {
+                        debug("lua/cpp mod_tech_ai mismatch: faction=%d lua=%d cpp=%d (blind-research formers early return)\n",
+                            faction_id, lua_tech_id, i);
+                    }
                     return i;
                 }
                 int preq = tech_level(i, 0); // Replaces tech_recurse
@@ -633,6 +664,10 @@ int __cdecl mod_tech_ai(int faction_id) {
                 tech_id = i;
             }
         }
+    }
+    if (lua_handled && lua_tech_id != tech_id) {
+        debug("lua/cpp mod_tech_ai mismatch: faction=%d lua=%d cpp=%d\n",
+            faction_id, lua_tech_id, tech_id);
     }
     return tech_id;
 }
