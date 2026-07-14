@@ -51,10 +51,26 @@ typedef struct {
     int32_t (*median_limit)(int32_t faction_id);
     int32_t (*max_offense_value)(int32_t faction_id);
     int32_t (*max_defense_value)(int32_t faction_id);
+    int32_t (*has_base_sites)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*is_ocean)(int32_t base_id);
+    int32_t (*map_range)(int32_t x1, int32_t y1, int32_t x2, int32_t y2);
+    int32_t (*check_probe)(int32_t base_id, int32_t triad);
+    int32_t (*has_wmode)(int32_t faction_id, int32_t mode);
+    int32_t (*has_pact)(int32_t faction_id_1, int32_t faction_id_2);
+    int32_t (*at_war)(int32_t faction_id_1, int32_t faction_id_2);
+    int32_t (*best_reactor)(int32_t faction_id);
+    int32_t (*expansion_autoscale)();
+    int32_t (*air_combat_units)(int32_t faction_id);
+    int32_t (*transport_units)(int32_t faction_id);
+    int32_t (*probe_units)(int32_t faction_id);
+    int32_t (*sea_combat_units)(int32_t faction_id);
+    int32_t (*land_combat_units)(int32_t faction_id);
+    int32_t (*contacted_factions)(int32_t faction_id);
+    int32_t (*ocean_colony_land_site)(int32_t base_id, int32_t land);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 6
+local HOST_API_VERSION = 7
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -102,4 +118,20 @@ return {
     median_limit = function(faction_id) return api.median_limit(faction_id) end,
     max_offense_value = function(faction_id) return api.max_offense_value(faction_id) end,
     max_defense_value = function(faction_id) return api.max_defense_value(faction_id) end,
+    has_base_sites = function(x, y, faction_id, triad) return api.has_base_sites(x, y, faction_id, triad) end,
+    is_ocean = function(base_id) return api.is_ocean(base_id) end,
+    map_range = function(x1, y1, x2, y2) return api.map_range(x1, y1, x2, y2) end,
+    check_probe = function(base_id, triad) return api.check_probe(base_id, triad) end,
+    has_wmode = function(faction_id, mode) return api.has_wmode(faction_id, mode) end,
+    has_pact = function(f1, f2) return api.has_pact(f1, f2) end,
+    at_war = function(f1, f2) return api.at_war(f1, f2) end,
+    best_reactor = function(faction_id) return api.best_reactor(faction_id) end,
+    expansion_autoscale = function() return api.expansion_autoscale() end,
+    air_combat_units = function(faction_id) return api.air_combat_units(faction_id) end,
+    transport_units = function(faction_id) return api.transport_units(faction_id) end,
+    probe_units = function(faction_id) return api.probe_units(faction_id) end,
+    sea_combat_units = function(faction_id) return api.sea_combat_units(faction_id) end,
+    land_combat_units = function(faction_id) return api.land_combat_units(faction_id) end,
+    contacted_factions = function(faction_id) return api.contacted_factions(faction_id) end,
+    ocean_colony_land_site = function(base_id, land) return api.ocean_colony_land_site(base_id, land) end,
 }

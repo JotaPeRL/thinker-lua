@@ -14,11 +14,17 @@ local types = dofile_once("lua/ffi/validate.lua")
 local funcs = dofile_once("lua/ffi/funcs.lua")
 local faction = dofile("lua/api/faction.lua")
 
+local BaseCount = ffi.cast("int32_t*", types.globals.BaseCount)
+
 local function get(base_id)
     assert(base_id >= 0 and base_id < types.counts.MaxBaseNum,
         "base_id out of range: " .. tostring(base_id))
     local Bases = ffi.cast("BASE*", funcs.bases_ptr())
     return Bases[base_id]
+end
+
+local function count()
+    return BaseCount[0]
 end
 
 -- BASE inline methods dropped by field-only cdef generation
@@ -50,6 +56,7 @@ end
 
 return {
     get = get,
+    count = count,
     plr_owner = plr_owner,
     gov_config = gov_config,
     se_police = se_police,

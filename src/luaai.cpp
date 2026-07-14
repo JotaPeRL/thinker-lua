@@ -20,6 +20,8 @@
 #include "map.h"
 #include "base.h"
 #include "veh.h"
+#include "build.h"
+#include "path.h"
 
 #include <string>
 #include <unordered_set>
@@ -175,11 +177,90 @@ static int32_t host_max_defense_value(int32_t faction_id) {
     return plans[faction_id].max_defense_value;
 }
 
+// Production/plans port, second slice (porting-order item 3,
+// IMPLEMENTATION_DETAILS.md 4.8).
+static int32_t host_has_base_sites(int32_t x, int32_t y, int32_t faction_id, int32_t triad) {
+    TileSearch ts;
+    return has_base_sites(ts, x, y, faction_id, triad);
+}
+
+static int32_t host_is_ocean(int32_t base_id) {
+    return is_ocean(&Bases[base_id]);
+}
+
+static int32_t host_map_range(int32_t x1, int32_t y1, int32_t x2, int32_t y2) {
+    return map_range(x1, y1, x2, y2);
+}
+
+static int32_t host_check_probe(int32_t base_id, int32_t triad) {
+    return check_probe(&Bases[base_id], (Triad)triad);
+}
+
+static int32_t host_has_wmode(int32_t faction_id, int32_t mode) {
+    return has_wmode(faction_id, (VehWeaponMode)mode);
+}
+
+static int32_t host_has_pact(int32_t faction_id_1, int32_t faction_id_2) {
+    return has_pact(faction_id_1, faction_id_2);
+}
+
+static int32_t host_at_war(int32_t faction_id_1, int32_t faction_id_2) {
+    return at_war(faction_id_1, faction_id_2);
+}
+
+static int32_t host_best_reactor(int32_t faction_id) {
+    return best_reactor(faction_id);
+}
+
+static int32_t host_expansion_autoscale() {
+    return conf.expansion_autoscale;
+}
+
+static int32_t host_air_combat_units(int32_t faction_id) {
+    return plans[faction_id].air_combat_units;
+}
+
+static int32_t host_transport_units(int32_t faction_id) {
+    return plans[faction_id].transport_units;
+}
+
+static int32_t host_probe_units(int32_t faction_id) {
+    return plans[faction_id].probe_units;
+}
+
+static int32_t host_sea_combat_units(int32_t faction_id) {
+    return plans[faction_id].sea_combat_units;
+}
+
+static int32_t host_land_combat_units(int32_t faction_id) {
+    return plans[faction_id].land_combat_units;
+}
+
+static int32_t host_contacted_factions(int32_t faction_id) {
+    return plans[faction_id].contacted_factions;
+}
+
+// select_colony's own iterate_tiles scan (build.cpp), replicated here
+// rather than opening MAP/iterate_tiles to Lua for one loop -- see
+// IMPLEMENTATION_DETAILS.md 4.8.
+static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
+    BASE* base = &Bases[base_id];
+    bool aquatic = MFactions[base->faction_id].is_aquatic();
+    for (const auto& m : iterate_tiles(base->x, base->y, 1, 9)) {
+        if (land && (m.sq->veh_owner() < 0 || m.sq->veh_owner() == base->faction_id)
+        && (!m.sq->is_owned() || (m.sq->owner == base->faction_id && !random(4)))
+        && (!aquatic || !random(8))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 6,
+    /* api_version          */ 7,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -220,6 +301,22 @@ static LuaHostApi g_host_api = {
     /* median_limit         */ host_median_limit,
     /* max_offense_value    */ host_max_offense_value,
     /* max_defense_value    */ host_max_defense_value,
+    /* has_base_sites       */ host_has_base_sites,
+    /* is_ocean             */ host_is_ocean,
+    /* map_range            */ host_map_range,
+    /* check_probe          */ host_check_probe,
+    /* has_wmode            */ host_has_wmode,
+    /* has_pact             */ host_has_pact,
+    /* at_war               */ host_at_war,
+    /* best_reactor         */ host_best_reactor,
+    /* expansion_autoscale  */ host_expansion_autoscale,
+    /* air_combat_units     */ host_air_combat_units,
+    /* transport_units      */ host_transport_units,
+    /* probe_units          */ host_probe_units,
+    /* sea_combat_units     */ host_sea_combat_units,
+    /* land_combat_units    */ host_land_combat_units,
+    /* contacted_factions   */ host_contacted_factions,
+    /* ocean_colony_land_site */ host_ocean_colony_land_site,
 };
 
 static lua_State* L = NULL;

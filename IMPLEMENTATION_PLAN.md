@@ -692,12 +692,22 @@ enable Lua by default on the branch → next.
    `select_build`, `find_project`, `mod_base_hurry`, then `plans_upkeep`,
    `design_units`, `former_plans`. The heart of the single-player challenge.
 
-   > **Status: ✅ first slice in-game verified clean (2026-07-14).**
-   > `unit_score`+`find_proto` ported (`lua/ai/build.lua`), `find_proto`
-   > hooked. First-ever `BASE` FFI exposure (11 fields, a new
-   > `lua/api/base.lua`). 769 calls over turns 93-100, all 7 AI factions,
-   > zero mismatches — see `IMPLEMENTATION_DETAILS.md` 4.7. `select_build`
-   > itself and the rest of this item remain untouched.
+   > **Status: first and second slices ✅ in-game verified clean
+   > (2026-07-14).** First slice (`unit_score`+`find_proto`,
+   > `lua/ai/build.lua`): 769 calls over turns 93-100, all 7 AI factions,
+   > zero mismatches — `IMPLEMENTATION_DETAILS.md` 4.7. Second slice
+   > (`select_colony`+`select_combat`, same file): both hooked;
+   > `select_build` itself was surveyed and found too large (454 loc,
+   > ~45-item priority table, a `std::priority_queue`, ~57 distinct helper
+   > calls) to scope in one pass, so these two internal helpers were
+   > ported first instead, extending the helper library `select_build` will
+   > eventually need. First in-game run caught a real bug fast (`BASE.x`/
+   > `BASE.y` missing from the FFI since 4.7 — nothing had needed base
+   > coordinates until now); fixed, re-verified clean over turns 101-105,
+   > zero mismatches. Also switched `lua_strict` to `0` for iterative
+   > testing (a single hook error no longer kills the whole session's Lua
+   > AI). See `IMPLEMENTATION_DETAILS.md` 4.8. `select_build` itself and
+   > the rest of this item remain untouched.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +

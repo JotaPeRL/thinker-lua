@@ -17,7 +17,9 @@ static bool check_retool(BASE* base) {
         && base->minerals_accumulated > Rules->retool_exemption;
 }
 
-static bool check_probe(BASE* base, Triad triad) {
+// Not `static` since the Lua build port (item 3, IMPLEMENTATION_DETAILS.md
+// 4.8) also needs it, via LuaHostApi -- see src/luaai.cpp.
+bool check_probe(BASE* base, Triad triad) {
     for (int i = *VehCount - 1; i >= 0; --i) {
         VEH* veh = &Vehs[i];
         if (veh->x == base->x && veh->y == base->y && veh->is_probe() && veh->triad() == triad) {
@@ -687,6 +689,26 @@ int find_proto(int base_id, TriadFlag triad, VehWeaponMode mode, bool defend) {
 }
 
 int select_colony(int base_id, int num_colony, bool build_ships) {
+    // TEMPORARY porting-order-item-3 verification instrumentation, same
+    // dual-run mismatch pattern as find_proto (IMPLEMENTATION_DETAILS.md
+    // 4.8). Multiple return points, so wrapped like mod_tech_val's seam
+    // (report_and_return lambda) rather than find_proto's single-exit
+    // pattern. Consumes RNG (random()), same snapshot/restore as
+    // find_proto/mod_tech_ai.
+    uint32_t saved_rng = random_state();
+    int lua_choice;
+    bool lua_handled = lua_ai_hook("select_colony", &lua_choice, {base_id, num_colony, build_ships});
+    if (lua_handled) {
+        random_reseed(saved_rng);
+    }
+    auto report_and_return = [&](int cpp_choice) -> int {
+        if (lua_handled && lua_choice != cpp_choice) {
+            debug("lua/cpp select_colony mismatch: base=%d num_colony=%d build_ships=%d lua=%d cpp=%d\n",
+                base_id, num_colony, build_ships, lua_choice, cpp_choice);
+        }
+        return cpp_choice;
+    };
+
     TileSearch ts;
     BASE* base = &Bases[base_id];
     Faction* f = &Factions[base->faction_id];
@@ -704,33 +726,50 @@ int select_colony(int base_id, int num_colony, bool build_ships) {
         limit = min(limit, !random(4) + (*DiffLevel > DIFF_CITIZEN ? !random(4) : 0));
     }
     if (num_colony >= limit) {
-        return -1;
+        return report_and_return(-1);
     }
     if (is_ocean(base)) {
         for (const auto& m : iterate_tiles(base->x, base->y, 1, 9)) {
             if (land && (m.sq->veh_owner() < 0 || m.sq->veh_owner() == base->faction_id)
             && (!m.sq->is_owned() || (m.sq->owner == base->faction_id && !random(4)))
             && (!aquatic || !random(8))) {
-                return find_proto(base_id, TRFLAG_LAND, WMODE_COLONY, DEF);
+                return report_and_return(find_proto(base_id, TRFLAG_LAND, WMODE_COLONY, DEF));
             }
         }
         if (sea) {
-            return find_proto(base_id, TRFLAG_SEA, WMODE_COLONY, DEF);
+            return report_and_return(find_proto(base_id, TRFLAG_SEA, WMODE_COLONY, DEF));
         }
     } else {
         bool cheap = build_ships && (best_reactor(base->faction_id) >= REC_FUSION);
         if (build_ships && sea && (!land || !start || cheap)
         && random(16) > 10 + 2*(land + start - cheap)) {
-            return find_proto(base_id, TRFLAG_SEA, WMODE_COLONY, DEF);
+            return report_and_return(find_proto(base_id, TRFLAG_SEA, WMODE_COLONY, DEF));
         }
         if (land) {
-            return find_proto(base_id, TRFLAG_LAND, WMODE_COLONY, DEF);
+            return report_and_return(find_proto(base_id, TRFLAG_LAND, WMODE_COLONY, DEF));
         }
     }
-    return -1;
+    return report_and_return(-1);
 }
 
 int select_combat(int base_id, bool sea_base, bool build_ships) {
+    // TEMPORARY porting-order-item-3 verification instrumentation, same
+    // dual-run mismatch pattern as select_colony/find_proto
+    // (IMPLEMENTATION_DETAILS.md 4.8). Consumes RNG, same snapshot/restore.
+    uint32_t saved_rng = random_state();
+    int lua_choice;
+    bool lua_handled = lua_ai_hook("select_combat", &lua_choice, {base_id, sea_base, build_ships});
+    if (lua_handled) {
+        random_reseed(saved_rng);
+    }
+    auto report_and_return = [&](int cpp_choice) -> int {
+        if (lua_handled && lua_choice != cpp_choice) {
+            debug("lua/cpp select_combat mismatch: base=%d sea_base=%d build_ships=%d lua=%d cpp=%d\n",
+                base_id, sea_base, build_ships, lua_choice, cpp_choice);
+        }
+        return cpp_choice;
+    };
+
     BASE* base = &Bases[base_id];
     Faction* f = &Factions[base->faction_id];
     AIPlans* p = &plans[base->faction_id];
@@ -762,12 +801,12 @@ int select_combat(int base_id, bool sea_base, bool build_ships) {
             }
         }
         if ((choice = find_proto(base_id, triad, WMODE_PROBE, DEF)) >= 0) {
-            return choice;
+            return report_and_return(choice);
         }
     }
     if (air && (!(land || sea) || !random(w_air))
     && (choice = find_proto(base_id, TRFLAG_AIR, WMODE_COMBAT, ATT)) >= 0) {
-        return choice;
+        return report_and_return(choice);
     }
     if (build_ships && sea) {
         int min_dist = INT_MAX;
@@ -795,11 +834,12 @@ int select_combat(int base_id, bool sea_base, bool build_ships) {
                 mode = (!random(w_sea) ? WMODE_TRANSPORT : WMODE_COMBAT);
             }
             if ((choice = find_proto(base_id, TRFLAG_SEA, mode, ATT)) >= 0) {
-                return choice;
+                return report_and_return(choice);
             }
         }
     }
-    return find_proto(base_id, TRFLAG_LAND, WMODE_COMBAT, (sea_base || !random(5) ? DEF : ATT));
+    return report_and_return(
+        find_proto(base_id, TRFLAG_LAND, WMODE_COMBAT, (sea_base || !random(5) ? DEF : ATT)));
 }
 
 static void push_item(score_max_queue_t& builds, int base_id, int item_id, int retool, int score, int modifier) {

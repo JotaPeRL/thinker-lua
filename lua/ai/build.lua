@@ -22,6 +22,10 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         find_proto = { file = "src/build.cpp", func = "find_proto",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        select_colony = { file = "src/build.cpp", func = "select_colony",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        select_combat = { file = "src/build.cpp", func = "select_combat",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -40,6 +44,13 @@ local max = math.max
 local min = math.min
 local E = types.enums
 local C = types.counts
+
+-- bool-to-int, used a lot by select_colony/select_combat's C original
+-- (IMPLEMENTATION_DETAILS.md 4.8) -- more boolean arithmetic than
+-- unit_score/find_proto needed.
+local function b2n(b)
+    return b and 1 or 0
+end
 
 -- plan.cpp:323
 local function need_police(faction_id)
@@ -299,6 +310,183 @@ local function find_proto(base_id, triad, mode, defend)
     return best_id
 end
 
+-- engine_types.h:287-289's MFaction::is_aquatic() (rule_flags &
+-- RFLAG_AQUATIC) -- distinct from the free is_alien(faction_id)-style
+-- functions, same tier as war.lua's local is_alien helper (kept local
+-- here too, not added to faction.lua's shared surface).
+local function is_aquatic(faction_id)
+    return bit.band(faction.meta(faction_id).rule_flags, E.RFLAG_AQUATIC) ~= 0
+end
+
+-- Production/plans port, second slice (porting-order item 3,
+-- IMPLEMENTATION_DETAILS.md 4.8): build.cpp:691-753 (pre-seam line
+-- numbers). Class 1, consumes RNG (random()), only ever called by
+-- select_build (still C++) today -- see 4.8 for why the dual-run seam
+-- still works despite no external caller.
+local function select_colony(base_id, num_colony, build_ships)
+    build_ships = not (build_ships == false or build_ships == 0)
+    local base = base_api.get(base_id)
+    local f = faction.get(base.faction_id)
+    local start = f.base_count < min(16, 2 + idiv(game.map_area_sq_root(), 4))
+    local land = funcs.has_base_sites(base.x, base.y, base.faction_id, E.TRIAD_LAND) ~= 0
+    local sea = funcs.has_base_sites(base.x, base.y, base.faction_id, E.TRIAD_SEA) ~= 0
+    local extra_land = land and bit.band(f.player_flags_ext, E.PFLAG_EXT_STRAT_LOTS_COLONY_PODS) ~= 0
+    local extra_sea = build_ships and sea and bit.band(f.player_flags_ext, E.PFLAG_EXT_STRAT_LOTS_SEA_BASES) ~= 0
+    local aquatic = is_aquatic(base.faction_id)
+
+    local limit
+    if start or (rand.map(0, 4) == 0 and (land or (build_ships and sea))) then
+        limit = 2
+    else
+        limit = 1
+    end
+    limit = limit + b2n((extra_land or extra_sea) and rand.map(0, 4) == 0)
+
+    if funcs.expansion_autoscale() > 0 and f.base_count >= 4 and game.diff_level() <= E.DIFF_SPECIALIST then
+        -- Both random() calls below must run in this exact order: the
+        -- first is unconditional, the second only if diff_level >
+        -- DIFF_CITIZEN, matching the C original's `!random(4) + (cond ?
+        -- !random(4) : 0)` short-circuit exactly (RNG determinism).
+        local term1 = b2n(rand.map(0, 4) == 0)
+        local term2 = 0
+        if game.diff_level() > E.DIFF_CITIZEN then
+            term2 = b2n(rand.map(0, 4) == 0)
+        end
+        limit = min(limit, term1 + term2)
+    end
+
+    if num_colony >= limit then
+        return -1
+    end
+    if funcs.is_ocean(base_id) ~= 0 then
+        if funcs.ocean_colony_land_site(base_id, b2n(land)) ~= 0 then
+            return find_proto(base_id, E.TRFLAG_LAND, E.WMODE_COLONY, true)
+        end
+        if sea then
+            return find_proto(base_id, E.TRFLAG_SEA, E.WMODE_COLONY, true)
+        end
+    else
+        local cheap = build_ships and funcs.best_reactor(base.faction_id) >= E.REC_FUSION
+        if build_ships and sea and (not land or not start or cheap)
+        and rand.map(0, 16) > 10 + 2 * (b2n(land) + b2n(start) - b2n(cheap)) then
+            return find_proto(base_id, E.TRFLAG_SEA, E.WMODE_COLONY, true)
+        end
+        if land then
+            return find_proto(base_id, E.TRFLAG_LAND, E.WMODE_COLONY, true)
+        end
+    end
+    return -1
+end
+
+-- build.cpp:755-841 (pre-seam line numbers). Same Class 1 + RNG shape as
+-- select_colony above.
+local function select_combat(base_id, sea_base, build_ships)
+    sea_base = not (sea_base == false or sea_base == 0)
+    build_ships = not (build_ships == false or build_ships == 0)
+    local base = base_api.get(base_id)
+    local f = faction.get(base.faction_id)
+    local gov = base_api.gov_config(base)
+
+    local w_air
+    if 4 * funcs.air_combat_units(base.faction_id) < f.base_count then
+        w_air = 2
+    elseif bit.band(f.player_flags, E.PFLAG_EMPHASIZE_AIR_POWER) ~= 0 then
+        w_air = 4
+    else
+        w_air = 5
+    end
+    local w_sea
+    if 5 * funcs.transport_units(base.faction_id) < f.base_count + 5 then
+        w_sea = 2
+    elseif 3 * funcs.transport_units(base.faction_id) < f.base_count then
+        w_sea = 5
+    else
+        w_sea = 8
+    end
+    local w_probes
+    if funcs.probe_units(base.faction_id) * (funcs.modify_unit_support() < 2 and 2 or 4) < f.base_count then
+        w_probes = 3
+    else
+        w_probes = 5
+    end
+    w_probes = w_probes + (bit.band(f.player_flags_ext, E.PFLAG_EXT_STRAT_LOTS_PROBE_TEAMS) ~= 0 and 0 or 1)
+
+    local need_ships = (bit.band(f.player_flags, E.PFLAG_EMPHASIZE_SEA_POWER) ~= 0 and 4 or 6)
+        * funcs.sea_combat_units(base.faction_id) < funcs.land_combat_units(base.faction_id)
+    local need_land = bit.band(f.player_flags, E.PFLAG_EMPHASIZE_LAND_POWER) ~= 0
+    local reserve = funcs.modify_unit_support() >= 2
+        or base.mineral_surplus >= idiv(base.mineral_intake_2, 2)
+    local probes = funcs.has_wmode(base.faction_id, E.WMODE_PROBE) ~= 0
+        and bit.band(gov, E.GOV_MAY_PROD_PROBES) ~= 0
+    local transports = funcs.has_wmode(base.faction_id, E.WMODE_TRANSPORT) ~= 0
+        and bit.band(gov, E.GOV_MAY_PROD_TRANSPORT) ~= 0
+    local land = bit.band(gov, bit.bor(E.GOV_MAY_PROD_LAND_COMBAT, E.GOV_MAY_PROD_LAND_DEFENSE)) ~= 0
+    local sea = bit.band(gov, bit.bor(E.GOV_MAY_PROD_NAVAL_COMBAT, E.GOV_MAY_PROD_TRANSPORT)) ~= 0
+    local air = bit.band(gov, bit.bor(E.GOV_MAY_PROD_AIR_COMBAT, E.GOV_MAY_PROD_AIR_DEFENSE)) ~= 0
+
+    if probes and (not (land or sea or air) or rand.map(0, w_probes) == 0 or not reserve) then
+        local triad = bit.bor(E.TRFLAG_LAND, E.TRFLAG_AIR)
+        if build_ships then
+            triad = bit.bor(E.TRFLAG_SEA, E.TRFLAG_AIR)
+            if sea_base and funcs.contacted_factions(base.faction_id) ~= 0
+            and funcs.check_probe(base_id, E.TRIAD_LAND) == 0
+            and base.defend_range > 0 and base.defend_range < rand.map(0, 64) then
+                triad = bit.bor(triad, E.TRFLAG_LAND)
+            end
+        end
+        local choice = find_proto(base_id, triad, E.WMODE_PROBE, true)
+        if choice >= 0 then
+            return choice
+        end
+    end
+    if air and (not (land or sea) or rand.map(0, w_air) == 0) then
+        local choice = find_proto(base_id, E.TRFLAG_AIR, E.WMODE_COMBAT, false)
+        if choice >= 0 then
+            return choice
+        end
+    end
+    if build_ships and sea then
+        local min_dist = math.huge
+        local sea_enemy = false
+        for i = 0, base_api.count() - 1 do
+            local b = base_api.get(i)
+            if base.faction_id ~= b.faction_id and funcs.has_pact(base.faction_id, b.faction_id) == 0 then
+                local dist = funcs.map_range(base.x, base.y, b.x, b.y)
+                    * ((need_land and funcs.is_ocean(i) ~= 0) and 2 or 1)
+                    * (funcs.at_war(base.faction_id, b.faction_id) ~= 0 and 1 or 4)
+                if dist < min_dist then
+                    sea_enemy = funcs.is_ocean(i) ~= 0
+                    min_dist = dist
+                end
+            end
+        end
+        local threshold
+        if sea_base then
+            threshold = 3
+        else
+            threshold = 1 + b2n(need_ships or sea_enemy)
+        end
+        if not land or rand.map(0, 4) < threshold then
+            local mode
+            if not transports then
+                mode = E.WMODE_COMBAT
+            elseif bit.band(gov, E.GOV_MAY_PROD_NAVAL_COMBAT) == 0 then
+                mode = E.WMODE_TRANSPORT
+            elseif rand.map(0, w_sea) == 0 then
+                mode = E.WMODE_TRANSPORT
+            else
+                mode = E.WMODE_COMBAT
+            end
+            local choice = find_proto(base_id, E.TRFLAG_SEA, mode, false)
+            if choice >= 0 then
+                return choice
+            end
+        end
+    end
+    local last_defend = sea_base or rand.map(0, 5) == 0
+    return find_proto(base_id, E.TRFLAG_LAND, E.WMODE_COMBAT, last_defend)
+end
+
 port.need_police = need_police
 port.unit_support_plan = unit_support_plan
 port.check_retool = check_retool
@@ -308,4 +496,6 @@ port.base_can_riot = base_can_riot
 port.unit_is_better = unit_is_better
 port.unit_score = unit_score
 port.find_proto = find_proto
+port.select_colony = select_colony
+port.select_combat = select_combat
 return port

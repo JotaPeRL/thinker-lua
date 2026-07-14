@@ -85,6 +85,34 @@ struct LuaHostApi {
     int32_t (*median_limit)(int32_t faction_id);      // -> plans[faction_id].median_limit
     int32_t (*max_offense_value)(int32_t faction_id); // -> plans[faction_id].max_offense_value
     int32_t (*max_defense_value)(int32_t faction_id); // -> plans[faction_id].max_defense_value
+    // Production/plans port, second slice (porting-order item 3,
+    // IMPLEMENTATION_DETAILS.md 4.8). has_base_sites/is_ocean/map_range/
+    // check_probe stay opaque because they reach into TileSearch/MAP/VEH,
+    // none of which are open to Lua yet (plan 4.3: TileSearch/MAP stay in
+    // C++ entirely; VEH is deferred to select_build itself).
+    int32_t (*has_base_sites)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*is_ocean)(int32_t base_id);
+    int32_t (*map_range)(int32_t x1, int32_t y1, int32_t x2, int32_t y2);
+    int32_t (*check_probe)(int32_t base_id, int32_t triad);
+    int32_t (*has_wmode)(int32_t faction_id, int32_t mode);
+    int32_t (*has_pact)(int32_t faction_id_1, int32_t faction_id_2);
+    int32_t (*at_war)(int32_t faction_id_1, int32_t faction_id_2);
+    int32_t (*best_reactor)(int32_t faction_id);
+    int32_t (*expansion_autoscale)(); // -> conf.expansion_autoscale
+    int32_t (*air_combat_units)(int32_t faction_id);   // -> plans[faction_id].air_combat_units
+    int32_t (*transport_units)(int32_t faction_id);    // -> plans[faction_id].transport_units
+    int32_t (*probe_units)(int32_t faction_id);        // -> plans[faction_id].probe_units
+    int32_t (*sea_combat_units)(int32_t faction_id);   // -> plans[faction_id].sea_combat_units
+    int32_t (*land_combat_units)(int32_t faction_id);  // -> plans[faction_id].land_combat_units
+    int32_t (*contacted_factions)(int32_t faction_id); // -> plans[faction_id].contacted_factions
+    // select_colony's own iterate_tiles(x,y,1,9) scan for a placeable land
+    // tile (MAP fields veh_owner()/is_owned()/owner) -- found while
+    // translating select_colony, not anticipated when this slice was
+    // scoped (IMPLEMENTATION_DETAILS.md 4.8). Consumes RNG internally
+    // (random(4)/random(8), conditionally, matching the original's
+    // short-circuit exactly), so `land` is passed in rather than checked
+    // Lua-side, to keep RNG consumption identical to the C++ original.
+    int32_t (*ocean_colony_land_site)(int32_t base_id, int32_t land);
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

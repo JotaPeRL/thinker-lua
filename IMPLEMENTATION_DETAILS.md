@@ -870,6 +870,134 @@ pointing at `src/build.cpp`), `lua/ai/init.lua` (register the hook).
 
 ---
 
+### 4.8 Production/plans port, second slice: `select_colony`/`select_combat` — in-game verified clean
+
+> **Status (2026-07-14): implemented and building clean on both presets;
+> in-game dual-run verification done, zero mismatches.** Both ported to
+> `lua/ai/build.lua`, registered as hooks. `LuaHostApi` bumped to
+> `api_version=7` with 17 new entries (one more than scoped: `select_
+> colony`'s `iterate_tiles` scan for a placeable ocean-colony land tile
+> — `veh_owner()`/`is_owned()`/`owner` MAP-tile reads — wasn't caught by
+> the scoping pass below; replicated as `ocean_colony_land_site(base_id,
+> land)`, including its own conditional RNG consumption, rather than
+> opening `MAP`/`iterate_tiles` to Lua for one loop). `check_probe`
+> (`build.cpp`) had to lose its `static` to be reachable from
+> `luaai.cpp`, same pattern as `revised_tech_cost` earlier. New `base.lua`
+> accessor: `count()` (`*BaseCount`, needed by `select_combat`'s enemy-base
+> scan, not exposed anywhere before now). A `b2n(bool)` local helper was
+> added to `build.lua` — this pair has far more C boolean-to-int arithmetic
+> (`bool + bool`, `bool * N`) than `unit_score`/`find_proto` did, and
+> spelling each one out as `x and 1 or 0` inline was getting error-prone.
+> Every new/changed Lua file passed a native-`luajit` `loadfile` syntax
+> check.
+>
+> **Round 1 (first in-game run) found a real bug, fast:** `BASE.x`/`BASE.y`
+> were never added to the FFI field list back in 4.7 — nothing had needed
+> a base's coordinates until `select_combat`'s enemy-base scan
+> (`funcs.map_range(base.x, base.y, b.x, b.y)`) and `select_colony`'s
+> `has_base_sites(base.x, base.y, ...)` calls. First real exercise of
+> `lua_strict=1`'s failure mode outside the Phase 2B smoke test: one
+> hook's error disabled Lua AI for the *entire* session, not just that
+> hook, which is why the first session's log was so short — switched the
+> deployed `thinker.ini` to `lua_strict=0` (disables only the failing
+> hook, falls back to C++ for it) for iterative testing going forward,
+> per the same tradeoff already documented in 2.5/IMPLEMENTATION_PLAN.md
+> 2B. Fixed by adding `x`/`y` to `BASE`'s `emit_struct` block
+> (`tools/gen_ffi.cpp`) — no C++ recompile needed, `types.lua` is a
+> build-time-generated file the compiled `thinker.dll` doesn't embed.
+>
+> **Round 2 (after the fix), in-game run (turns 101-105, continuing the
+> same session):** `lua.log` showed `register_hooks: 7 hook(s)
+> registered` and all three `build.lua` hooks (`select_colony`,
+> `select_combat`, `find_proto`) in the first-call diagnostic. Zero Lua
+> errors, zero `lua/cpp select_colony mismatch` / `lua/cpp select_combat
+> mismatch` / `lua/cpp find_proto mismatch` lines. Neither `select_colony`
+> nor `select_combat` calls `debug()` in the original C++, so unlike
+> `find_proto`'s 769-call count, there's no per-call log to derive an
+> exact volume from — only confirmed as invoked and clean, not
+> heavily-exercised the way the first slice was. Both consume RNG
+> conditionally in several places (short-circuit `||`/`&&` chains gating
+> `random()` calls); the careful call-order preservation documented
+> inline held up in this run, but the caution about it being easy to get
+> subtly wrong stands for future sessions with more volume.
+
+Intermediate step between the first slice (4.7) and `select_build` itself:
+`select_build` (454 loc, ~45 `build_order` items, a `std::priority_queue`
+output mechanism, dozens of helper calls) is too large to scope and
+implement in one pass the way every prior item was — see the status note
+left in place of a 4.9 draft when this was surveyed. `select_colony`
+(build.cpp:689-731, ~43 loc) and `select_combat` (build.cpp:733-803, ~71
+loc) are two of its internal helpers: not independently called from
+outside `build.cpp` either (same as `facility_score`/`governor_priorities`),
+but each already calls `find_proto`, which now exists in Lua — porting
+them extends the helper library `select_build` will eventually need,
+without yet requiring `select_build`'s own scope (`VEH` exposure, the
+priority queue).
+
+**Validation still works despite no external caller.** The dual-run seam
+doesn't care who calls the hooked C++ function — `select_build` (still
+pure C++) calls `select_colony`/`select_combat` on every real production
+decision, so hooking them directly (same pattern as `find_proto`) still
+gets exercised live and dual-run-compared during ordinary play, the same
+as if they had an external caller.
+
+**New territory this slice touches that no prior item has: map/tile
+queries.** Every prior FFI addition was a struct field. `select_colony`/
+`select_combat` call several functions that reach into `TileSearch`/`MAP`
+(`has_base_sites`, `is_ocean`, `map_range`) or `VEH` (`check_probe`,
+build.cpp's own static helper, loops `Vehs[]`) — none of which this
+project has opened up yet (`TileSearch`/`MAP` per plan 4.3 stay in C++
+entirely; `VEH` is deferred to `select_build` itself). Kept opaque
+(host wrappers), same "engine mechanics, not AI policy" precedent as
+`mod_veh_avail`/`great_beelzebub`:
+- `has_base_sites(x, y, faction_id, triad)` — wraps `path.cpp:429`,
+  constructs its own local `TileSearch` internally (Lua never touches
+  `TileSearch`, per plan 4.3).
+- `is_ocean(base_id)` — wraps the `BASE*` overload (`map.h:23`).
+- `map_range(x1, y1, x2, y2)` — tile-distance formula (odd/even parity,
+  wraparound); kept opaque rather than re-derived, to not risk a subtle
+  map-geometry bug for a function this cheap to just call.
+- `check_probe(base_id, triad)` — wraps `build.cpp`'s existing `static`
+  helper (loops `Vehs[]`), rather than opening `VEH` for one boolean.
+- `has_wmode(faction_id, mode)`, `has_pact(faction1, faction2)`,
+  `at_war(faction1, faction2)`, `best_reactor(faction_id)` — simple
+  existing Thinker functions, same tier as `has_treaty`/`is_human`.
+
+**New `BASE` fields:** `defend_range`, `mineral_intake_2`.
+
+**New `AIPlans` accessors** (same pattern as `defense_modifier`/
+`psi_score`): `air_combat_units`, `transport_units`, `probe_units`,
+`sea_combat_units`, `land_combat_units`, `contacted_factions`.
+
+**New `conf` accessor:** `expansion_autoscale()`.
+
+**New enums:** `PFLAG_EXT_STRAT_LOTS_COLONY_PODS`,
+`PFLAG_EXT_STRAT_LOTS_SEA_BASES`, `DIFF_CITIZEN`,
+`PFLAG_EMPHASIZE_AIR_POWER`, `PFLAG_EMPHASIZE_SEA_POWER`,
+`PFLAG_EMPHASIZE_LAND_POWER`, `PFLAG_EXT_STRAT_LOTS_PROBE_TEAMS`,
+`GOV_MAY_PROD_PROBES`, `GOV_MAY_PROD_TRANSPORT`,
+`GOV_MAY_PROD_LAND_COMBAT`, `GOV_MAY_PROD_LAND_DEFENSE`,
+`GOV_MAY_PROD_NAVAL_COMBAT`, `RFLAG_AQUATIC`.
+
+**Ported directly:** `MFaction::is_aquatic()` (`rule_flags & RFLAG_AQUATIC`,
+one-liner, same tier as `war.lua`'s local `is_alien` helper — kept local
+to `build.lua` rather than added to `faction.lua`'s shared surface, same
+precedent).
+
+**RNG:** both functions call `random()` (`rand.map`) directly, same as
+`find_proto` — both seams need the snapshot/restore treatment.
+
+**Files to touch when implementing:** `tools/gen_ffi.cpp` (2 `BASE`
+fields, 13 enums), `src/luaai.h` + `src/luaai.cpp` (16 new `LuaHostApi`
+entries — 8 opaque wrappers, 6 `AIPlans` accessors, 1 `conf` accessor, 1
+already covered — `api_version` bump to 7), `src/build.cpp` (seams in
+`select_colony` and `select_combat`, mirroring `find_proto`'s), `lua/api/
+faction.lua` or `base.lua` (wrapper accessors), `lua/ai/build.lua`
+(extend: `select_colony`, `select_combat`, local `is_aquatic`),
+`lua/ai/init.lua` (register both hooks).
+
+---
+
 ## Phase 5 — validation
 
 ### 5.1 Shadow wrapper (in `lua_ai_hook`, C side — Class 1/2 only)

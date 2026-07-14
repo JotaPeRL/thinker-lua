@@ -16,4 +16,5 @@ int find_proto(int base_id, TriadFlag triad, VehWeaponMode mode, bool defend);
 int select_colony(int base_id, int num_colony, bool build_ships);
 int select_combat(int base_id, bool sea_base, bool build_ships);
 int select_build(int base_id);
+bool check_probe(BASE* base, Triad triad);
 

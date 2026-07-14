@@ -12,4 +12,6 @@ return {
     mod_social_ai = social.mod_social_ai,
     mod_wants_to_attack = war.mod_wants_to_attack,
     find_proto = build.find_proto,
+    select_colony = build.select_colony,
+    select_combat = build.select_combat,
 }

@@ -350,6 +350,8 @@ int main() {
     // by lua/api/base.lua on every access, not baked into `globals` as a
     // fixed address the way Factions/MFactions are.
     emit_struct(stdout, {"BASE", sizeof(BASE), alignof(BASE), {
+        FIELD(BASE, x),
+        FIELD(BASE, y),
         FIELD(BASE, faction_id),
         FIELD(BASE, governor_flags),
         FIELD(BASE, production_id_last),
@@ -361,6 +363,10 @@ int main() {
         FIELD(BASE, nerve_staple_turns_left),
         FIELD(BASE, drone_total),
         FIELD(BASE, talent_total),
+        // Production/plans port, second slice (item 3, IMPLEMENTATION_
+        // DETAILS.md 4.8).
+        FIELD(BASE, defend_range),
+        FIELD(BASE, mineral_intake_2),
     }});
 
     printf("]]\n\n");
@@ -553,6 +559,20 @@ int main() {
     printf("    PLAN_NAVAL_SUPERIORITY = %d,\n", PLAN_NAVAL_SUPERIORITY);
     printf("    PLAN_RECON = %d,\n", PLAN_RECON);
     printf("    FAC_STOCKPILE_ENERGY = %d,\n", FAC_STOCKPILE_ENERGY);
+    // Production/plans port, second slice (item 3, IMPLEMENTATION_DETAILS.md 4.8).
+    printf("    PFLAG_EXT_STRAT_LOTS_COLONY_PODS = %d,\n", PFLAG_EXT_STRAT_LOTS_COLONY_PODS);
+    printf("    PFLAG_EXT_STRAT_LOTS_SEA_BASES = %d,\n", PFLAG_EXT_STRAT_LOTS_SEA_BASES);
+    printf("    DIFF_CITIZEN = %d,\n", DIFF_CITIZEN);
+    printf("    PFLAG_EMPHASIZE_AIR_POWER = %d,\n", PFLAG_EMPHASIZE_AIR_POWER);
+    printf("    PFLAG_EMPHASIZE_SEA_POWER = %d,\n", PFLAG_EMPHASIZE_SEA_POWER);
+    printf("    PFLAG_EMPHASIZE_LAND_POWER = %d,\n", PFLAG_EMPHASIZE_LAND_POWER);
+    printf("    PFLAG_EXT_STRAT_LOTS_PROBE_TEAMS = %d,\n", PFLAG_EXT_STRAT_LOTS_PROBE_TEAMS);
+    printf("    GOV_MAY_PROD_PROBES = %d,\n", GOV_MAY_PROD_PROBES);
+    printf("    GOV_MAY_PROD_TRANSPORT = %d,\n", GOV_MAY_PROD_TRANSPORT);
+    printf("    GOV_MAY_PROD_LAND_COMBAT = %d,\n", GOV_MAY_PROD_LAND_COMBAT);
+    printf("    GOV_MAY_PROD_LAND_DEFENSE = %d,\n", GOV_MAY_PROD_LAND_DEFENSE);
+    printf("    GOV_MAY_PROD_NAVAL_COMBAT = %d,\n", GOV_MAY_PROD_NAVAL_COMBAT);
+    printf("    RFLAG_AQUATIC = %d,\n", RFLAG_AQUATIC);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {
