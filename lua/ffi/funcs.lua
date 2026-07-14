@@ -39,10 +39,22 @@ typedef struct {
     int32_t (*great_satan)(int32_t faction_id, int32_t is_aggressive);
     int32_t (*has_agenda)(int32_t faction_id_1, int32_t faction_id_2, uint32_t status);
     int32_t (*hq_region)(int32_t faction_id);
+    int32_t (*bases_ptr)();
+    int32_t (*mod_veh_avail)(int32_t unit_id, int32_t faction_id, int32_t base_id);
+    int32_t (*has_abil)(int32_t unit_id, uint32_t ability);
+    int32_t (*has_fac_built)(int32_t item_id, int32_t base_id);
+    int32_t (*ignore_reactor_power)();
+    int32_t (*long_range_artillery)();
+    int32_t (*modify_unit_support)();
+    int32_t (*psi_score)(int32_t faction_id);
+    int32_t (*missile_units)(int32_t faction_id);
+    int32_t (*median_limit)(int32_t faction_id);
+    int32_t (*max_offense_value)(int32_t faction_id);
+    int32_t (*max_defense_value)(int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 5
+local HOST_API_VERSION = 6
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -78,4 +90,16 @@ return {
     great_satan = function(faction_id, is_aggressive) return api.great_satan(faction_id, is_aggressive) end,
     has_agenda = function(f1, f2, status) return api.has_agenda(f1, f2, status) end,
     hq_region = function(faction_id) return api.hq_region(faction_id) end,
+    bases_ptr = function() return api.bases_ptr() end,
+    mod_veh_avail = function(unit_id, faction_id, base_id) return api.mod_veh_avail(unit_id, faction_id, base_id) end,
+    has_abil = function(unit_id, ability) return api.has_abil(unit_id, ability) end,
+    has_fac_built = function(item_id, base_id) return api.has_fac_built(item_id, base_id) end,
+    ignore_reactor_power = function() return api.ignore_reactor_power() end,
+    long_range_artillery = function() return api.long_range_artillery() end,
+    modify_unit_support = function() return api.modify_unit_support() end,
+    psi_score = function(faction_id) return api.psi_score(faction_id) end,
+    missile_units = function(faction_id) return api.missile_units(faction_id) end,
+    median_limit = function(faction_id) return api.median_limit(faction_id) end,
+    max_offense_value = function(faction_id) return api.max_offense_value(faction_id) end,
+    max_defense_value = function(faction_id) return api.max_defense_value(faction_id) end,
 }

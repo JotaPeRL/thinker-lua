@@ -19,6 +19,7 @@
 #include "tech.h"
 #include "map.h"
 #include "base.h"
+#include "veh.h"
 
 #include <string>
 #include <unordered_set>
@@ -124,11 +125,61 @@ static int32_t host_hq_region(int32_t faction_id) {
     return region;
 }
 
+// Production/plans port, first slice (porting-order item 3,
+// IMPLEMENTATION_DETAILS.md 4.7).
+static int32_t host_bases_ptr() {
+    return (int32_t)Bases;
+}
+
+static int32_t host_mod_veh_avail(int32_t unit_id, int32_t faction_id, int32_t base_id) {
+    return mod_veh_avail(unit_id, faction_id, base_id);
+}
+
+static int32_t host_has_abil(int32_t unit_id, uint32_t ability) {
+    return has_abil(unit_id, (VehAblFlag)ability);
+}
+
+static int32_t host_has_fac_built(int32_t item_id, int32_t base_id) {
+    return has_fac_built((FacilityId)item_id, base_id);
+}
+
+static int32_t host_ignore_reactor_power() {
+    return conf.ignore_reactor_power;
+}
+
+static int32_t host_long_range_artillery() {
+    return conf.long_range_artillery;
+}
+
+static int32_t host_modify_unit_support() {
+    return conf.modify_unit_support;
+}
+
+static int32_t host_psi_score(int32_t faction_id) {
+    return plans[faction_id].psi_score;
+}
+
+static int32_t host_missile_units(int32_t faction_id) {
+    return plans[faction_id].missile_units;
+}
+
+static int32_t host_median_limit(int32_t faction_id) {
+    return plans[faction_id].median_limit;
+}
+
+static int32_t host_max_offense_value(int32_t faction_id) {
+    return plans[faction_id].max_offense_value;
+}
+
+static int32_t host_max_defense_value(int32_t faction_id) {
+    return plans[faction_id].max_defense_value;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 5,
+    /* api_version          */ 6,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -157,6 +208,18 @@ static LuaHostApi g_host_api = {
     /* great_satan          */ host_great_satan,
     /* has_agenda           */ host_has_agenda,
     /* hq_region            */ host_hq_region,
+    /* bases_ptr            */ host_bases_ptr,
+    /* mod_veh_avail        */ host_mod_veh_avail,
+    /* has_abil             */ host_has_abil,
+    /* has_fac_built        */ host_has_fac_built,
+    /* ignore_reactor_power */ host_ignore_reactor_power,
+    /* long_range_artillery */ host_long_range_artillery,
+    /* modify_unit_support  */ host_modify_unit_support,
+    /* psi_score            */ host_psi_score,
+    /* missile_units        */ host_missile_units,
+    /* median_limit         */ host_median_limit,
+    /* max_offense_value    */ host_max_offense_value,
+    /* max_defense_value    */ host_max_defense_value,
 };
 
 static lua_State* L = NULL;

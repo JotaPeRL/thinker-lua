@@ -4,10 +4,12 @@
 local tech = dofile("lua/ai/tech.lua")
 local social = dofile("lua/ai/social.lua")
 local war = dofile("lua/ai/war.lua")
+local build = dofile("lua/ai/build.lua")
 
 return {
     mod_tech_val = tech.mod_tech_val,
     mod_tech_ai = tech.mod_tech_ai,
     mod_social_ai = social.mod_social_ai,
     mod_wants_to_attack = war.mod_wants_to_attack,
+    find_proto = build.find_proto,
 }

@@ -609,6 +609,19 @@ and type constraints. For any combat-capable unit, mode is set to WMODE_COMBAT.
 */
 int find_proto(int base_id, TriadFlag triad, VehWeaponMode mode, bool defend) {
     assert(base_id >= 0 && base_id < *BaseCount);
+    // TEMPORARY porting-order-item-3 verification instrumentation, same
+    // dual-run mismatch pattern as mod_tech_val/mod_social_ai/
+    // mod_wants_to_attack (IMPLEMENTATION_DETAILS.md 4.7). find_proto
+    // consumes RNG (random(128) inside its scoring loop below), so this
+    // needs the same snapshot/restore treatment as mod_tech_ai, not the
+    // simpler snapshot-free pattern mod_wants_to_attack got away with.
+    uint32_t saved_rng = random_state();
+    int lua_proto_id;
+    bool lua_handled = lua_ai_hook("find_proto", &lua_proto_id,
+        {base_id, (int)triad, (int)mode, defend});
+    if (lua_handled) {
+        random_reseed(saved_rng);
+    }
     BASE* base = &Bases[base_id];
     int faction_id = base->faction_id;
     int gov = base->gov_config();
@@ -665,6 +678,10 @@ int find_proto(int base_id, TriadFlag triad, VehWeaponMode mode, bool defend) {
             best_val = val;
         }
 
+    }
+    if (lua_handled && lua_proto_id != best_id) {
+        debug("lua/cpp find_proto mismatch: base=%d triad=%d mode=%d defend=%d lua=%d cpp=%d\n",
+            base_id, triad, mode, defend, lua_proto_id, best_id);
     }
     return best_id;
 }

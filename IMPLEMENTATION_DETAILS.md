@@ -661,6 +661,215 @@ the hook).
 
 ---
 
+### 4.7 Production/plans port, first slice (porting-order item 3) — in-game verified clean
+
+> **Status (2026-07-14): implemented and building clean on both presets;
+> in-game dual-run verification done, zero mismatches.** `unit_score` + `find_proto`
+> ported to `lua/ai/build.lua`, `find_proto` registered as the hook
+> (`lua/ai/init.lua`); same temporary dual-run pattern as the other three
+> items, with RNG snapshot/restore around the Lua call since `find_proto`
+> consumes it (`random(128)`, confirmed to be `random_get(0,128)` under a
+> different name — same LCG state as `rand.map`, no new RNG binding
+> needed). `LuaHostApi` bumped to `api_version=6` with 12 new entries.
+> `tools/gen_ffi.cpp` gained `BASE`'s first-ever `emit_struct` block (11
+> fields) plus fields on `UNIT`/`CChassis`/`CWeapon`/`CRules`/`Faction` and
+> a page of enums — the scoping pass below undercounted by about a dozen
+> items once the functions were actually transcribed line-by-line (several
+> more found live, same "the plan is a hypothesis, the source is the
+> truth" pattern as every prior item): `Faction::mil_strength_1`-style
+> misses this time were `UNIT::unit_flags` (backs `is_prototyped()`,
+> needed by `proto_extra_cost`), `Faction::SE_police_pending` +
+> `SE_Pending` (backs `BASE::SE_police(pending)`), `CRules::
+> artillery_max_rng`, `PLAN_NAVAL_SUPERIORITY`/`PLAN_RECON`/
+> `FAC_STOCKPILE_ENERGY`/`TRIAD_*`/`PLAN_SUPPLY`/`PLAN_PROBE`/
+> `PLAN_TERRAFORM`/`DIFF_SPECIALIST` enums, `MultiplayerActive` (new
+> `game.lua` accessor), and the `MaxBaseNum`/`MaxProtoFactionNum` counts
+> (declared for gen_ffi's own compilation but never actually emitted to
+> Lua before now). Also caught and fixed two accidental duplicate enum
+> emissions (`FAC_CENTAURI_PRESERVE`/`FAC_TEMPLE_OF_PLANET`, already
+> emitted by the tech pilot) before they landed.
+>
+> **`UNIT::offense_value()`/`defense_value()` vs `proto_offense()`/
+> `proto_defense()` — real distinct functions, not a naming accident.**
+> Confirmed while implementing: the tech pilot's `proto_offense_value`/
+> `proto_defense_value` (`lua/api/tech.lua`) are `UNIT::offense_value()`/
+> `defense_value()` — the raw `Weapon`/`Armor` field, no reactor
+> multiplier. `unit_score`'s own `proto_offense`/`proto_defense`
+> (`veh.cpp:3166-3182`, now also in `tech.lua`) apply the reactor
+> multiplier and a planet-buster special case. Both needed, kept
+> separate, documented at both definition sites so it doesn't get
+> collapsed into one "helper" by a future edit.
+>
+> **`defend`'s int-vs-boolean trap, caught before it shipped:**
+> `lua_ai_hook` passes bool-shaped args as a raw `0`/`1` int (Lua's `0` is
+> truthy, unlike C's), so `find_proto`/`unit_score` both normalize
+> `defend` to a real Lua boolean on entry — same class of bug
+> `lua/ai/social.lua`'s `pop_boom` already had to route around with
+> explicit `~= 0` checks, just centralized here into one conversion
+> instead of `~= 0` at every use site (this function uses `defend` in
+> enough `and`/`or` ternary expressions that scattering the checks would
+> have been easy to miss one of).
+>
+> `UNIT`'s new inline-method re-exposures (`proto_is_missile`,
+> `proto_is_planet_buster`, `proto_is_psi_unit`, `proto_is_colony`,
+> `proto_is_prototyped`, `proto_triad`, `proto_range`) and
+> `proto_offense`/`proto_defense` landed in the existing `lua/api/tech.lua`
+> rather than a new `unit.lua` — it already owns every `CChassis`/
+> `CWeapon`/`UNIT` accessor they need, so a second module would just
+> duplicate the same `ffi.cast` calls. New `lua/api/base.lua`: `BASE` is a
+> mutable, re-pointable pointer (like `Vehs`, 3.2), so `get()` re-fetches
+> it via a new `LuaHostApi.bases_ptr()` host call on every access instead
+> of caching one `ffi.cast` the way `Factions`/`MFactions` (fixed
+> addresses) are cached elsewhere.
+>
+> Every new/changed Lua file passed a native-`luajit` `loadfile` syntax
+> check.
+>
+> **In-game run (continued autoplay session, turns 93-100):** `lua.log`
+> showed `register_hooks: 5 hook(s) registered` and `find_proto` in the
+> first-call diagnostic. `debug.txt`: **769** `find_proto` calls across all
+> 7 AI factions, **zero** `lua/cpp find_proto mismatch` lines, zero Lua
+> errors. Coverage was broad, not a lucky narrow path: `defend` both
+> true/false (253/516), 6 distinct triad-flag combinations (land/sea/air
+> and their bitwise unions), 5 distinct weapon modes. This is the deepest
+> dependency chain ported so far (two new structs' worth of fields, a
+> dozen-plus enums, 12 host wrappers) and it came back clean on the first
+> real session — contrary to the "expect a mismatch" caution below, which
+> stands as general guidance for the *next* item, not a prediction that
+> held here.
+
+`build.cpp` + `plan.cpp` are the biggest item in the porting order (the plan
+calls it "the heart of the single-player challenge") and, unlike items 1/2/2b,
+have **no cheap entry point**: every function here touches `BASE`, which has
+had zero FFI exposure so far (deliberately deferred through items 1/2/2b).
+Sizes found by reading the actual functions (not the earlier rough estimate):
+`select_build` ~470 loc (also reads `Vehs[]` directly — needs `VEH` too, not
+just `BASE`), `mod_base_hurry` ~309 loc (no per-base args at all — a
+whole-game sweep, called once from `base.cpp:4056`), `design_units` ~308 loc,
+`plans_upkeep` ~160 loc, `find_project` ~156 loc, `unit_score` ~105 loc,
+`select_combat` ~94 loc, `governor_priorities` ~88 loc, `find_proto` ~62 loc,
+`select_colony` ~44 loc, `former_plans` ~21 loc, `facility_score` 7 loc.
+
+**Call graph matters more than size here.** Of all these, only two are ever
+called from outside `build.cpp`/`plan.cpp`: `select_build(base_id)` (4 call
+sites: `base.cpp` x3, `map.cpp`) and `find_proto(base_id, triad, mode,
+defend)` (one call site outside the `select_*` chain: `base.cpp:1203`).
+Everything else — `facility_score`, `governor_priorities`, `unit_score`,
+`select_colony`, `select_combat` — is a private helper only ever reached
+through one of those two. `select_build` needs `VEH` (a vehicle-counting
+loop over `Vehs[]`) on top of `BASE`, so it's not a good first slice.
+`find_proto` is: Class 1 pure query, real external caller, and its only
+dependency chain (`unit_score` + a handful of small helpers) turned out to
+be mostly cheap once actually read.
+
+**Scope decided for this first slice: `unit_score` + `find_proto` only.**
+`governor_priorities`/`facility_score`/`select_build` itself are left for a
+later slice once `BASE`'s FFI footprint from this pass is already in place.
+
+**New `BASE` fields (first exposure ever)** (`tools/gen_ffi.cpp`'s
+`FIELD(BASE, ...)`, a new `emit_struct` block): `faction_id`,
+`governor_flags`, `production_id_last`, `mineral_surplus`,
+`minerals_accumulated`, `mineral_consumption`, `specialist_adjust`,
+`state_flags`, `nerve_staple_turns_left`, `drone_total`, `talent_total`.
+
+**New `UNIT` fields:** `plan`, `ability_flags`, `cost`.
+**New `CChassis` fields:** `triad`, `range`, `missile`.
+**New `CWeapon` field:** `mode`.
+**New `CRules` fields:** `retool_penalty_prod_change`, `retool_exemption`,
+`extra_cost_prototype_sea`, `extra_cost_prototype_air`,
+`extra_cost_prototype_land`.
+**New `Faction` fields:** `player_flags_ext`, `diff_level`,
+`SE_support_pending`.
+
+**New enums** (all already visible to `gen_ffi.cpp` via the headers it
+already includes — `engine_veh.h`/`engine_base.h`, not `engine_enums.h`,
+so no new `#include` needed, just `printf` lines): `PLAN_PLANET_BUSTER`,
+`PLAN_COLONY`, `BSTATE_PRODUCTION_DONE`, `RETOOL_ALWAYS_FREE`,
+`RETOOL_FREE_PROJECT`, `RFLAG_FREEPROTO`, `GOV_MAY_PROD_NATIVE`,
+`GOV_MAY_PROD_PROTOTYPE`, `GOV_MAY_PROD_AIR_COMBAT`,
+`GOV_MAY_PROD_AIR_DEFENSE`, `FAC_BROOD_PIT`, `FAC_BIOLOGY_LAB`,
+`FAC_CENTAURI_PRESERVE`, `FAC_TEMPLE_OF_PLANET`, `FAC_SKUNKWORKS`,
+`FAC_PUNISHMENT_SPHERE`, `TRFLAG_LAND`, `TRFLAG_SEA`, `TRFLAG_AIR`,
+`WMODE_COMBAT`, `WMODE_COLONY`, `WMODE_PROBE`, `WMODE_TERRAFORM`,
+`WMODE_SUPPLY`, `WMODE_TRANSPORT`, `PFLAG_EXT_STRAT_LOTS_MISSILES`,
+`PFLAG_EXT_STRAT_LOTS_ARTILLERY`, and the 17 `ABL_*` flags `unit_score`'s
+`specials` table and a few other branches read directly (`ABL_AAA`,
+`ABL_AIR_SUPERIORITY`, `ABL_ALGO_ENHANCEMENT`, `ABL_AMPHIBIOUS`,
+`ABL_DROP_POD`, `ABL_EMPATH`, `ABL_TRANCE`, `ABL_SLOW`, `ABL_TRAINED`,
+`ABL_COMM_JAMMER`, `ABL_ANTIGRAV_STRUTS`, `ABL_BLINK_DISPLACER`,
+`ABL_DEEP_PRESSURE_HULL`, `ABL_SUPER_TERRAFORMER`, `ABL_ARTILLERY`,
+`ABL_POLICE_2X`, `ABL_CLEAN_REACTOR`).
+
+**Kept opaque (host wrappers), not ported — engine mechanics/eligibility
+gates, not AI policy, same precedent as `social_calc`/`great_beelzebub`:**
+- `mod_veh_avail(unit_id, faction_id, base_id)` — unit-buildable eligibility
+  gate; ~15 arbitrary `WPN_*`/`ABL_*`/expansion-pack special cases plus a
+  map query (`is_coast`), not worth porting for a boolean gate.
+- `has_abil(unit_id, ability)` — capability check with an alien-race special
+  case (`ABL_DEEP_RADAR`).
+- `has_fac_built(item_id, base_id)` — new, **generic** (any facility, any
+  base), unlike the existing `has_project`/`has_free_facility` which are
+  faction-level. Needed by `find_proto` (4x, psi-native techs) and
+  `unit_score` (`FAC_SKUNKWORKS`) and `base_can_riot` (`FAC_PUNISHMENT_
+  SPHERE`) — cheap enough as a single wrapper reused across all three
+  rather than porting `BASE::has_fac_built()`'s bitmask logic three times.
+- `conf` accessors (Thinker-internal, not FFI-mapped, same pattern as
+  `tech_balance_enabled`/`social_ai_bias`): `ignore_reactor_power()`,
+  `long_range_artillery()`, `modify_unit_support()`.
+- `AIPlans` accessors (same pattern as `defense_modifier`/`keep_fungus`):
+  `psi_score(faction_id)`, `missile_units(faction_id)`,
+  `median_limit(faction_id)`, `max_offense_value(faction_id)`,
+  `max_defense_value(faction_id)`.
+
+**Ported directly to Lua** (all turned out to be cheap once read — mostly
+one-line `BASE`/`UNIT` inline methods dropped by field-only cdef generation,
+same category as the tech pilot's `proto_offense_value`/`proto_defense_value`/
+`proto_speed`):
+- `UNIT` inline methods: `is_missile`, `is_planet_buster`, `is_psi_unit`,
+  `is_colony`, `is_prototyped`, `triad`, `range` — all 1-3 line field
+  comparisons (`engine_veh.h:401-470`).
+- `BASE` inline methods: `gov_config()` (`is_human(faction_id) ? governor_
+  flags : ~0u`), `SE_police(pending)`, `plr_owner()` (`is_human(faction_id)`).
+- Free functions `proto_offense(unit_id)`/`proto_defense(unit_id)`
+  (`veh.cpp:3166-3182`) — **not** the same computation as the tech pilot's
+  `proto_offense_value`/`proto_defense_value` (those are `UNIT::offense_
+  value()`/`defense_value()`, i.e. the raw weapon/armor field with no
+  reactor multiplier; these apply the reactor multiplier and a
+  planet-buster special case). Different functions, same name pattern —
+  worth flagging so nobody assumes the tech pilot already covered this.
+- `need_police`, `unit_support_plan`, `check_retool` (currently a `static`
+  helper local to `build.cpp`, used by both `unit_score` and, later,
+  `select_build`), `proto_extra_cost`, `prototype_factor`, `base_can_riot`,
+  `unit_is_better`.
+- `unit_score(base_id, unit_id, psi_score, psi_atk, psi_def, defend)` —
+  the scoring function itself.
+- `find_proto(base_id, triad, mode, defend)` — the hook.
+
+**RNG:** `find_proto` calls the mod's own LCG once per candidate,
+`random(128)` — confirmed (`src/random.cpp:41-58`) to be the exact same
+`random_seed` stream as `random_get`/`rand.map`, just with `low=0`
+(`random(limit)` is arithmetically `random_get(0, limit)`), so this is
+`rand.map(0, 128)` in Lua, no new binding needed. Because it consumes RNG,
+the dual-run seam needs the same snapshot/restore dance as `mod_tech_ai`
+(`random_state()` before the Lua call, `random_reseed()` before the real
+C++ body runs), not the simpler snapshot-free pattern `mod_wants_to_attack`
+got away with.
+
+**Files to touch when implementing:** `tools/gen_ffi.cpp` (new `BASE`
+`emit_struct` block + the other fields/enums above), `src/luaai.h` +
+`src/luaai.cpp` (8 new `LuaHostApi` entries, `api_version` bump to 6),
+`src/build.cpp` (seam in `find_proto`, RNG snapshot/restore), a new
+`lua/api/base.lua` (BASE accessors, mirroring `lua/api/faction.lua`'s
+shape), `lua/api/tech.lua` or a new module for the `UNIT` methods above
+(needs a decision: extend the tech pilot's existing UNIT re-exposures or
+start a separate `lua/api/unit.lua` — the tech pilot's are proto-value
+methods reused by scoring generally, not tech-specific, so a shared
+`unit.lua` may be the cleaner home now that a second consumer exists),
+`lua/ai/build.lua` (new file: `unit_score` + `find_proto`, provenance
+pointing at `src/build.cpp`), `lua/ai/init.lua` (register the hook).
+
+---
+
 ## Phase 5 — validation
 
 ### 5.1 Shadow wrapper (in `lua_ai_hook`, C side — Class 1/2 only)

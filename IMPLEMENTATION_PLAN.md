@@ -691,6 +691,13 @@ enable Lua by default on the branch → next.
    `facility_score`, `unit_score`/`find_proto`, `select_colony`/`select_combat`,
    `select_build`, `find_project`, `mod_base_hurry`, then `plans_upkeep`,
    `design_units`, `former_plans`. The heart of the single-player challenge.
+
+   > **Status: ✅ first slice in-game verified clean (2026-07-14).**
+   > `unit_score`+`find_proto` ported (`lua/ai/build.lua`), `find_proto`
+   > hooked. First-ever `BASE` FFI exposure (11 fields, a new
+   > `lua/api/base.lua`). 769 calls over turns 93-100, all 7 AI factions,
+   > zero mismatches — see `IMPLEMENTATION_DETAILS.md` 4.7. `select_build`
+   > itself and the rest of this item remain untouched.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +

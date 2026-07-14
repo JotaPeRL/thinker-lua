@@ -70,6 +70,70 @@ local function proto_speed(unit_id)
     return chassis(proto(unit_id).chassis_id).speed
 end
 
+-- Production/plans port, first slice (porting-order item 3,
+-- IMPLEMENTATION_DETAILS.md 4.7): re-ports more of UNIT's inline methods
+-- (engine_veh.h) the same way proto_offense_value/proto_defense_value/
+-- proto_speed already do -- one-liners over the tables already exposed
+-- above. Kept here rather than a separate module: tech.lua already owns
+-- every CChassis/CWeapon/UNIT accessor these need.
+local function proto_is_missile(unit_id)
+    return chassis(proto(unit_id).chassis_id).missile ~= 0
+end
+
+local function proto_is_planet_buster(unit_id)
+    local u = proto(unit_id)
+    if u.plan == types.enums.PLAN_PLANET_BUSTER then
+        return u.reactor_id
+    end
+    return 0
+end
+
+local function proto_is_psi_unit(unit_id)
+    return proto_offense_value(unit_id) < 0
+end
+
+local function proto_is_colony(unit_id)
+    return proto(unit_id).plan == types.enums.PLAN_COLONY
+end
+
+local function proto_is_prototyped(unit_id)
+    return bit.band(proto(unit_id).unit_flags, types.enums.UNIT_PROTOTYPED) ~= 0
+end
+
+local function proto_triad(unit_id)
+    return chassis(proto(unit_id).chassis_id).triad
+end
+
+local function proto_range(unit_id)
+    return chassis(proto(unit_id).chassis_id).range
+end
+
+-- proto_offense/proto_defense (src/veh.cpp:3166-3182) are *not* the same
+-- computation as proto_offense_value/proto_defense_value above (those are
+-- UNIT::offense_value()/defense_value(), the raw weapon/armor field with
+-- no reactor multiplier) -- these apply the reactor multiplier and a
+-- planet-buster special case. Different functions, same name pattern.
+local function proto_offense(unit_id)
+    local u = proto(unit_id)
+    local atk_val = weapon(u.weapon_id).offense_value
+    if proto_is_planet_buster(unit_id) ~= 0 then
+        return atk_val * u.reactor_id
+    end
+    if funcs.ignore_reactor_power() ~= 0 or atk_val < 0 then
+        return atk_val * types.enums.REC_FISSION
+    end
+    return atk_val * u.reactor_id
+end
+
+local function proto_defense(unit_id)
+    local u = proto(unit_id)
+    local def_val = Armor[u.armor_id].defense_value
+    if funcs.ignore_reactor_power() ~= 0 or def_val < 0 then
+        return def_val * types.enums.REC_FISSION
+    end
+    return def_val * u.reactor_id
+end
+
 -- TechOwners is a bitfield byte per tech_id, one bit per faction slot
 -- (MaxPlayerNum=8 fits exactly in a uint8_t).
 local function owners(tech_id)
@@ -87,6 +151,15 @@ return {
     proto_offense_value = proto_offense_value,
     proto_defense_value = proto_defense_value,
     proto_speed = proto_speed,
+    proto_is_missile = proto_is_missile,
+    proto_is_planet_buster = proto_is_planet_buster,
+    proto_is_psi_unit = proto_is_psi_unit,
+    proto_is_colony = proto_is_colony,
+    proto_is_prototyped = proto_is_prototyped,
+    proto_triad = proto_triad,
+    proto_range = proto_range,
+    proto_offense = proto_offense,
+    proto_defense = proto_defense,
     owners = owners,
     rules = function() return Rules[0] end,
     has_tech = funcs.has_tech,

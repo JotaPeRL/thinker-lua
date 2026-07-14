@@ -64,6 +64,27 @@ struct LuaHostApi {
     int32_t (*great_satan)(int32_t faction_id, int32_t is_aggressive);
     int32_t (*has_agenda)(int32_t faction_id_1, int32_t faction_id_2, uint32_t status);
     int32_t (*hq_region)(int32_t faction_id); // -1 if no HQ built
+    // Production/plans port, first slice (porting-order item 3,
+    // IMPLEMENTATION_DETAILS.md 4.7). bases_ptr returns Bases' current
+    // value (not its address) -- Bases is a mutable, re-pointable global
+    // (3.2, same category as Vehs), so lua/api/base.lua re-fetches this
+    // on every access rather than caching a stale cast the way Factions/
+    // MFactions (fixed addresses) are cached. mod_veh_avail/has_abil stay
+    // opaque (eligibility/capability gates, not AI policy, see 4.7);
+    // has_fac_built is generic (any facility, any base), unlike the
+    // existing faction-level has_project/has_free_facility.
+    int32_t (*bases_ptr)();
+    int32_t (*mod_veh_avail)(int32_t unit_id, int32_t faction_id, int32_t base_id);
+    int32_t (*has_abil)(int32_t unit_id, uint32_t ability);
+    int32_t (*has_fac_built)(int32_t item_id, int32_t base_id);
+    int32_t (*ignore_reactor_power)(); // -> conf.ignore_reactor_power
+    int32_t (*long_range_artillery)(); // -> conf.long_range_artillery
+    int32_t (*modify_unit_support)();  // -> conf.modify_unit_support
+    int32_t (*psi_score)(int32_t faction_id);        // -> plans[faction_id].psi_score
+    int32_t (*missile_units)(int32_t faction_id);     // -> plans[faction_id].missile_units
+    int32_t (*median_limit)(int32_t faction_id);      // -> plans[faction_id].median_limit
+    int32_t (*max_offense_value)(int32_t faction_id); // -> plans[faction_id].max_offense_value
+    int32_t (*max_defense_value)(int32_t faction_id); // -> plans[faction_id].max_defense_value
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

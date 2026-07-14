@@ -17,6 +17,9 @@ local MapAreaSqRoot = ffi.cast("int32_t*", types.globals.MapAreaSqRoot)
 -- FactionRankings is an int[MaxPlayerNum] array (ranking position -> faction
 -- id), not a scalar -- indexed directly, like the other array fields.
 local FactionRankings = ffi.cast("int32_t*", types.globals.FactionRankings)
+-- Production/plans port, first slice (porting-order item 3,
+-- IMPLEMENTATION_DETAILS.md 4.7).
+local MultiplayerActive = ffi.cast("int32_t*", types.globals.MultiplayerActive)
 
 return {
     turn = function() return CurrentTurn[0] end,
@@ -26,4 +29,5 @@ return {
     diff_level = function() return DiffLevel[0] end,
     map_area_sq_root = function() return MapAreaSqRoot[0] end,
     faction_ranking = function(i) return FactionRankings[i] end,
+    multiplayer_active = function() return MultiplayerActive[0] ~= 0 end,
 }

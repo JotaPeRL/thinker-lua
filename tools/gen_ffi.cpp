@@ -216,11 +216,17 @@ int main() {
     emit_struct(stdout, {"CWeapon", sizeof(CWeapon), alignof(CWeapon), {
         FIELD(CWeapon, offense_value),
         FIELD(CWeapon, preq_tech),
+        FIELD(CWeapon, mode), // production/plans port (item 3, IMPLEMENTATION_DETAILS.md 4.7)
     }});
 
     emit_struct(stdout, {"CChassis", sizeof(CChassis), alignof(CChassis), {
         FIELD(CChassis, preq_tech),
         FIELD(CChassis, speed),
+        // production/plans port (item 3, IMPLEMENTATION_DETAILS.md 4.7):
+        // backs UNIT::triad()/range()/is_missile(), re-ported below.
+        FIELD(CChassis, triad),
+        FIELD(CChassis, range),
+        FIELD(CChassis, missile),
     }});
 
     emit_struct(stdout, {"CArmor", sizeof(CArmor), alignof(CArmor), {
@@ -233,6 +239,11 @@ int main() {
         FIELD(UNIT, armor_id),
         FIELD(UNIT, reactor_id),
         FIELD(UNIT, preq_tech),
+        // production/plans port (item 3, IMPLEMENTATION_DETAILS.md 4.7).
+        FIELD(UNIT, plan),
+        FIELD(UNIT, ability_flags),
+        FIELD(UNIT, cost),
+        FIELD(UNIT, unit_flags), // backs is_prototyped(), needed by proto_extra_cost
     }});
 
     emit_struct(stdout, {"Continent", sizeof(Continent), alignof(Continent), {
@@ -261,6 +272,13 @@ int main() {
         FIELD(CRules, tech_preq_allow_3_nutrients_sq),
         FIELD(CRules, tech_preq_allow_3_minerals_sq),
         FIELD(CRules, tech_preq_allow_3_energy_sq),
+        // production/plans port (item 3, IMPLEMENTATION_DETAILS.md 4.7).
+        FIELD(CRules, retool_penalty_prod_change),
+        FIELD(CRules, retool_exemption),
+        FIELD(CRules, extra_cost_prototype_sea),
+        FIELD(CRules, extra_cost_prototype_air),
+        FIELD(CRules, extra_cost_prototype_land),
+        FIELD(CRules, artillery_max_rng),
     }});
 
     emit_struct(stdout, {"Faction", sizeof(Faction), alignof(Faction), {
@@ -315,6 +333,34 @@ int main() {
         FIELD(Faction, tech_commerce_bonus),
         FIELD(Faction, integrity_blemishes),
         FIELD(Faction, SE_morale_pending),
+        // production/plans port (item 3, IMPLEMENTATION_DETAILS.md 4.7).
+        FIELD(Faction, player_flags_ext),
+        FIELD(Faction, diff_level),
+        FIELD(Faction, SE_support_pending),
+        FIELD(Faction, SE_police_pending), // backs BASE::SE_police(pending)
+    }});
+
+    // production/plans port, first slice (porting-order item 3,
+    // IMPLEMENTATION_DETAILS.md 4.7): first-ever BASE exposure. Deliberate
+    // projection covering only what unit_score/find_proto and their direct
+    // helpers (check_retool, base_can_riot) read -- not the whole struct.
+    // Bases[] itself is a mutable, re-pointable pointer (like Vehs[],
+    // IMPLEMENTATION_DETAILS.md 3.2) so its address is exposed via a
+    // LuaHostApi accessor (src/luaai.cpp's host_bases_ptr), fetched fresh
+    // by lua/api/base.lua on every access, not baked into `globals` as a
+    // fixed address the way Factions/MFactions are.
+    emit_struct(stdout, {"BASE", sizeof(BASE), alignof(BASE), {
+        FIELD(BASE, faction_id),
+        FIELD(BASE, governor_flags),
+        FIELD(BASE, production_id_last),
+        FIELD(BASE, mineral_surplus),
+        FIELD(BASE, minerals_accumulated),
+        FIELD(BASE, mineral_consumption),
+        FIELD(BASE, specialist_adjust),
+        FIELD(BASE, state_flags),
+        FIELD(BASE, nerve_staple_turns_left),
+        FIELD(BASE, drone_total),
+        FIELD(BASE, talent_total),
     }});
 
     printf("]]\n\n");
@@ -346,6 +392,9 @@ int main() {
     // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
     // 4.6): int* const, same provenance-by-comment convention (src/engine.cpp).
     printf("    FactionRankings = 0x%08X,\n", 0x9A64EC);
+    // Production/plans port, first slice (item 3, IMPLEMENTATION_DETAILS.md
+    // 4.7): int* const, fixed address (src/engine.cpp).
+    printf("    MultiplayerActive = 0x%08X,\n", 0x93F660);
     printf("  },\n");
     // Array bounds for the exposed rule tables, from src/main.h (not
     // included here -- same provenance-by-comment convention as the
@@ -370,12 +419,14 @@ int main() {
     // 64 above did.
     printf("    MaxFacilityArrayNum = %d,\n", FAC_EMPTY_SP_64 + 1);
     printf("    MaxProtoNum = %d,\n", 512);        // main.h:116
+    printf("    MaxProtoFactionNum = %d,\n", 64);  // main.h:117
     printf("    MaxRegionNum = %d,\n", 128);       // main.h:106
     printf("    MaxRegionLandNum = %d,\n", 64);    // main.h:107
     printf("    MaxSocialCatNum = %d,\n", 4);      // main.h:146
     printf("    MaxSocialModelNum = %d,\n", 4);    // main.h:147
     printf("    MaxSocialEffectNum = %d,\n", 11);  // main.h:148
     printf("    GrowthPopBoom = %d,\n", 6);        // main.h:158
+    printf("    MaxBaseNum = %d,\n", 512);         // main.h:114
     printf("  },\n");
     // Enum constants the tech-AI port (M4) branches on. Values come
     // straight from engine_enums.h (already included above for the
@@ -444,6 +495,64 @@ int main() {
     printf("    RULES_INTENSE_RIVALRY = %d,\n", RULES_INTENSE_RIVALRY);
     printf("    RFLAG_ALIEN = %d,\n", RFLAG_ALIEN);
     printf("    FAC_HEADQUARTERS = %d,\n", FAC_HEADQUARTERS);
+    // Production/plans port, first slice (porting-order item 3,
+    // IMPLEMENTATION_DETAILS.md 4.7).
+    printf("    PLAN_PLANET_BUSTER = %d,\n", PLAN_PLANET_BUSTER);
+    printf("    PLAN_COLONY = %d,\n", PLAN_COLONY);
+    printf("    BSTATE_PRODUCTION_DONE = %d,\n", BSTATE_PRODUCTION_DONE);
+    printf("    RETOOL_ALWAYS_FREE = %d,\n", RETOOL_ALWAYS_FREE);
+    printf("    RETOOL_FREE_PROJECT = %d,\n", RETOOL_FREE_PROJECT);
+    printf("    RFLAG_FREEPROTO = %d,\n", RFLAG_FREEPROTO);
+    printf("    GOV_MAY_PROD_NATIVE = %d,\n", GOV_MAY_PROD_NATIVE);
+    printf("    GOV_MAY_PROD_PROTOTYPE = %d,\n", GOV_MAY_PROD_PROTOTYPE);
+    printf("    GOV_MAY_PROD_AIR_COMBAT = %d,\n", GOV_MAY_PROD_AIR_COMBAT);
+    printf("    GOV_MAY_PROD_AIR_DEFENSE = %d,\n", GOV_MAY_PROD_AIR_DEFENSE);
+    printf("    FAC_BROOD_PIT = %d,\n", FAC_BROOD_PIT);
+    printf("    FAC_BIOLOGY_LAB = %d,\n", FAC_BIOLOGY_LAB);
+    // FAC_CENTAURI_PRESERVE/FAC_TEMPLE_OF_PLANET already emitted above (tech pilot).
+    printf("    FAC_SKUNKWORKS = %d,\n", FAC_SKUNKWORKS);
+    // FAC_PUNISHMENT_SPHERE already emitted above (4.5, social engineering).
+    printf("    TRFLAG_LAND = %d,\n", TRFLAG_LAND);
+    printf("    TRFLAG_SEA = %d,\n", TRFLAG_SEA);
+    printf("    TRFLAG_AIR = %d,\n", TRFLAG_AIR);
+    printf("    WMODE_COMBAT = %d,\n", WMODE_COMBAT);
+    printf("    WMODE_COLONY = %d,\n", WMODE_COLONY);
+    printf("    WMODE_PROBE = %d,\n", WMODE_PROBE);
+    printf("    WMODE_TERRAFORM = %d,\n", WMODE_TERRAFORM);
+    printf("    WMODE_SUPPLY = %d,\n", WMODE_SUPPLY);
+    printf("    WMODE_TRANSPORT = %d,\n", WMODE_TRANSPORT);
+    printf("    PFLAG_EXT_STRAT_LOTS_MISSILES = %d,\n", PFLAG_EXT_STRAT_LOTS_MISSILES);
+    printf("    PFLAG_EXT_STRAT_LOTS_ARTILLERY = %d,\n", PFLAG_EXT_STRAT_LOTS_ARTILLERY);
+    printf("    ABL_AAA = %d,\n", ABL_AAA);
+    printf("    ABL_AIR_SUPERIORITY = %d,\n", ABL_AIR_SUPERIORITY);
+    printf("    ABL_ALGO_ENHANCEMENT = %d,\n", ABL_ALGO_ENHANCEMENT);
+    printf("    ABL_AMPHIBIOUS = %d,\n", ABL_AMPHIBIOUS);
+    printf("    ABL_DROP_POD = %d,\n", ABL_DROP_POD);
+    printf("    ABL_EMPATH = %d,\n", ABL_EMPATH);
+    printf("    ABL_TRANCE = %d,\n", ABL_TRANCE);
+    printf("    ABL_SLOW = %d,\n", ABL_SLOW);
+    printf("    ABL_TRAINED = %d,\n", ABL_TRAINED);
+    printf("    ABL_COMM_JAMMER = %d,\n", ABL_COMM_JAMMER);
+    printf("    ABL_ANTIGRAV_STRUTS = %d,\n", ABL_ANTIGRAV_STRUTS);
+    printf("    ABL_BLINK_DISPLACER = %d,\n", ABL_BLINK_DISPLACER);
+    printf("    ABL_DEEP_PRESSURE_HULL = %d,\n", ABL_DEEP_PRESSURE_HULL);
+    printf("    ABL_SUPER_TERRAFORMER = %d,\n", ABL_SUPER_TERRAFORMER);
+    printf("    ABL_ARTILLERY = %d,\n", ABL_ARTILLERY);
+    printf("    ABL_POLICE_2X = %d,\n", ABL_POLICE_2X);
+    printf("    ABL_CLEAN_REACTOR = %d,\n", ABL_CLEAN_REACTOR);
+    printf("    UNIT_PROTOTYPED = %d,\n", UNIT_PROTOTYPED);
+    printf("    REC_FISSION = %d,\n", REC_FISSION);
+    printf("    SE_Pending = %d,\n", SE_Pending);
+    printf("    TRIAD_SEA = %d,\n", TRIAD_SEA);
+    printf("    TRIAD_AIR = %d,\n", TRIAD_AIR);
+    printf("    TRIAD_LAND = %d,\n", TRIAD_LAND);
+    printf("    PLAN_SUPPLY = %d,\n", PLAN_SUPPLY);
+    printf("    PLAN_PROBE = %d,\n", PLAN_PROBE);
+    printf("    PLAN_TERRAFORM = %d,\n", PLAN_TERRAFORM);
+    printf("    DIFF_SPECIALIST = %d,\n", DIFF_SPECIALIST);
+    printf("    PLAN_NAVAL_SUPERIORITY = %d,\n", PLAN_NAVAL_SUPERIORITY);
+    printf("    PLAN_RECON = %d,\n", PLAN_RECON);
+    printf("    FAC_STOCKPILE_ENERGY = %d,\n", FAC_STOCKPILE_ENERGY);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {
