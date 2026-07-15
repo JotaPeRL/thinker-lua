@@ -1162,6 +1162,19 @@ bool patch_setup(Config* cf) {
         write_call(0x48B893, (int)mod_calc_dim);
         write_call(0x48B91F, (int)mod_calc_dim);
         write_call(0x48BA15, (int)mod_calc_dim);
+    } else if (cf->autoplay) {
+        // autoplay_try_end_turn() (src/autoplay.cpp, called from the top of
+        // mod_blink_timer) only ever runs if mod_blink_timer itself is
+        // installed as the engine's periodic UI timer callback -- normally
+        // that only happens under smooth_scrolling, an unrelated feature.
+        // Confirmed live (2026-07-15): without this, autoplay_try_end_turn
+        // is never invoked at all (not "fails silently" -- never called),
+        // so turns never auto-advance and a human has to press End Turn
+        // every turn, defeating the point of an unattended autoplay run.
+        // mod_blink_timer's own body only touches generic UI state (tutorial
+        // arrow, plan window blink) unrelated to the mod_gen_map/mod_calc_dim
+        // patches above, so installing it alone here is safe.
+        write_offset(0x50F3DC, (void*)mod_blink_timer);
     }
     if (cf->skip_random_factions) {
         memset((void*)0x58B63C, 0x90, 10); // config_game

@@ -2258,7 +2258,9 @@ extern Fdo_unity_crash do_unity_crash;
 //extern Fis_sensor is_sensor;
 //extern Fhas_temple has_temple;
 //extern Fhas_abil has_abil;
+extern FX_pop X_pop_engine; // raw engine fn; X_pop itself is shimmed, see autoplay.h
 extern FX_pop X_pop;
+extern FX_pop_2 X_pop_2_engine; // raw engine fn; X_pop_2 itself is shimmed, see autoplay.h
 extern FX_pop_2 X_pop_2;
 extern FX_pop_3 X_pop_3;
 extern FX_pop_4 X_pop_4;
@@ -2268,6 +2270,7 @@ extern FX_pop_7 X_pop_7;
 extern FX_pop_8 X_pop_8;
 extern FX_pop_9 X_pop_9_engine; // raw engine fn; X_pop_9 itself is shimmed, see autoplay.h
 extern FX_pop_9 X_pop_9;
+extern FX_pops X_pops_engine; // raw engine fn; X_pops itself is shimmed, see autoplay.h
 extern FX_pops X_pops;
 extern FX_pops_2 X_pops_2;
 extern FX_pops_3 X_pops_3;

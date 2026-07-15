@@ -123,3 +123,33 @@ int __cdecl autoplay_x_pops_18(const char* filename, const char* label, int a3, 
     }
     return X_pops_18_engine(filename, label, a3, a4, a5, a6, a7, a8, fn);
 }
+
+// Found 2026-07-15 (autoplay.h has the full story): X_pop/X_pop_2/X_pops
+// are raw engine primitives distinct from X_pop_9/X_pops_18, with real
+// call sites in the recompiled source (end-of-game/scenario dialogs,
+// probe-team post-action "excuse" dialogs) that a live all-AI session hit
+// directly, unbypassed, even with autoplay=1.
+int __cdecl autoplay_x_pop(const char* label, fp_none fn) {
+    if (conf.autoplay) {
+        autoplay_logf("X_pop label=%s\n", label ? label : "(null)");
+        return 0;
+    }
+    return X_pop_engine(label, fn);
+}
+
+int __cdecl autoplay_x_pop_2(const char* filename, const char* label, fp_none fn) {
+    if (conf.autoplay) {
+        autoplay_logf("X_pop_2 filename=%s label=%s\n",
+            filename ? filename : "(null)", label ? label : "(null)");
+        return 0;
+    }
+    return X_pop_2_engine(filename, label, fn);
+}
+
+int __cdecl autoplay_x_pops(const char* label, Sprite* sprite, fp_none fn) {
+    if (conf.autoplay) {
+        autoplay_logf("X_pops label=%s\n", label ? label : "(null)");
+        return 0;
+    }
+    return X_pops_engine(label, sprite, fn);
+}

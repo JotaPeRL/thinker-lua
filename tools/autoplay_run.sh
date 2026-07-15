@@ -186,6 +186,17 @@ sed -i \
     -e 's/^lua_ai=.*/lua_ai=1\r/' \
     -e 's/^lua_strict=.*/lua_strict=0\r/' \
     "$INI_PATH"
+# minimal_popups is an undocumented debug-only option (src/main.h: "unlisted
+# option", DEBUG-gated in src/main.cpp) not in docs/thinker.ini's template,
+# so it can't be sed-replaced -- append it. Removes the BEGINPROJECT/
+# CHANGEPROJECT/DONEPROJECT call sites entirely (src/patch.cpp), which live
+# inside the un-decompiled engine binary and call their popups by hardcoded
+# address, bypassing the six autoplay-shimmed primitives entirely (found
+# live, 2026-07-15: secret-project completion needed two manual clicks even
+# with autoplay=1). Only covers project dialogs, not the still-open tech-
+# discovery announcement gap (tech_achieved, same un-decompiled-code class
+# of problem, no fix attempted yet).
+printf 'minimal_popups=1\r\n' >> "$INI_PATH"
 
 # --- Clean stale logs from any prior session -----------------------------
 # lua.log/autoplay.log are opened in append mode; without this a stale log
@@ -290,6 +301,21 @@ take_screenshot() {
 }
 
 # --- Watchdog ---------------------------------------------------------
+# game_alive: NOT just `kill -0 $RUN_PID`. thinker.exe (src/launch.cpp) is
+# a launcher stub -- CreateProcess(terranx.exe, CREATE_SUSPENDED), inject
+# the DLL, resume, then **exit itself by design**. $RUN_PID (the
+# setsid-image of that launcher) therefore disappears on every successful
+# run, not just crashed ones -- confirmed live this session: `terranx.exe`
+# kept running and responding to input for several minutes after $RUN_PID
+# had already gone away and this script (in an earlier version) had
+# already declared CRASH and exited. A real crash/exit needs BOTH the
+# original process gone AND no terranx.exe process found.
+game_alive() {
+    kill -0 "$RUN_PID" 2>/dev/null && return 0
+    pgrep -x terranx.exe >/dev/null 2>&1 && return 0
+    return 1
+}
+
 LUA_LOG="$GAME_DIR/lua.log"
 LAST_TURN=""
 LAST_PROGRESS="$(date +%s)"
@@ -301,9 +327,9 @@ while true; do
     sleep "$POLL_INTERVAL"
     NOW="$(date +%s)"
 
-    if ! kill -0 "$RUN_PID" 2>/dev/null; then
+    if ! game_alive; then
         OUTCOME="CRASH"
-        DETAIL="process group (pid $RUN_PID) exited on its own (last turn seen: ${LAST_TURN:-none})"
+        DETAIL="neither pid $RUN_PID nor a terranx.exe process found (last turn seen: ${LAST_TURN:-none})"
         break
     fi
 
@@ -355,17 +381,29 @@ if [ "$OUTCOME" = "STALL" ]; then
         || echo "warn: stall screenshot capture failed or unavailable" >&2
 fi
 
+# The process-group kill covers everything descended from $RUN_PID, but
+# per game_alive()'s comment above, terranx.exe is very often NOT a
+# descendant of $RUN_PID by the time we get here (the launcher that
+# spawned it already exited on its own) -- kill it by name explicitly too,
+# then wineserver -k as a final sweep for anything left in this prefix
+# (winedevice.exe helpers, etc.). Scope caveat, acceptable for this
+# single-user dev tool: pkill -x terranx.exe is not scoped to just this
+# run's process tree, so a second concurrent run/manual session would
+# collide -- don't run two of these against the same WINEPREFIX at once.
 if kill -0 "$RUN_PID" 2>/dev/null; then
     kill -TERM "-$RUN_PID" 2>/dev/null || kill -TERM "$RUN_PID" 2>/dev/null
-    for _ in $(seq 1 10); do
-        kill -0 "$RUN_PID" 2>/dev/null || break
-        sleep 1
-    done
-    if kill -0 "$RUN_PID" 2>/dev/null; then
-        kill -KILL "-$RUN_PID" 2>/dev/null || kill -KILL "$RUN_PID" 2>/dev/null
-    fi
+fi
+pkill -TERM -x terranx.exe 2>/dev/null
+for _ in $(seq 1 10); do
+    game_alive || break
+    sleep 1
+done
+if game_alive; then
+    kill -KILL "-$RUN_PID" 2>/dev/null || kill -KILL "$RUN_PID" 2>/dev/null
+    pkill -KILL -x terranx.exe 2>/dev/null
 fi
 wait "$RUN_PID" 2>/dev/null
+WINEPREFIX="$WINEPREFIX_DIR" wineserver -k 2>/dev/null
 
 [ -f "$LUA_LOG" ] && cp "$LUA_LOG" "$RUN_DIR/lua.log"
 [ -f "$GAME_DIR/autoplay.log" ] && cp "$GAME_DIR/autoplay.log" "$RUN_DIR/autoplay.log"

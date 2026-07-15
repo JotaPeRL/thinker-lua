@@ -833,15 +833,30 @@ a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
    Phase 5.3) is **dropped** — external kill supersedes it, and it was
    already flagged as poorly-understood.
 
-   > **Status (2026-07-15): `tools/autoplay_run.sh` and its per-turn
-   > state-hash dependency implemented; the in-game `demote_human` retest
-   > itself not yet run (manual, tracked separately).** See
-   > `IMPLEMENTATION_DETAILS.md`'s new session entry for the harness's
-   > mechanics, a smoke test of the deploy/launch/watchdog/kill/artifact
-   > pipeline (STALL path only — no automated New Game / Load Game
-   > navigation exists, so an actual turn-advancing run still needs one
-   > manual step first), and a known gap left honestly unsolved rather
-   > than papered over.
+   > **Status (2026-07-15): retested for real, 4/4 clean runs, mostly
+   > done.** `tools/autoplay_run.sh` (`--no-xvfb`, real desktop — Xvfb
+   > itself still doesn't work on the dev machine, see
+   > `IMPLEMENTATION_DETAILS.md` 5.3.2's KNOWN GAP #2) ran 3 distinct new
+   > games plus a 4th with a recorded fixed seed (**15373264**), all
+   > `COMPLETED`, zero Lua errors, `state_hash` sequential throughout. Two
+   > real bugs found and fixed along the way: the watchdog was checking
+   > the wrong PID (`thinker.exe`'s launcher exits by design after
+   > spawning `terranx.exe`, not a crash — was misclassified as `CRASH`
+   > every run), and `autoplay_try_end_turn` (5.3.1, marked experimental)
+   > was **never once invoked** because the timer callback that calls it
+   > is normally only installed under an unrelated `smooth_scrolling`
+   > option, off by default — fixed, confirmed live: turns now advance
+   > with no manual End Turn. The six-primitive dialog-bypass catalog
+   > (5.3.1) was also found incomplete and corrected to nine (`X_pop`/
+   > `X_pop_2`/`X_pops` added — see `IMPLEMENTATION_DETAILS.md` 5.3.3 for
+   > why the original grep missed them). **Still open:** the determinism
+   > half of the fixed-seed run (needs a *second* run with the same seed
+   > to `cmp` against, not done yet); tech-discovery announcements still
+   > need a manual click (code baked into the un-decompiled engine binary,
+   > no pointer redirect reaches it); secret-project completion down to
+   > one click (was two) via `minimal_popups`, not fully solved. None of
+   > these three block calling item (a) substantially done — see 5.3.3 for
+   > the full record.
 
 b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
    five hand-rolled per-hook mismatch-logging blocks (`src/tech.cpp`,

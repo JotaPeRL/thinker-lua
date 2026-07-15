@@ -1900,6 +1900,140 @@ this", one fixed, one still open.**
    PRACX-disabling launch path if one exists, before assuming it's
    unfixable — this was time-boxed, not exhaustively diagnosed.
 
+### 5.3.3 Real validation runs (2026-07-15) — 4/4 runs clean, 3 real bugs found (2 fixed, 1 open), the six-primitive catalog corrected
+
+> **Consolidation gate item (a), completed except the determinism re-run.**
+> Four `--no-xvfb` sessions run end-to-end on the real desktop (manual
+> gameplay by the user, this tool watching logs and, twice, killing/
+> collecting/fixing between rounds): 3 distinct new games + a 4th with a
+> recorded fixed seed. All four finished clean — `state_hash` lines
+> sequential with no gaps, zero `error in` lines in `lua.log`, no leftover
+> `wine`/`terranx.exe` processes after cleanup.
+
+| Round | Demoted faction | Turns | Outcome | Notes |
+|---|---|---|---|---|
+| 1 | PEACE | 80 | manual stop | pre-dates the cwd fix (5.3.2) and the game_alive fix below; killed and collected by hand |
+| 2 | USURPER | 100 | `COMPLETED` | first run of the actual script; revealed the End Turn problem below |
+| 3 | (unrecorded) | 80 | `COMPLETED` | first run after the blink-timer fix; confirmed End Turn now auto-advances; revealed the tech/secret-project/probe gaps below |
+| 4 | (unrecorded) | 80 | `COMPLETED` | fixed seed **15373264** (`random_reseed 15373264`, logged at game start) — needs to be **run a second time with this same seed** and `cmp`'d against this round's `state_hashes.log` to actually complete the determinism check (plan 5.3); not yet done |
+
+**Bug found and fixed: `game_alive()` — the watchdog was checking the wrong
+PID.** `thinker.exe` (`src/launch.cpp`) is a launcher stub: it
+`CreateProcess`-suspends `terranx.exe`, injects the DLL, resumes it, and
+**exits itself by design** once that hand-off succeeds — this is not a
+crash. `tools/autoplay_run.sh`'s watchdog originally only checked
+`kill -0 $RUN_PID` (the launcher's pid), so it declared `CRASH` within one
+poll interval of *every* successful launch, and its cleanup step then
+skipped killing anything (since it believed the process was already
+gone), leaving `terranx.exe` running fully detached from the script.
+Caught live: round 2's window kept accepting input for several minutes
+after the script had already printed `CRASH` and exited. Fixed with a
+`game_alive()` helper that also checks `pgrep -x terranx.exe`, used
+everywhere the watchdog previously checked `$RUN_PID` directly, including
+the final cleanup (which now also `pkill`s `terranx.exe` by name and
+`wineserver -k`s the prefix, not just process-group-kills `$RUN_PID`).
+Round 2's `COMPLETED` result (100/100 turns, the table above) is from
+*after* this fix — confirmed working, not just theorized.
+
+**Bug found and fixed: `autoplay_try_end_turn` was never once invoked.**
+The user reported having to press End Turn manually every single turn
+even with `autoplay=1` and 80-100 turns completing "cleanly" (rounds 1-2).
+Root cause, confirmed by reading `src/patch.cpp:1154`: the
+`write_offset(0x50F3DC, (void*)mod_blink_timer)` call that installs the
+periodic UI-timer callback `autoplay_try_end_turn()` is called from
+(`src/gui.cpp:521`) lives inside `if (cf->smooth_scrolling) { ... }` — an
+unrelated visual feature, off by default
+(`docs/thinker.ini`: `smooth_scrolling=0`). Since the callback was never
+installed, `autoplay_try_end_turn()` was never called at all — not
+"failing silently", literally never invoked (confirmed: zero `attempting
+Console_end_my_turn` lines in round 2's `autoplay.log`, out of the whole
+100-turn session). This had been sitting in the code since 5.3.1 marked
+"EXPERIMENTAL... needs an actual play session to know if it works, hangs,
+or crashes" — the real answer was "never gets the chance to do any of
+those." Fixed (`src/patch.cpp`): an `else if (cf->autoplay)` branch
+installs the same `mod_blink_timer` when `smooth_scrolling` is off but
+`autoplay` is on — safe, since `mod_blink_timer`'s own body only touches
+generic UI state (tutorial arrow, plan window blink) unrelated to the
+`mod_gen_map`/`mod_calc_dim` patches that stay smooth_scrolling-gated.
+**Confirmed fixed live in round 3**: turns advanced without manual End
+Turn presses for the whole 80-turn session.
+
+**Six-primitive catalog (5.3.1) was incomplete — corrected, catalog is
+now nine.** Round 3 (after the End Turn fix) surfaced two more
+interaction points the user had to click through: new-tech-discovered
+announcements, and secret-project completion (two clicks: the completion
+notice, then closing the project's datalinks entry). Investigating the
+second one found that `engine.h` declares a much larger family than the
+six originally catalogued: `X_pop` through `X_pop_9` (9 distinct raw
+functions, not variants of one), `X_pops` through `X_pops_18` (18 more),
+and `X_pop_ask`/`X_pop_ask_number` families (10 more) — roughly 33 raw
+engine popup primitives total, of which the original spike only found and
+shimmed two (`X_pop_9`, `X_pops_18`), because its grep searched for
+Thinker's own convenience-wrapper names (`X_pop2`/`X_pop3`/`X_pop7`/
+`X_pops3`/`X_pops4`/`X_dialog`, which do funnel into those two) and missed
+every call site that uses a *bare* numbered primitive directly. Checked
+which of the ~33 actually have call sites in Thinker's own recompiled
+source (the only ones a pointer redirect can reach — the tech-discovery
+gap below is the counter-example, code baked into the *original*
+un-decompiled binary, which a pointer redirect cannot touch regardless):
+only **`X_pop`** (8 sites — end-of-game/scenario dialogs, `game.cpp`),
+**`X_pop_2`** (6 sites, same area), and **`X_pops`** (5 sites — probe-team
+post-action "excuse" dialogs, `probe.cpp`, confirmed as the round-4 probe
+click culprit) are actually used; the rest have zero call sites and were
+left alone. Fixed: three new shims (`autoplay_x_pop`/`_x_pop_2`/`_x_pops`,
+`src/autoplay.cpp`/`.h`), wired via the same `_engine`-suffix pointer-swap
+pattern as the original six (`src/engine.cpp`/`.h`). Rebuilt clean on both
+presets; **not yet re-verified live** (built and deployed after round 4
+finished — the next round will be the first to exercise this).
+
+**Still open: tech-discovery announcement.** `tech_achieved`
+(`src/engine.cpp:1115`, address `0x5BB000`) lives entirely inside the
+original, un-decompiled engine binary — same category of problem as
+5.3.1's "monolith popup" gap, and confirmed **not** fixable by any pointer
+redirect (its announcement popup is called by hardcoded address from
+inside that binary, never touching a redirectable global). Thinker
+already patches *one* call site inside it
+(`write_call(0x5BBEB0, (int)tech_achieved_pop3)` — the SOCIETY
+social-engineering picker, which does correctly route through
+`X_pop3`→`X_pop_9` and get bypassed) but not the tech-announcement popup
+itself. A real fix needs disassembly work to find that specific call
+site's address, the same unfinished business 5.3.1 already flagged for
+the monolith case. Left for the user to keep clicking through for now —
+lower frequency than End Turn was, so not a blocker for continued
+validation.
+
+**Partial mitigation: secret-project completion, 2 clicks → 1.**
+`minimal_popups` is a pre-existing, undocumented debug-only option
+(`src/main.h`: "unlisted option"; `DEBUG`-gated in `src/main.cpp`) that
+`remove_call`s the `BEGINPROJECT`/`CHANGEPROJECT`/`DONEPROJECT` call sites
+inside the un-decompiled engine binary entirely (`src/patch.cpp:1195`) —
+a second, redundant call site for the same announcements, distinct from
+the one already routed through the shimmed primitives (confirmed
+`BEGINPROJECT` still appears 19 times in round 4's `autoplay.log` even
+with `minimal_popups=1` — that's the *other*, already-covered call site
+still firing normally). Added to `tools/autoplay_run.sh`'s forced
+settings (appended, since it isn't in `docs/thinker.ini`'s template, so
+`sed` can't replace an existing line). User-confirmed in round 4: secret
+project completion dropped from two clicks to one. The remaining click
+(the datalinks screen closing) is not yet root-caused — plausibly the
+same un-decompiled-binary class of problem as tech-discovery, not
+confirmed.
+
+**Files touched this session's validation rounds:** `tools/
+autoplay_run.sh` (`game_alive()`, `--no-xvfb` real-display support,
+`--screenshot-interval`, `minimal_popups=1`), `src/patch.cpp`
+(blink-timer `else if (cf->autoplay)` branch), `src/autoplay.cpp`/`.h`
+(three new shims), `src/engine.cpp`/`.h` (three new `_engine`-suffix
+pointer pairs). Both presets rebuild clean throughout (confirmed after
+every change, not just at the end).
+
+**Not yet done:** repeat round 4 with seed 15373264 to actually complete
+the determinism check (`cmp` two `state_hashes.log` files — the whole
+point of the fixed-seed run, not done yet, only run once so far); confirm
+the three new `X_pop`/`X_pop_2`/`X_pops` shims live (built and deployed,
+not yet exercised in an actual session); the tech-discovery gap and the
+secret-project datalinks-screen click remain open.
+
 ### 5.4 Performance instrumentation
 
 Wrap the AI phases in `mod_turn_upkeep`/`move_upkeep`/production loops with

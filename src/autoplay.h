@@ -8,13 +8,36 @@
  * popups, ...) fire unconditionally, not gated on is_human, and block the
  * window's message loop waiting for a click.
  *
- * All of those calls funnel through exactly six raw engine primitives
- * (confirmed by grepping every popup/dialog call site under src/):
- * POP2, popp, popp_2, interlude, X_pop_9, X_pops_18. engine.cpp points the
- * public POP2/popp/popp_2/interlude/X_pop_9/X_pops_18 globals at the shims
- * below instead of the raw addresses (which are kept as the *_engine
- * globals); everything else in the codebase keeps calling the same names
- * unchanged. This is the whole mechanism -- no per-call-site patch needed.
+ * Originally scoped (2026-07-14) as "exactly six raw engine primitives",
+ * found by grepping call sites for six specific wrapper names. **That
+ * catalog was wrong, corrected 2026-07-15 by reading engine.h directly**:
+ * X_pop_9/X_pops_18 are only two members of a much larger family --
+ * X_pop through X_pop_9 (9), X_pops through X_pops_18 (18), and
+ * X_pop_ask/X_pop_ask_number families (10 more) -- each its own distinct
+ * raw engine address, not a variant of the same function. The original
+ * grep only found calls that happened to route through Thinker's own
+ * convenience wrappers (X_pop2/X_pop3/X_pop7/X_pops3/X_pops4/X_dialog,
+ * gui_dialog.cpp), which do funnel into X_pop_9/X_pops_18 -- but plenty of
+ * call sites use the *bare* numbered primitives directly, invisible to a
+ * name-based grep for the wrapper names. A live all-AI session (2026-07-15)
+ * hit two of these directly: probe-team post-action "excuse" dialogs
+ * (X_pops, probe.cpp) required a manual click even with autoplay=1.
+ * Checked which of the ~33 unshimmed primitives actually have call sites
+ * in Thinker's own recompiled source (the only ones a pointer redirect can
+ * reach -- calls baked into the original, un-decompiled engine binary,
+ * like tech_achieved's tech-discovery announcement, are a different,
+ * still-open problem no pointer redirect fixes): only X_pop (8 sites),
+ * X_pop_2 (6 sites), X_pops (5 sites) are actually used. The rest
+ * (X_pop_3..X_pop_8, X_pops_2..X_pops_17, all X_pop_ask*) have zero call
+ * sites in the recompiled source tree and are left unshimmed -- nothing
+ * to redirect.
+ *
+ * Now nine primitives, all following the same mechanism: POP2, popp,
+ * popp_2, interlude, X_pop_9, X_pops_18, X_pop, X_pop_2, X_pops.
+ * engine.cpp points each public global at the shim below instead of the
+ * raw address (kept as the matching *_engine global); everything else in
+ * the codebase keeps calling the same names unchanged. No per-call-site
+ * patch needed for any of the nine.
  *
  * conf.autoplay == 0 (default): shims forward straight to the *_engine
  * pointer, i.e. behave exactly like before this file existed.
@@ -35,6 +58,9 @@ int __cdecl autoplay_popp_2(const char* filename, const char* label, fp_none fn)
 void __cdecl autoplay_interlude(int event_id, const char* text, int a3, int a4);
 int __cdecl autoplay_x_pop_9(const char* filename, const char* label, int a3, char* a4, int a5, fp_none fn);
 int __cdecl autoplay_x_pops_18(const char* filename, const char* label, int a3, char* a4, int a5, Sprite* a6, int a7, int a8, fp_none fn);
+int __cdecl autoplay_x_pop(const char* label, fp_none fn);
+int __cdecl autoplay_x_pop_2(const char* filename, const char* label, fp_none fn);
+int __cdecl autoplay_x_pops(const char* label, Sprite* sprite, fp_none fn);
 
 // Shared with autoplay.cpp's shims; exposed so other seams (e.g.
 // autoplay_demote_human below) can log to the same autoplay.log.
