@@ -2258,13 +2258,80 @@ blocker), this is demoted to nice-to-have rather than chased further —
 prefix registry change made and reverted (GDI renderer test). Both
 presets rebuild clean throughout.
 
-**Not yet done — pick up here:** the actual root-cause run (load the
-determinism save from `runs/determinism-save/` twice with `--rng-seed`,
-diff the new `debug.txt` RNG snapshots and per-faction draw counts, find
-the first faction/turn where a *count* already differs); the two item-(a)
-sub-items explicitly deferred by the external review (harness menu
-bootstrap, tech-discovery preference-flag experiment) — see
-`IMPLEMENTATION_PLAN.md`'s updated item (a) status for both.
+**Root-cause run done — see 5.3.6, one real fix landed, divergence
+narrowed but not eliminated.** The two item-(a) sub-items explicitly
+deferred by the external review (harness menu bootstrap, tech-discovery
+preference-flag experiment) remain not started — see
+`IMPLEMENTATION_PLAN.md`'s item (a) status for both.
+
+### 5.3.6 `game_rand` pinning + root-cause run (2026-07-15) — divergence point moved from turn 2 to turn 3, not eliminated
+
+The diagnostics from 5.3.5, run for real (`load_daemon rng:` line, same
+save, same `--rng-seed 15373264`, twice): `mod_rng`/`map_rng` matched
+across launches as already known, but **`game_rand` (the engine's own
+RNG) did not** — `20942280` vs `21141192` at the exact same point (right
+after `load_daemon()` returns), conclusively answering 5.3.4/5.3.5's open
+question. `fixed_rng_seed` (5.3.4) only ever pinned the mod's own
+streams; the engine's `game_rand` was never touched by it and drifts
+freely from process start.
+
+**Fixed:** `mod_load_daemon` (`src/game.cpp`) now calls the existing
+`game_rand_restore(conf.fixed_rng_seed)` (`random.cpp`, built for Phase 5
+shadow mode, unused until now) immediately after `load_daemon()` returns,
+gated on `fixed_rng_seed != 0` — same trigger as the mod-RNG pinning,
+default behavior unchanged. Deliberately placed *after* load, not just at
+`DLL_PROCESS_ATTACH` (where the mod-RNG pinning already lives): an
+uncontrolled number of `game_rand` draws happen between process start and
+reaching the load screen (menu navigation, etc.), so pinning only at
+startup would still leave the at-load state path-dependent on how the
+human got there. Restoring post-load discards all of that by
+construction.
+
+**Acceptance run:** same save, same `--rng-seed 15373264`, run twice.
+`load_daemon rng:` now reads `game_rand=15373264 mod_rng=15373264
+map_rng=15363119` identically in both — the restore works exactly as
+designed. Result: **turns 1 and 2 now match completely** (state hash *and*
+all three RNG-state fields byte-identical — an improvement over 5.3.4/
+5.3.5, where turn 2 already diverged before this fix). `cmp` on the full
+`state_hashes.log` pair: **still differs, first at turn 3** (`runs/
+determinism-save/run-E-postfix-state_hashes.log` /
+`run-F-postfix-state_hashes.log`). Per the plan for this session: **not
+chased further** — localized and recorded below, per requirement 3, then
+stopped.
+
+**Localization (not root-caused — this is as far as this session goes):**
+diffing the two `debug.txt`s directly finds the first difference during
+**turn 3, faction 1's processing** (`enemy_turn 3 1`) — one run shows an
+extra sequence (`veh_init`, `enemy_move ... Unity Rover`, `set_move_to`)
+that the other doesn't; from that point on, unit counts and everything
+downstream diverge completely, matching the `vehs=` mismatch already
+visible in `state_hashes.log` at turn 3. The per-faction draw counters
+logged immediately before this point (`game_rand_draws=416
+mod_rng_draws=185` at the `enemy_turn 3 1` line) are **still identical**
+in both runs — so whatever causes the extra Unity Rover event isn't (yet
+visibly) a prior draw-count difference; either the same draw produces a
+different outcome at this exact call (unexpected, would need direct
+inspection to explain), or something non-RNG-related decides differently
+whether this event fires at all before any relevant `random()`/
+`game_randv()` call is even reached. Same general shape as 5.3.4's
+original finding (single-player pod-related content/outcomes are order-
+and history-dependent) but now narrowed to a specific turn, faction, and
+event type instead of "somewhere in turn 2's processing."
+
+**Net effect on the consolidation gate:** real, measurable progress
+(divergence pushed one full turn later, one genuine bug fixed using
+existing infrastructure) but **item (d) stays blocked** — the acceptance
+criterion (byte-identical `state_hashes.log` for the full run) was not
+met. Not a regression from 5.3.4/5.3.5's status, a narrowing of it.
+
+**Files touched:** `src/game.cpp` (`mod_load_daemon`, one
+`game_rand_restore` call). Both presets rebuild clean.
+
+**Not yet done — pick up here:** find why turn 3/faction 1's Unity Rover
+event differs despite identical RNG draw counts going in — the `veh_init`/
+`enemy_move`/`set_move_to` lines around it (`debug.txt`) are the starting
+point, not the six-primitive dialog funnel or anything already covered by
+this project's existing traces.
 
 ### 5.4 Performance instrumentation
 

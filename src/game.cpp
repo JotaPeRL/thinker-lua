@@ -1194,6 +1194,24 @@ int __cdecl mod_load_daemon(char* name, int flag) {
     // Another savegame opened from selection dialog
     reset_state();
     int result = load_daemon(name, flag);
+    // Phase 5.3.6 (IMPLEMENTATION_DETAILS.md): fixed_rng_seed (src/main.cpp,
+    // Phase 5.3.4) only pinned the mod's own random_reseed/map_rand at DLL
+    // attach -- it left game_rand (the engine's own RNG) untouched, and
+    // confirmed live (5.3.5 diagnostics) to differ across two process
+    // launches loading the identical save, since an uncontrolled number of
+    // engine draws happen between process start and this point (menus,
+    // etc.) -- pinning only at startup is path-dependent on whatever the
+    // human did to reach the load screen. Restoring *here*, right after
+    // load_daemon() returns, removes that path-dependence by construction:
+    // whatever game_rand was consumed getting here is discarded, and every
+    // run that loads this save with the same fixed_rng_seed starts turn
+    // processing from the identical engine-RNG state too. Uses the existing
+    // game_rand_restore() (random.cpp, built for Phase 5 shadow mode,
+    // unused until now). Gated the same way as fixed_rng_seed itself --
+    // default (0) behavior is unchanged.
+    if (conf.fixed_rng_seed) {
+        game_rand_restore(conf.fixed_rng_seed);
+    }
     // Phase 5.3.5 determinism diagnostics, gated on conf.autoplay (this is
     // for the harness, not normal play): confirms whether all three RNG
     // streams end up in the same state across two process launches loading

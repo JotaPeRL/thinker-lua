@@ -875,8 +875,11 @@ a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
    > item (d)'s systemic comparison (state hashes at equivalence levels
    > 3-5) mathematically meaningless until fixed — you cannot tell port
    > divergence from background noise. **Item (d) is now blocked on this**
-   > (see there). Diagnostics to root-cause it (not the fix itself) landed
-   > this session — 5.3.5.
+   > (see there). Diagnostics to root-cause it landed this session
+   > (5.3.5), then actually run: found and fixed a real gap
+   > (`game_rand`, the engine's own RNG, was never pinned by
+   > `fixed_rng_seed` — fixed), pushing the divergence from turn 2 to
+   > turn 3 — progress, not a resolution. See 5.3.6.
    >
    > **Honest framing (external review, 2026-07-15): item (a)'s own
    > definition — "one real unattended all-AI run" — has still never
@@ -961,20 +964,23 @@ d. **All five ported domains re-validated on the harness**, per each
    `select_colony`/`select_combat`/`unit_score` slice — not the
    still-unfinished `select_build` itself).
 
-   > **Blocked (2026-07-15, external review) on the turn-2+ RNG
-   > divergence found under item (a) — see `IMPLEMENTATION_DETAILS.md`
-   > 5.3.4/5.3.5.** This item's whole method is a systemic state-hash
-   > comparison at equivalence levels 3-5 (per-phase/per-turn/N-turn
-   > hashes, plan 5.3) — but two launches of the **same binary**, same
-   > save, same pinned seed already diverge starting turn 2, before any
-   > port-fidelity question even enters the picture. Until that ambient
-   > divergence is root-caused (or at least bounded), a mismatch between
-   > two harness runs can't be attributed to a Lua-port bug versus this
-   > pre-existing noise — the comparison this item depends on is not yet
-   > meaningful. Diagnostics to localize it (per-faction RNG draw counts,
-   > RNG state logged on save load and per turn) landed this session
-   > (5.3.5); the actual root-cause run is manual follow-up work, not yet
-   > done.
+   > **Still blocked (2026-07-15), but narrowed — see
+   > `IMPLEMENTATION_DETAILS.md` 5.3.6.** This item's whole method is a
+   > systemic state-hash comparison at equivalence levels 3-5
+   > (per-phase/per-turn/N-turn hashes, plan 5.3) — but two launches of
+   > the **same binary**, same save, same pinned seed still diverge
+   > before any port-fidelity question even enters the picture, so a
+   > mismatch between two harness runs still can't be attributed to a
+   > Lua-port bug versus this pre-existing noise. Progress: the root-cause
+   > run (5.3.5's diagnostics, actually run) found the engine's own
+   > `game_rand` was never pinned by `fixed_rng_seed` — fixed
+   > (`game_rand_restore()` right after save load), confirmed live to
+   > push the divergence point from **turn 2 to turn 3**. Turn 3's
+   > divergence itself localized to a specific event (an extra "Unity
+   > Rover" pod-opening outcome, faction 1) but not root-caused — per
+   > this session's own instructions, not chased further once localized.
+   > Still not meaningful for item (d) as stated until turn-3+ is also
+   > resolved or bounded.
 
 e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
    (Phase 4.4/6) — needed before any upstream merge is even attempted, and
