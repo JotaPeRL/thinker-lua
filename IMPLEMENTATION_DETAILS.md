@@ -2014,10 +2014,11 @@ with `minimal_popups=1` — that's the *other*, already-covered call site
 still firing normally). Added to `tools/autoplay_run.sh`'s forced
 settings (appended, since it isn't in `docs/thinker.ini`'s template, so
 `sed` can't replace an existing line). User-confirmed in round 4: secret
-project completion dropped from two clicks to one. The remaining click
-(the datalinks screen closing) is not yet root-caused — plausibly the
+project completion dropped from two clicks to one — **`minimal_popups`
+removed the datalinks-entry screen specifically; the completion notice
+itself is the click that remains**, not yet root-caused (plausibly the
 same un-decompiled-binary class of problem as tech-discovery, not
-confirmed.
+confirmed).
 
 **Files touched this session's validation rounds:** `tools/
 autoplay_run.sh` (`game_alive()`, `--no-xvfb` real-display support,
@@ -2032,7 +2033,7 @@ the determinism check (`cmp` two `state_hashes.log` files — the whole
 point of the fixed-seed run, not done yet, only run once so far); confirm
 the three new `X_pop`/`X_pop_2`/`X_pops` shims live (built and deployed,
 not yet exercised in an actual session); the tech-discovery gap and the
-secret-project datalinks-screen click remain open.
+secret-project completion-notice click remain open.
 
 ### 5.4 Performance instrumentation
 
