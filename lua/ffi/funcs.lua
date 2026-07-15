@@ -67,10 +67,11 @@ typedef struct {
     int32_t (*land_combat_units)(int32_t faction_id);
     int32_t (*contacted_factions)(int32_t faction_id);
     int32_t (*ocean_colony_land_site)(int32_t base_id, int32_t land);
+    int32_t (*vehs_ptr)();
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 7
+local HOST_API_VERSION = 8
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -134,4 +135,5 @@ return {
     land_combat_units = function(faction_id) return api.land_combat_units(faction_id) end,
     contacted_factions = function(faction_id) return api.contacted_factions(faction_id) end,
     ocean_colony_land_site = function(base_id, land) return api.ocean_colony_land_site(base_id, land) end,
+    vehs_ptr = function() return api.vehs_ptr() end,
 }

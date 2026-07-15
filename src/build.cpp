@@ -953,6 +953,16 @@ int select_build(int base_id) {
             }
         }
     }
+    // TEMPORARY porting-order-item-3 verification instrumentation for
+    // select_build's own step 1 (IMPLEMENTATION_DETAILS.md 4.10.9):
+    // standalone correctness check for VEH's first-ever FFI exposure +
+    // this vehicle-count loop, not a real hook yet (select_build itself is
+    // not ported/hooked -- 4.10 lists the remaining steps). Logs its own
+    // counters to lua.log so they can be diffed by hand against the
+    // debug("select_build ...") line below, which already prints
+    // def/frm/prb/crw/pods/scouts for this same base.
+    int lua_vehicle_counts_dummy;
+    lua_ai_hook("vehicle_counts_check", &lua_vehicle_counts_dummy, {base_id, sea_base});
     WItem Wgov;
     governor_priorities(Bases[base_id], Wgov);
     need_ferry = need_ferry && !transports

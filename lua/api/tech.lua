@@ -108,6 +108,45 @@ local function proto_range(unit_id)
     return chassis(proto(unit_id).chassis_id).range
 end
 
+-- select_build itself (porting-order item 3, final piece,
+-- IMPLEMENTATION_DETAILS.md 4.10.1), step 1: more UNIT inline methods
+-- (engine_veh.h:462-478/446-457) that VEH's own is_*()/is_garrison_unit()
+-- delegate to, needed by the vehicle-count loop in select_build.
+local function proto_is_former(unit_id)
+    return proto(unit_id).plan == types.enums.PLAN_TERRAFORM
+end
+
+local function proto_is_probe(unit_id)
+    return proto(unit_id).plan == types.enums.PLAN_PROBE
+end
+
+local function proto_is_supply(unit_id)
+    return proto(unit_id).plan == types.enums.PLAN_SUPPLY
+end
+
+local function proto_is_transport(unit_id)
+    return proto(unit_id).plan == types.enums.PLAN_NAVAL_TRANSPORT
+end
+
+local function proto_is_artifact(unit_id)
+    return proto(unit_id).plan == types.enums.PLAN_ARTIFACT
+end
+
+local function proto_is_combat_unit(unit_id)
+    return proto_offense_value(unit_id) ~= 0
+end
+
+local function proto_is_armored(unit_id)
+    return proto_defense_value(unit_id) ~= 1
+end
+
+local function proto_is_garrison_unit(unit_id)
+    local u = proto(unit_id)
+    return (u.plan <= types.enums.PLAN_RECON
+        or (u.plan == types.enums.PLAN_PROBE and proto_is_armored(unit_id)))
+        and proto_triad(unit_id) == types.enums.TRIAD_LAND
+end
+
 -- proto_offense/proto_defense (src/veh.cpp:3166-3182) are *not* the same
 -- computation as proto_offense_value/proto_defense_value above (those are
 -- UNIT::offense_value()/defense_value(), the raw weapon/armor field with
@@ -158,6 +197,14 @@ return {
     proto_is_prototyped = proto_is_prototyped,
     proto_triad = proto_triad,
     proto_range = proto_range,
+    proto_is_former = proto_is_former,
+    proto_is_probe = proto_is_probe,
+    proto_is_supply = proto_is_supply,
+    proto_is_transport = proto_is_transport,
+    proto_is_artifact = proto_is_artifact,
+    proto_is_combat_unit = proto_is_combat_unit,
+    proto_is_armored = proto_is_armored,
+    proto_is_garrison_unit = proto_is_garrison_unit,
     proto_offense = proto_offense,
     proto_defense = proto_defense,
     owners = owners,

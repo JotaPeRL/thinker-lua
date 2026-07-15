@@ -37,6 +37,8 @@ local game = dofile("lua/api/game.lua")
 local rand = dofile("lua/api/rand.lua")
 local cmath = dofile("lua/api/cmath.lua")
 local funcs = dofile_once("lua/ffi/funcs.lua")
+local veh = dofile("lua/api/veh.lua")
+local log = dofile("lua/api/log.lua")
 
 local idiv = cmath.idiv
 local clamp = cmath.clamp
@@ -487,6 +489,85 @@ local function select_combat(base_id, sea_base, build_ships)
     return find_proto(base_id, E.TRFLAG_LAND, E.WMODE_COMBAT, last_defend)
 end
 
+-- select_build itself (porting-order item 3, final piece,
+-- IMPLEMENTATION_DETAILS.md 4.10.9), step 1: standalone correctness check
+-- for VEH's first-ever FFI exposure (4.10.1) + select_build's own
+-- vehicle-count loop (build.cpp:913-955). NOT a real hook -- select_build
+-- itself isn't ported yet (4.10 lists the remaining steps: push_item +
+-- running-best tracker, the build_order scoring loop, then wiring the real
+-- hook last). Called from a temporary seam in select_build (src/build.cpp)
+-- purely so its counters can be diffed by hand against the C++
+-- debug("select_build ...") line a few statements later in the original
+-- (build.cpp:977-981), which already prints def/frm/prb/crw/pods/scouts
+-- for the same base -- a mismatch is visible with no new comparison
+-- machinery needed.
+--
+-- sea_base is passed in from C++ (rather than recomputed here) because it
+-- depends on region_at(), not yet wrapped for Lua (deferred alongside
+-- adjacent_region/allow_expand, see 4.10.5) -- everything else this
+-- function needs (BASE, Faction, VEH, gov flags) is already exposed.
+local function vehicle_counts_check(base_id, sea_base)
+    sea_base = not (sea_base == false or sea_base == 0)
+    local base = base_api.get(base_id)
+    local faction_id = base.faction_id
+    local gov = base_api.gov_config(base)
+    local allow_supply = not sea_base and bit.band(gov, E.GOV_MAY_PROD_TERRAFORMERS) ~= 0
+
+    local all_crawlers, near_formers, need_ferry = 0, 0, 0
+    local transports, landprobes, seaprobes = 0, 0, 0
+    local artifacts, defenders, formers, scouts, pods = 0, 0, 0, 0, 0
+
+    for i = veh.count() - 1, 0, -1 do
+        local v = veh.get(i)
+        if v.faction_id == faction_id then
+            if v.home_base_id == base_id then
+                if veh.is_former(v) then
+                    formers = formers + 1
+                elseif veh.is_colony(v) then
+                    pods = pods + 1
+                elseif veh.is_probe(v) then
+                    if veh.triad(v) == E.TRIAD_LAND then
+                        landprobes = landprobes + 1
+                    else
+                        seaprobes = seaprobes + 1
+                    end
+                elseif veh.is_transport(v) then
+                    transports = transports + 1
+                elseif veh.is_supply(v) and v.order ~= E.ORDER_CONVOY then
+                    allow_supply = false
+                elseif veh.is_combat_unit(v) or veh.is_garrison_unit(v) then
+                    scouts = scouts + 1
+                end
+            end
+            local dist = funcs.map_range(base.x, base.y, v.x, v.y)
+            if dist <= 1 then
+                defenders = defenders + (dist < 1 and 2 or 1) * veh.eval_garrison(v)
+            end
+            if dist <= 1 and veh.is_former(v) and v.home_base_id ~= base_id then
+                near_formers = near_formers + 1
+            elseif dist <= 4 and veh.is_artifact(v) then
+                artifacts = artifacts + 1
+            elseif dist == 0 and veh.is_transport(v) then
+                transports = transports + 1
+            elseif veh.is_supply(v) then
+                all_crawlers = all_crawlers + 1
+            end
+            if sea_base and base.x == v.x and base.y == v.y and veh.triad(v) == E.TRIAD_LAND then
+                if veh.is_colony(v) or veh.is_former(v) or veh.is_supply(v) then
+                    need_ferry = need_ferry + 1
+                end
+            end
+        end
+    end
+
+    log.debug(
+        "vehicle_counts base:%d def:%d frm:%d prb:%d crw:%d pods:%d scouts:%d "
+        .. "lprb:%d sprb:%d trn:%d near_frm:%d art:%d ferry:%d supply:%s",
+        base_id, idiv(defenders + 2, 8), formers, landprobes + seaprobes,
+        all_crawlers, pods, scouts, landprobes, seaprobes, transports,
+        near_formers, artifacts, need_ferry, tostring(allow_supply))
+end
+
 -- Production/plans port, third slice (porting-order item 3,
 -- IMPLEMENTATION_DETAILS.md 4.9): plan.cpp:8-13/15-31. Neither fits
 -- lua_ai_hook's int-args-in/int-result-out contract (facility_score takes
@@ -539,4 +620,5 @@ port.select_colony = select_colony
 port.select_combat = select_combat
 port.facility_score = facility_score
 port.governor_priorities = governor_priorities
+port.vehicle_counts_check = vehicle_counts_check
 return port

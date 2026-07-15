@@ -133,6 +133,12 @@ static int32_t host_bases_ptr() {
     return (int32_t)Bases;
 }
 
+// select_build itself (porting-order item 3, final piece,
+// IMPLEMENTATION_DETAILS.md 4.10.1).
+static int32_t host_vehs_ptr() {
+    return (int32_t)Vehs;
+}
+
 static int32_t host_mod_veh_avail(int32_t unit_id, int32_t faction_id, int32_t base_id) {
     return mod_veh_avail(unit_id, faction_id, base_id);
 }
@@ -260,7 +266,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 7,
+    /* api_version          */ 8,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -317,6 +323,7 @@ static LuaHostApi g_host_api = {
     /* land_combat_units    */ host_land_combat_units,
     /* contacted_factions   */ host_contacted_factions,
     /* ocean_colony_land_site */ host_ocean_colony_land_site,
+    /* vehs_ptr             */ host_vehs_ptr,
 };
 
 static lua_State* L = NULL;

@@ -113,6 +113,11 @@ struct LuaHostApi {
     // short-circuit exactly), so `land` is passed in rather than checked
     // Lua-side, to keep RNG consumption identical to the C++ original.
     int32_t (*ocean_colony_land_site)(int32_t base_id, int32_t land);
+    // select_build itself (porting-order item 3, final piece,
+    // IMPLEMENTATION_DETAILS.md 4.10.1). vehs_ptr mirrors bases_ptr:
+    // Vehs is a mutable, re-pointable global (3.2), so lua/api/veh.lua
+    // re-fetches this on every access rather than caching a stale cast.
+    int32_t (*vehs_ptr)();
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai
