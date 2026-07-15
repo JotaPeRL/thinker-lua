@@ -1855,6 +1855,51 @@ confirm the `COMPLETED` and `CRASH` classification paths for real (only
 produces identical files, which is the entire point of this mechanism and
 hasn't been checked against a real game yet.
 
+**Addendum (2026-07-15): two real bugs found while answering "how do I use
+this", one fixed, one still open.**
+
+1. **Fixed — wrong `cwd` broke every Xvfb launch, silently.** `thinker.exe`
+   (`src/launch.cpp`) checks for `"terranx.exe"` as a path **relative to
+   its own process's cwd**, not relative to the `.exe`'s own location —
+   real Windows only gets this right because Explorer sets a launched
+   process's cwd to its folder, a courtesy `wine /abs/path/thinker.exe`
+   from an unrelated shell cwd does not provide. The first version of this
+   script launched wine without ever `cd`-ing into `$GAME_DIR`, so it hit
+   `FileExists(GameExeFile) == false` and got a plain Win32 `MessageBox`
+   ("Cannot find terranx.exe. Game is unable to start.") — confirmed by
+   screenshot. That dialog is **not** one of the six autoplay-bypassed
+   primitives (`src/autoplay.cpp`), so it blocks forever even with
+   `autoplay=1`. This means the smoke test recorded above (STALL at 25s,
+   "last turn seen: none") was almost certainly hitting this dialog the
+   whole time, not sitting at the New Game menu as assumed when it was
+   written. Fixed: the launch now runs as `(cd "$GAME_DIR" && exec setsid
+   ...)` in both the Xvfb and `--no-xvfb` branches — `exec` inside the
+   subshell means `$!` after backgrounding still names the real process
+   directly, so the kill/process-group logic needed no other changes.
+2. **Still open — Xvfb itself appears unable to run the game at all on
+   this dev machine**, a second, more fundamental problem than gap #1.
+   Even with the `cwd` fix, under Xvfb the process reliably exits ~1-2s
+   after the `patch_setup screen: ... window: ...` / `random_reseed ...`
+   lines land in `debug.txt` — **before `mod_turn_upkeep` / Lua init ever
+   runs** (no `lua.log` is created at all). `WINEDEBUG=+ddraw,+d3d,+seh`
+   showed no explicit fatal error, just a burst of `RtlUnwindEx` activity
+   around `wined3d_dll_init Application name terranx.exe\Direct3D` right
+   before the process disappears — consistent with the DirectDraw/PRACX
+   (`ddraw.dll`) surface-creation path failing outright in this headless
+   setup, not yet root-caused past that. `LIBGL_ALWAYS_SOFTWARE=1` (the
+   usual fix for "no GPU under Xvfb") made no difference — same failure
+   point, same timing. Xvfb's own startup warnings (`radv is not a
+   conformant Vulkan implementation`, `DRI3 error: Could not get DRI3
+   device`) are visible in every run but weren't confirmed as *the* cause,
+   only as circumstantial. **Practical consequence: `--no-xvfb` is
+   currently the only launch mode confirmed to reach the game's window at
+   all on this machine** — the default (Xvfb) mode fails before KNOWN GAP
+   #1 (the New-Game-menu problem) even becomes relevant. Documented as
+   KNOWN GAP #2 directly in `tools/autoplay_run.sh`'s header. Whoever
+   picks this up next: try alternate Xvfb screen depths/extensions, or a
+   PRACX-disabling launch path if one exists, before assuming it's
+   unfixable — this was time-boxed, not exhaustively diagnosed.
+
 ### 5.4 Performance instrumentation
 
 Wrap the AI phases in `mod_turn_upkeep`/`move_upkeep`/production loops with

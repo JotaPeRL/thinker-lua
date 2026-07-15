@@ -13,18 +13,32 @@
 # the per-turn state hash gives an independent, externally-observable
 # progress signal, so an abrupt kill loses nothing needed for diagnosis.
 #
-# KNOWN GAP, not solved by this script: Xvfb is headless, and the game has
-# no command-line flag to auto-load a save or skip its main/New-Game menu
-# (checked: only -smac/-native/-screen/-windowed are handled, src/main.cpp).
-# Reaching an actual in-progress all-AI game therefore still needs one
-# interactive session first (e.g. attach a VNC viewer to the Xvfb display
-# this script allocates, or run the same launch command without Xvfb on a
-# real display) to get through the New Game screen once and save -- this
-# script only automates the part after that: unattended turn advancement,
+# KNOWN GAP #1, not solved by this script: Xvfb is headless, and the game
+# has no command-line flag to auto-load a save or skip its main/New-Game
+# menu (checked: only -smac/-native/-screen/-windowed are handled,
+# src/main.cpp). Reaching an actual in-progress all-AI game therefore
+# still needs one interactive session first (e.g. attach a VNC viewer to
+# the Xvfb display this script allocates, or run with --no-xvfb on a real
+# display) to get through the New Game screen once and save -- this script
+# only automates the part after that: unattended turn advancement,
 # monitoring, and artifact collection. Loading that save automatically on
 # each harness run is unimplemented; --save is accepted and forwarded to
 # `wine` as an extra argument on the chance the engine honors a bare save
 # path on its command line, but this is UNVERIFIED.
+#
+# KNOWN GAP #2, more severe, found 2026-07-15 on the dev machine: under
+# this machine's Xvfb (radv reports itself non-conformant, DRI3
+# unavailable, `LIBGL_ALWAYS_SOFTWARE=1` tried and made no difference),
+# the game exits ~1-2s after `patch_setup` logs to debug.txt -- before
+# mod_turn_upkeep / Lua init ever runs, so no lua.log is even created.
+# WINEDEBUG=+seh showed repeated RtlUnwindEx activity around
+# `wined3d_dll_init` right before the process disappears, consistent with
+# the DirectDraw/PRACX (ddraw.dll) surface-creation path failing outright
+# in this headless setup -- not yet root-caused further. This means
+# **--no-xvfb is currently the only launch mode confirmed to reach the
+# game's own window at all** on this machine; the default (Xvfb) mode
+# will very likely CRASH before you ever see the New-Game-menu gap above.
+# Use --no-xvfb until this is diagnosed and fixed.
 #
 # Usage:
 #   tools/autoplay_run.sh [options]
@@ -34,18 +48,53 @@
 #                             debug.txt, the CRASH artifact).
 #   --turns N                Stop after this many completed turns (default: 100).
 #   --timeout SECONDS        Stall timeout: no new turn within this many
-#                             seconds classifies the run as STALL (default: 300).
+#                             seconds classifies the run as STALL and kills
+#                             the run (default: 300). 0 disables this --
+#                             useful when a human is expected to sit at a
+#                             menu/dialog for a while; use together with
+#                             --screenshot-interval so a long silent period
+#                             is still observable without auto-killing it.
+#   --screenshot-interval SECONDS  While no new turn appears, take a
+#                             screenshot every this many seconds (default:
+#                             60) into $RUN_DIR/waiting_*.png -- independent
+#                             of --timeout, so it also fires with
+#                             --timeout 0. Requires a screenshot tool and a
+#                             reachable display (Xvfb mode: always; --no-xvfb
+#                             mode: only if DISPLAY is set in the
+#                             environment this script runs in). 0 disables.
 #   --poll SECONDS            Watchdog poll interval (default: 5).
 #   --game-dir DIR            Game install (default: $SMAC_DIR or
 #                             ~/.wine-smac/drive_c/Games/SMAC).
 #   --wineprefix DIR           WINEPREFIX (default: ~/.wine-smac).
-#   --save FILE                 See KNOWN GAP above -- unverified.
+#   --save FILE                 See KNOWN GAP #1 above -- unverified.
+#   --no-xvfb                 Launch on the real/current display instead of
+#                             an allocated Xvfb one -- lets you watch the
+#                             window and click through the New Game screen
+#                             yourself (KNOWN GAP #1). Everything else
+#                             (deploy, ini patching, watchdog,
+#                             classification, artifact collection) is
+#                             identical. Screenshots still work in this
+#                             mode if this script itself is run with
+#                             DISPLAY set to a reachable X server (e.g. the
+#                             XWayland instance backing a real Wayland
+#                             session's X11 compat layer) -- unlike Xvfb
+#                             mode, nothing here allocates or discovers a
+#                             display for you; export DISPLAY (and
+#                             XAUTHORITY if needed) before invoking.
+#                             CURRENTLY REQUIRED on the dev machine, not
+#                             just recommended: the default (Xvfb) mode
+#                             hits KNOWN GAP #2 above and crashes before
+#                             the game window ever comes up. Switch back
+#                             to the default once #2 is fixed and you've
+#                             confirmed the game reaches an in-progress,
+#                             turn-advancing state.
 #
 # Artifacts land under runs/<UTC timestamp>-<preset>/ (repo root): lua.log,
 # autoplay.log, debug.txt (debug preset only), state_hashes.log (just the
 # per-turn hash lines, for `cmp` between runs per plan 5.3), saves/, and
 # outcome.txt (classification + details). stall.png is added on STALL when
-# a screenshot could be captured.
+# a screenshot could be captured; waiting_turnN_HHMMSSZ.png is added every
+# --screenshot-interval seconds of no progress, regardless of outcome.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,20 +102,24 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PRESET="debug"
 TARGET_TURNS=100
 TIMEOUT_SECONDS=300
+SCREENSHOT_INTERVAL=60
 POLL_INTERVAL=5
 GAME_DIR="${SMAC_DIR:-$HOME/.wine-smac/drive_c/Games/SMAC}"
 WINEPREFIX_DIR="$HOME/.wine-smac"
 SAVE_FILE=""
+USE_XVFB=1
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --preset) PRESET="$2"; shift 2 ;;
         --turns) TARGET_TURNS="$2"; shift 2 ;;
         --timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
+        --screenshot-interval) SCREENSHOT_INTERVAL="$2"; shift 2 ;;
         --poll) POLL_INTERVAL="$2"; shift 2 ;;
         --game-dir) GAME_DIR="$2"; shift 2 ;;
         --wineprefix) WINEPREFIX_DIR="$2"; shift 2 ;;
         --save) SAVE_FILE="$2"; shift 2 ;;
+        --no-xvfb) USE_XVFB=0; shift ;;
         -h|--help) awk 'NR==1{next} /^#/{sub(/^#/,""); print; next} {exit}' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
     esac
@@ -83,7 +136,9 @@ if [ ! -f "$BUILD_DIR/thinker.dll" ]; then
     exit 1
 fi
 
-for cmd in xvfb-run wine; do
+REQUIRED_CMDS=(wine)
+[ "$USE_XVFB" = "1" ] && REQUIRED_CMDS+=(xvfb-run)
+for cmd in "${REQUIRED_CMDS[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "error: $cmd not found in PATH" >&2; exit 1; }
 done
 
@@ -138,50 +193,96 @@ sed -i \
 # an already-advanced turn number and mis-time the stall window.
 rm -f "$GAME_DIR/lua.log" "$GAME_DIR/autoplay.log" "$GAME_DIR/debug.txt"
 
-# --- Launch under Xvfb ----------------------------------------------------
-# setsid: gives the whole xvfb-run/Xvfb/wine tree its own process group so
-# `kill -TERM -$RUN_PID` (finish(), below) can take all of it down without
-# touching this script or its caller.
-before_locks="$(ls /tmp/.X*-lock 2>/dev/null | tr '\n' ' ')"
-
-LAUNCH_ARGS=(env -u WAYLAND_DISPLAY WINEPREFIX="$WINEPREFIX_DIR" wine "$GAME_DIR/thinker.exe" -windowed)
+# --- Launch -------------------------------------------------------------
+# setsid: gives the whole xvfb-run/Xvfb/wine tree (or, in --no-xvfb mode,
+# just wine) its own process group so `kill -TERM -$RUN_PID` (finish(),
+# below) can take all of it down without touching this script or its
+# caller.
+#
+# cwd MUST be $GAME_DIR before exec'ing wine: thinker.exe's own launcher
+# (src/launch.cpp) checks for "terranx.exe" as a path relative to its
+# process's current directory, not relative to its own .exe location (that
+# convenience is Explorer's doing on real Windows, not the process's).
+# Launching `wine /abs/path/thinker.exe` from an unrelated cwd -- which an
+# earlier version of this script did -- makes that check fail, and the
+# game answers with a plain Win32 MessageBox ("Cannot find terranx.exe"),
+# which is NOT one of the six autoplay-bypassed dialogs (src/autoplay.cpp)
+# and so blocks forever even with autoplay=1. Confirmed by screenshot
+# while building this fix -- a prior smoke test's STALL was almost
+# certainly this dialog, not the New Game menu. `(cd ... && exec setsid
+# ...)` in a subshell keeps the cwd fix local to the launched tree without
+# perturbing this script's own cwd, and `exec` means `$!` after
+# backgrounding the subshell still names the (now setsid-image) process
+# directly, so the kill logic below is unaffected.
+WINE_ARGS=(wine "$GAME_DIR/thinker.exe" -windowed)
 if [ -n "$SAVE_FILE" ]; then
-    LAUNCH_ARGS+=("$SAVE_FILE") # unverified, see KNOWN GAP above
+    WINE_ARGS+=("$SAVE_FILE") # unverified, see KNOWN GAP above
 fi
 
-setsid xvfb-run -a "${LAUNCH_ARGS[@]}" >"$RUN_DIR/xvfb-run.out" 2>&1 &
-RUN_PID=$!
-echo "launched (process group $RUN_PID), waiting for Xvfb to come up..."
+# SCREENSHOT_DISPLAY: full ":N" form, used by take_screenshot() below
+# regardless of mode. Xvfb mode discovers it (the display it just
+# allocated); --no-xvfb mode takes whatever DISPLAY this script itself
+# inherited (e.g. an XWayland instance backing the real desktop) -- it is
+# NOT allocated or overridden for you in that mode.
+SCREENSHOT_DISPLAY=""
+if [ "$USE_XVFB" = "1" ]; then
+    # `env` (not the shell) parses the leading VAR=val pairs here -- that
+    # only works via the shell's own syntax for a literal command line,
+    # not when the words come from an array, hence going through env
+    # explicitly for both -u WAYLAND_DISPLAY and WINEPREFIX.
+    #
+    # -u WAYLAND_DISPLAY: this dev machine is Wayland-only: forces Wine's
+    # x11 driver onto the Xvfb display instead of the native Wayland
+    # driver, which would otherwise leak the window onto the real desktop.
+    before_locks="$(ls /tmp/.X*-lock 2>/dev/null | tr '\n' ' ')"
+    ( cd "$GAME_DIR" && exec setsid xvfb-run -a env -u WAYLAND_DISPLAY WINEPREFIX="$WINEPREFIX_DIR" "${WINE_ARGS[@]}" ) \
+        >"$RUN_DIR/launch.out" 2>&1 &
+    RUN_PID=$!
+    echo "launched under Xvfb (process group $RUN_PID), waiting for the display to come up..."
 
-DISPLAY_NUM=""
-for _ in $(seq 1 50); do
-    for f in /tmp/.X*-lock; do
-        [ -e "$f" ] || continue
-        case " $before_locks " in
-            *" $f "*) continue ;;
-        esac
-        DISPLAY_NUM="$(basename "$f" | sed -e 's/^\.X//' -e 's/-lock$//')"
+    for _ in $(seq 1 50); do
+        for f in /tmp/.X*-lock; do
+            [ -e "$f" ] || continue
+            case " $before_locks " in
+                *" $f "*) continue ;;
+            esac
+            SCREENSHOT_DISPLAY=":$(basename "$f" | sed -e 's/^\.X//' -e 's/-lock$//')"
+        done
+        [ -n "$SCREENSHOT_DISPLAY" ] && break
+        kill -0 "$RUN_PID" 2>/dev/null || break # died before Xvfb even started
+        sleep 0.2
     done
-    [ -n "$DISPLAY_NUM" ] && break
-    kill -0 "$RUN_PID" 2>/dev/null || break # died before Xvfb even started
-    sleep 0.2
-done
-if [ -n "$DISPLAY_NUM" ]; then
-    echo "virtual display: :$DISPLAY_NUM"
+    if [ -n "$SCREENSHOT_DISPLAY" ]; then
+        echo "virtual display: $SCREENSHOT_DISPLAY"
+    else
+        echo "warn: could not determine the allocated virtual display; screenshots will be skipped" >&2
+    fi
 else
-    echo "warn: could not determine the allocated virtual display; stall screenshots will be skipped" >&2
+    # Real/current display: no Xvfb, no WAYLAND_DISPLAY override -- wine
+    # picks whatever driver is native here, same as the CLAUDE.md manual
+    # launch command.
+    ( cd "$GAME_DIR" && exec setsid env WINEPREFIX="$WINEPREFIX_DIR" "${WINE_ARGS[@]}" ) \
+        >"$RUN_DIR/launch.out" 2>&1 &
+    RUN_PID=$!
+    echo "launched on the current display (process group $RUN_PID)"
+    if [ -n "${DISPLAY:-}" ]; then
+        SCREENSHOT_DISPLAY="$DISPLAY"
+        echo "screenshots will use inherited DISPLAY=$SCREENSHOT_DISPLAY"
+    else
+        echo "warn: no DISPLAY in this script's environment; screenshots will be skipped" >&2
+    fi
 fi
 
 take_screenshot() {
     local out="$1"
-    if [ -z "$DISPLAY_NUM" ]; then
+    if [ -z "$SCREENSHOT_DISPLAY" ]; then
         return 1
     fi
     if command -v xwd >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
-        xwd -root -display ":$DISPLAY_NUM" -out "$out.xwd" 2>/dev/null \
+        xwd -root -display "$SCREENSHOT_DISPLAY" -out "$out.xwd" 2>/dev/null \
             && convert "$out.xwd" "$out" 2>/dev/null && rm -f "$out.xwd"
     elif command -v import >/dev/null 2>&1; then
-        DISPLAY=":$DISPLAY_NUM" import -window root "$out" 2>/dev/null
+        DISPLAY="$SCREENSHOT_DISPLAY" import -window root "$out" 2>/dev/null
     else
         echo "warn: no screenshot tool available (need xwd+convert, or ImageMagick's import)" >&2
         return 1
@@ -192,6 +293,7 @@ take_screenshot() {
 LUA_LOG="$GAME_DIR/lua.log"
 LAST_TURN=""
 LAST_PROGRESS="$(date +%s)"
+LAST_SCREENSHOT=0
 OUTCOME=""
 DETAIL=""
 
@@ -221,7 +323,23 @@ while true; do
         break
     fi
 
-    if [ $((NOW - LAST_PROGRESS)) -ge "$TIMEOUT_SECONDS" ]; then
+    # Periodic "still waiting" screenshot, independent of --timeout (fires
+    # even with --timeout 0): lets you review afterward what the screen
+    # looked like every time it sat idle for a while, without killing the
+    # run over it -- useful for a human-driven session (New Game screen,
+    # a dialog outside the autoplay funnel, ...).
+    if [ "$SCREENSHOT_INTERVAL" -gt 0 ] 2>/dev/null \
+       && [ $((NOW - LAST_PROGRESS)) -ge "$SCREENSHOT_INTERVAL" ] \
+       && [ $((NOW - LAST_SCREENSHOT)) -ge "$SCREENSHOT_INTERVAL" ]; then
+        shot="$RUN_DIR/waiting_turn${LAST_TURN:-none}_$(date -u +%H%M%SZ).png"
+        if take_screenshot "$shot"; then
+            echo "$(date -u +%FT%TZ) still waiting (turn ${LAST_TURN:-none}) -- screenshot: $shot"
+        fi
+        LAST_SCREENSHOT="$NOW"
+    fi
+
+    if [ "$TIMEOUT_SECONDS" -gt 0 ] 2>/dev/null \
+       && [ $((NOW - LAST_PROGRESS)) -ge "$TIMEOUT_SECONDS" ]; then
         OUTCOME="STALL"
         DETAIL="no new turn for ${TIMEOUT_SECONDS}s (last turn seen: ${LAST_TURN:-none})"
         break
@@ -261,6 +379,7 @@ fi
     echo "preset: $PRESET"
     echo "target_turns: $TARGET_TURNS"
     echo "timeout_seconds: $TIMEOUT_SECONDS"
+    echo "screenshot_interval_seconds: $SCREENSHOT_INTERVAL"
     echo "outcome: $OUTCOME"
     echo "detail: $DETAIL"
     echo "last_turn_seen: ${LAST_TURN:-none}"
