@@ -849,14 +849,36 @@ a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
    > with no manual End Turn. The six-primitive dialog-bypass catalog
    > (5.3.1) was also found incomplete and corrected to nine (`X_pop`/
    > `X_pop_2`/`X_pops` added — see `IMPLEMENTATION_DETAILS.md` 5.3.3 for
-   > why the original grep missed them). **Still open:** the determinism
-   > half of the fixed-seed run (needs a *second* run with the same seed
-   > to `cmp` against, not done yet); tech-discovery announcements still
+   > why the original grep missed them).
+   >
+   > **Determinism (the fixed-seed run's actual purpose) attempted and
+   > only partially achieved — see `IMPLEMENTATION_DETAILS.md` 5.3.4.** A
+   > real gap surfaced along the way: the mod's own RNG
+   > (`random_reseed`/`map_rand`) was seeded from `GetTickCount()` on
+   > every process launch, independent of the save file — fixed with a
+   > new `fixed_rng_seed` option, confirmed working (two separate launches
+   > loading the same save now produce byte-identical `random_reseed`
+   > values and an identical turn-1 state hash). But turn 2 still diverges
+   > even with the seed pinned and the human's turn-1 actions deliberately
+   > reproduced — traced to single-player pod-opening drawing from the
+   > *main* sequential RNG stream (a `*MultiplayerActive`-only reseed
+   > exists but doesn't apply here), so its outcome depends on everything
+   > the other six AI-controlled factions already drew that turn, outside
+   > the human's control. Root cause not found — candidate is
+   > non-deterministic iteration somewhere in that turn-1 AI processing,
+   > not confirmed. **This looks like it predates this session's Lua-port
+   > work and may not be a porting bug at all**; left open rather than
+   > chased further, per the plan's own "bit-exact only where achievable"
+   > framing (5.3's graduated equivalence levels exist for exactly this).
+   >
+   > **Still open, none blocking:** tech-discovery announcements still
    > need a manual click (code baked into the un-decompiled engine binary,
    > no pointer redirect reaches it); secret-project completion down to
-   > one click (was two) via `minimal_popups`, not fully solved. None of
-   > these three block calling item (a) substantially done — see 5.3.3 for
-   > the full record.
+   > one click (was two) via `minimal_popups`, not fully solved; the
+   > turn-2+ determinism gap above. Item (a)'s harness and mechanism work
+   > is substantially done; full bit-exact determinism is not, and may
+   > need a decision on how much to invest before this gate closes for
+   > real — see 5.3.4 for the full record and where to resume.
 
 b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
    five hand-rolled per-hook mismatch-logging blocks (`src/tech.cpp`,

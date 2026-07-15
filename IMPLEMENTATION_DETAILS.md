@@ -2067,8 +2067,7 @@ so `random_reseed`/`map_rand` produce the identical stream on every
 process launch that sets it. Wired into the harness as `--rng-seed N`
 (`tools/autoplay_run.sh`, appended to the forced `thinker.ini` like
 `minimal_popups`, only when passed — normal runs are unaffected and keep
-varying naturally). Both presets rebuild clean; **not yet exercised
-live** — the determinism re-run this was built for hasn't happened yet.
+varying naturally). Both presets rebuild clean.
 
 **Abandoned approach, kept here so it isn't retried blind: pausing the
 process with `SIGSTOP` to give the user time to save mid-session doesn't
@@ -2079,9 +2078,72 @@ auto-End-Turn racing ahead. `SIGSTOP` is a hard OS-level freeze of the
 *entire* process, including its message loop — the user couldn't
 interact with anything at all (not even dismiss the event popup that
 happened to be open at the moment of the freeze), confirmed live. Had to
-`SIGKILL` and restart. `fixed_rng_seed` above sidesteps the whole
-problem: with the RNG pinned, replaying the same save + the same manual
-turn-1 actions should now reproduce exactly, no mid-session pause needed.
+`SIGKILL` and restart. `fixed_rng_seed` sidesteps the whole problem: with
+the RNG pinned, replaying the same save + the same manual turn-1 actions
+should reproduce exactly, no mid-session pause needed — this held for
+the save itself (see below), not (yet) for the full turn.
+
+**Exercised live, `fixed_rng_seed` confirmed working, but full determinism
+still not achieved — a second, deeper source of divergence found.**
+Test setup: one save (`saves/"Deirdre of the Gaians, 2101.SAV"`, kept at
+`runs/determinism-save/` in the repo — turn 1, saved manually by the user
+with autosave disabled, since the earlier autosave-based plan turned out
+to be unreliable past the first couple of turns, not investigated
+further), loaded twice with `--rng-seed 15373264` both times (runs
+labelled A/B below predate this fix and used no seed pinning; C/D are the
+post-fix pair). Two independent findings, both confirmed from
+`debug.txt`/`state_hashes.log`, not inferred:
+
+1. **The save itself loads deterministically, and `fixed_rng_seed` works
+   exactly as designed.** All four runs (A, B, C, D) show `state_hash
+   turn=1` byte-identical (`bases=7 vehs=29 hash=af557615`) — the loaded
+   state is always the same, as expected. `debug.txt`'s `random_reseed`
+   line read **15373264 in both C and D**, confirming the seed pin took
+   effect identically across two separate process launches (A/B, with no
+   pinning, would have shown different values here — not checked, moot
+   once the mechanism was fixed).
+2. **Turn 2 still diverges even with the seed pinned and the user
+   deliberately reproducing identical turn-1 actions** (confirmed
+   carefully by the user: same three actions in the same order, using a
+   nutrient-bonus tile specifically *because* its uniqueness makes
+   reproduction verifiable). In both C and D, Thinker's autoplay moved
+   the scout patrol to investigate the same Unity Pod — but the pod's
+   *contents* differed between the two runs. Traced one real mechanism
+   that explains this class of bug: `veh.cpp`'s pod-opening code
+   (`goody_pod_pop`-style, ~line 1157) only reseeds a
+   position-independent local stream
+   (`game_srand(*MapRandomSeed + f->goody_opened * 37)`) **when
+   `*MultiplayerActive`** — in single-player (every session this project
+   has ever run), pod contents instead draw from the **main sequential**
+   `random()`/`game_rand()` stream, meaning their outcome depends on
+   *everything* drawn before them that turn — including the other six
+   AI-controlled factions' own turn-1 decisions, made automatically,
+   outside the user's control. If any of those factions' processing
+   consumes a different *number* of random draws between C and D — for
+   any reason, timing-independent or not — the pod's position in the
+   stream shifts and it rolls differently, independent of the human's
+   actions or the seed being pinned. **Not root-caused further**: the
+   next step would be auditing the vanilla/Thinker AI code the other six
+   factions run during turn 1 for anything that could make its own
+   random-draw *count* non-deterministic given identical inputs — a
+   classic candidate is iteration over an unordered container keyed by
+   something address-dependent (pointer identity, `unordered_map`/
+   `unordered_set` bucket order under ASLR), but this is a hypothesis,
+   not a confirmed finding, and needs real investigation before acting on
+   it.
+
+**Where this leaves Phase 5.3's determinism goal:** the state-hash
+mechanism and the seed-pinning fix both work correctly and are validated
+— the *tooling* is sound. Full bit-exact reproducibility across separate
+process launches is not yet achieved, for a reason that (per the
+mechanism traced above) looks like it predates this session's work
+entirely and is not obviously a Lua-port bug — consistent with the
+plan's own framing that bit-exact equality is "the goal only where it is
+achievable," graduated equivalence levels exist precisely for this. Left
+open rather than chased further this session; whoever picks this up next
+should start from the `goody_opened`/`MultiplayerActive` trace above, not
+from scratch. Artifacts for a fresh look: `runs/determinism-save/` (the
+save file, `run-A`/`run-B`/`run-C-seed`/`run-D-seed` state-hash logs).
 
 ### 5.4 Performance instrumentation
 
