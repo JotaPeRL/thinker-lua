@@ -88,6 +88,19 @@
 #                             to the default once #2 is fixed and you've
 #                             confirmed the game reaches an in-progress,
 #                             turn-advancing state.
+#   --rng-seed N               Pin the mod's own RNG (random_reseed/
+#                             map_rand, src/main.cpp -- NOT the same as the
+#                             map-generation seed) to N instead of
+#                             GetTickCount(). Needed for a real determinism
+#                             comparison: without this, two process
+#                             launches loading the identical save still
+#                             diverge starting turn 2, because every AI
+#                             faction's random() draws differ between runs
+#                             regardless of the save's own state (found
+#                             live, 2026-07-15). Omit for normal runs --
+#                             this makes every AI faction's dice rolls
+#                             identical across runs, which you want for
+#                             comparison, not for varied gameplay.
 #
 # Artifacts land under runs/<UTC timestamp>-<preset>/ (repo root): lua.log,
 # autoplay.log, debug.txt (debug preset only), state_hashes.log (just the
@@ -108,6 +121,7 @@ GAME_DIR="${SMAC_DIR:-$HOME/.wine-smac/drive_c/Games/SMAC}"
 WINEPREFIX_DIR="$HOME/.wine-smac"
 SAVE_FILE=""
 USE_XVFB=1
+RNG_SEED=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -119,6 +133,7 @@ while [ $# -gt 0 ]; do
         --game-dir) GAME_DIR="$2"; shift 2 ;;
         --wineprefix) WINEPREFIX_DIR="$2"; shift 2 ;;
         --save) SAVE_FILE="$2"; shift 2 ;;
+        --rng-seed) RNG_SEED="$2"; shift 2 ;;
         --no-xvfb) USE_XVFB=0; shift ;;
         -h|--help) awk 'NR==1{next} /^#/{sub(/^#/,""); print; next} {exit}' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
@@ -197,6 +212,9 @@ sed -i \
 # discovery announcement gap (tech_achieved, same un-decompiled-code class
 # of problem, no fix attempted yet).
 printf 'minimal_popups=1\r\n' >> "$INI_PATH"
+if [ -n "$RNG_SEED" ]; then
+    printf 'fixed_rng_seed=%s\r\n' "$RNG_SEED" >> "$INI_PATH"
+fi
 
 # --- Clean stale logs from any prior session -----------------------------
 # lua.log/autoplay.log are opened in append mode; without this a stale log

@@ -2035,6 +2035,54 @@ the three new `X_pop`/`X_pop_2`/`X_pops` shims live (built and deployed,
 not yet exercised in an actual session); the tech-discovery gap and the
 secret-project completion-notice click remain open.
 
+### 5.3.4 Determinism testing across process launches — `fixed_rng_seed` (2026-07-15)
+
+Attempting the actual determinism check (`round 4`'s seed, re-run against
+the same save loaded twice) surfaced a real architectural fact: **the
+mod's own RNG stream is not tied to the save file at all.**
+`src/main.cpp`'s `DLL_PROCESS_ATTACH` seeds both `random_reseed()`
+(`random.cpp`'s LCG, the stream `random()`/`rand.map()` draw from
+throughout the Lua AI) and `map_rand` from `GetTickCount()` — the system
+uptime in milliseconds — **every time the DLL loads**, independent of
+whether a save is loaded afterward and independent of that save's own
+state. Confirmed by two loads of the identical save: the very first
+`state_hash` line (turn 1, logged before any of that turn's processing)
+was byte-identical both times, proving the save itself loads to identical
+state — but turn 2 already diverged (`vehs=29` vs `vehs=30`, different
+hash). Root cause is broader than "the human's manually-replayed turn 1
+wasn't pixel-perfect" (the working theory at the time): **every other
+AI-controlled faction is already making `random()`-dependent decisions
+during that same turn 1**, before the demoted faction is even in the
+picture, so their draws already diverge between runs regardless of what
+the human did. Checked for a built-in "preserve random seed" toggle in
+the game's own menus first (the user's own hypothesis) — confirmed by
+the user directly in the New Game/Preferences screens: no such option
+exists, consistent with there being no code path anywhere in `src/*.cpp`
+that overrides the `GetTickCount()` seed.
+
+**Fixed:** new `fixed_rng_seed` config option (`src/main.h`/`.cpp`, same
+3-place pattern as every other option), default `0` (unchanged behavior
+— `GetTickCount()` as always). When nonzero, used as the seed instead,
+so `random_reseed`/`map_rand` produce the identical stream on every
+process launch that sets it. Wired into the harness as `--rng-seed N`
+(`tools/autoplay_run.sh`, appended to the forced `thinker.ini` like
+`minimal_popups`, only when passed — normal runs are unaffected and keep
+varying naturally). Both presets rebuild clean; **not yet exercised
+live** — the determinism re-run this was built for hasn't happened yet.
+
+**Abandoned approach, kept here so it isn't retried blind: pausing the
+process with `SIGSTOP` to give the user time to save mid-session doesn't
+work.** The idea was to freeze `terranx.exe` the instant `turn=2`'s
+`state_hash` line appeared (captured via a tight log-polling loop, no
+code changes needed) so the user could open the Save menu without the
+auto-End-Turn racing ahead. `SIGSTOP` is a hard OS-level freeze of the
+*entire* process, including its message loop — the user couldn't
+interact with anything at all (not even dismiss the event popup that
+happened to be open at the moment of the freeze), confirmed live. Had to
+`SIGKILL` and restart. `fixed_rng_seed` above sidesteps the whole
+problem: with the RNG pinned, replaying the same save + the same manual
+turn-1 actions should now reproduce exactly, no mid-session pause needed.
+
 ### 5.4 Performance instrumentation
 
 Wrap the AI phases in `mod_turn_upkeep`/`move_upkeep`/production loops with

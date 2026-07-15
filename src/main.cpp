@@ -75,6 +75,8 @@ int option_handler(void* user, const char* section, const char* name, const char
         cf->lua_strict = clamp(atoi(value), 0, 2);
     } else if (MATCH("autoplay")) {
         cf->autoplay = atoi(value);
+    } else if (MATCH("fixed_rng_seed")) {
+        cf->fixed_rng_seed = (unsigned int)strtoul(value, NULL, 10);
     } else if (MATCH("tech_balance")) {
         cf->tech_balance = atoi(value);
     } else if (MATCH("base_hurry")) {
@@ -478,7 +480,7 @@ DLL_EXPORT BOOL APIENTRY DllMain(HINSTANCE UNUSED(hinstDLL), DWORD fdwReason, LP
             }
             *EngineVersion = MOD_VERSION;
             *EngineDate = MOD_DATE;
-            seed = GetTickCount();
+            seed = conf.fixed_rng_seed ? conf.fixed_rng_seed : GetTickCount();
             random_reseed(seed);
             map_rand.reseed(seed ^ 0xffff);
             debug("random_reseed %u\n", seed);

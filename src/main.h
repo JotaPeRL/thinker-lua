@@ -235,6 +235,16 @@ struct Config {
     int lua_shadow = 0; // reserved for Phase 5 shadow mode; no-op for now
     int lua_strict = 0;
     int autoplay = 0; // Phase 5.3 spike: bypass modal popups, log to autoplay.log
+    // Phase 5.3 determinism harness: 0 (default) = seed the mod's own RNG
+    // (random_reseed/map_rand, distinct from the engine's own game_rand)
+    // from GetTickCount() at DLL attach, same as always. Nonzero = use this
+    // value instead, so two process launches loading the same save produce
+    // the same random() stream from turn 2 onward, enabling a real
+    // determinism comparison (state_hash cmp across two separate runs) --
+    // confirmed live (2026-07-15) that without this, two loads of the
+    // identical save diverge starting at turn 2, since GetTickCount()
+    // differs between process launches regardless of the save's own state.
+    unsigned int fixed_rng_seed = 0;
 
     int tech_balance = 0;
     int base_hurry = 0;
