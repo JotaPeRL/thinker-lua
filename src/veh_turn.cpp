@@ -3,6 +3,16 @@
 
 void __cdecl mod_enemy_turn(int faction_id) {
     debug("enemy_turn %d %d\n", *CurrentTurn, faction_id);
+    // Phase 5.3.5 determinism diagnostics, gated on conf.autoplay (noisy --
+    // once per faction per turn, not for normal play): running draw counts
+    // logged *before* this faction's processing, so diffing two runs'
+    // debug.txt finds the first faction/turn where a count already differs
+    // -- turning "audit all turn-1 AI" into "diff two logs". See
+    // IMPLEMENTATION_DETAILS.md 5.3.5.
+    if (conf.autoplay) {
+        debug("enemy_turn rng: game_rand_draws=%u mod_rng_draws=%u map_rng_draws=%u\n",
+            g_game_rand_draws, g_mod_rng_draws, g_map_rand_draws);
+    }
     for (int iter_type = 0; iter_type < 10; ++iter_type) {
         for (int veh_id = *VehCount - 1; veh_id >= 0; --veh_id) {
             VEH* veh = &Vehs[veh_id];

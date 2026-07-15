@@ -1,6 +1,11 @@
 
 #include "random.h"
 
+// See random.h: running draw counts per RNG stream, Phase 5.3.5.
+uint32_t g_mod_rng_draws = 0;
+uint32_t g_game_rand_draws = 0;
+uint32_t g_map_rand_draws = 0;
+
 uint32_t game_rand_state() {
     fp_none getptd = (fp_none)0x6491C3;
     return ((uint32_t*)getptd())[5];
@@ -17,6 +22,7 @@ void game_rand_restore(uint32_t saved) {
 }
 
 int32_t game_randv(int32_t value) {
+    ++g_game_rand_draws;
     // RNG state only advances when the value is within bounds
     return (value > 1 ? game_rand() % value : 0);
 }
@@ -46,11 +52,13 @@ uint32_t random_state() {
 Returns same values as the game engine function game_random(0, n) and Random::get(0, n).
 */
 int32_t random(int32_t limit) {
+    ++g_mod_rng_draws;
     random_seed = 1664525 * random_seed + 1013904223;
     return ((random_seed & 0xffff) * limit) >> 16;
 }
 
 int32_t random_get(int32_t low, int32_t high) {
+    ++g_mod_rng_draws;
     random_seed = 1664525 * random_seed + 1013904223;
     if (low > high) {
         std::swap(low, high);
@@ -67,6 +75,7 @@ uint32_t GameRandom::get_state() {
 }
 
 int32_t GameRandom::get(int32_t low, int32_t high) {
+    ++g_map_rand_draws;
     state = 1664525 * state + 1013904223;
     if (low > high) {
         std::swap(low, high);
@@ -75,6 +84,7 @@ int32_t GameRandom::get(int32_t low, int32_t high) {
 }
 
 int32_t GameRandom::get(int32_t limit) {
+    ++g_map_rand_draws;
     state = 1664525 * state + 1013904223;
     return ((state & 0xffff) * limit) >> 16;
 }

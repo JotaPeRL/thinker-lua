@@ -28,6 +28,7 @@ local faction = dofile("lua/api/faction.lua")
 local base = dofile("lua/api/base.lua")
 local veh = dofile("lua/api/veh.lua")
 local log = dofile("lua/api/log.lua")
+local rand = dofile("lua/api/rand.lua")
 
 -- FNV-1a-style mix using only exact bitwise ops (bxor/rol) -- deliberately
 -- not a multiplicative hash, to avoid floating-point precision loss on
@@ -66,8 +67,17 @@ local function dump(turn)
         h = mix(h, f.base_count)
     end
 
-    log.debug("state_hash turn=%d bases=%d vehs=%d hash=%s",
-        turn, base_count, veh_count, bit.tohex(h))
+    -- Phase 5.3.5 determinism diagnostics (IMPLEMENTATION_DETAILS.md):
+    -- RNG *states*, not folded into the hash above -- a different signal,
+    -- deliberately kept separate and visible, so the first turn where
+    -- these diverge between two runs (while the hash above still matches)
+    -- is directly readable from state_hashes.log, without needing to
+    -- correlate against debug.txt's per-faction draw counts first.
+    local rng = string.format("%08x:%08x:%08x",
+        rand.game_state(), rand.mod_state(), rand.map_state())
+
+    log.debug("state_hash turn=%d bases=%d vehs=%d hash=%s rng=%s",
+        turn, base_count, veh_count, bit.tohex(h), rng)
     return 0
 end
 

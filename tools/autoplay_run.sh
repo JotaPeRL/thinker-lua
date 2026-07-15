@@ -26,19 +26,26 @@
 # `wine` as an extra argument on the chance the engine honors a bare save
 # path on its command line, but this is UNVERIFIED.
 #
-# KNOWN GAP #2, more severe, found 2026-07-15 on the dev machine: under
-# this machine's Xvfb (radv reports itself non-conformant, DRI3
-# unavailable, `LIBGL_ALWAYS_SOFTWARE=1` tried and made no difference),
-# the game exits ~1-2s after `patch_setup` logs to debug.txt -- before
-# mod_turn_upkeep / Lua init ever runs, so no lua.log is even created.
-# WINEDEBUG=+seh showed repeated RtlUnwindEx activity around
-# `wined3d_dll_init` right before the process disappears, consistent with
-# the DirectDraw/PRACX (ddraw.dll) surface-creation path failing outright
-# in this headless setup -- not yet root-caused further. This means
-# **--no-xvfb is currently the only launch mode confirmed to reach the
-# game's own window at all** on this machine; the default (Xvfb) mode
-# will very likely CRASH before you ever see the New-Game-menu gap above.
-# Use --no-xvfb until this is diagnosed and fixed.
+# KNOWN GAP #2, demoted to nice-to-have (2026-07-15) -- found on the dev
+# machine: under this machine's Xvfb (radv reports itself non-conformant,
+# DRI3 unavailable), the game exits ~1-2s after `patch_setup` logs to
+# debug.txt -- before mod_turn_upkeep / Lua init ever runs, so no lua.log
+# is even created. Original hypothesis (DirectDraw/PRACX surface creation
+# failing under headless rendering) tested directly and ruled out: higher
+# screen depth/resolution, forcing the GDI renderer (no Direct3D/wined3d
+# at all), and disabling PRACX's ddraw.dll override via
+# WINEDLLOVERRIDES=ddraw=b -- each alone and all three combined -- made no
+# difference, still dies at the identical point every time. A plain
+# `wine notepad` survives fine under the same Xvfb instance, ruling out
+# Xvfb-vs-wine breakage in general too. Not root-caused further: this
+# doesn't look graphics-related at all given the above, but no other
+# hypothesis has been tested. **--no-xvfb is currently the only launch
+# mode confirmed to reach the game's own window at all** on this machine;
+# the default (Xvfb) mode will very likely CRASH before you ever see the
+# New-Game-menu gap above. Since --no-xvfb on the real desktop already
+# satisfies every validation-matrix run this harness needs, this is no
+# longer worth blocking on -- headless only starts to matter for
+# *parallel* runs, a later concern. Use --no-xvfb for now.
 #
 # Usage:
 #   tools/autoplay_run.sh [options]

@@ -1193,7 +1193,16 @@ int __cdecl mod_load_map_daemon(char* name) {
 int __cdecl mod_load_daemon(char* name, int flag) {
     // Another savegame opened from selection dialog
     reset_state();
-    return load_daemon(name, flag);
+    int result = load_daemon(name, flag);
+    // Phase 5.3.5 determinism diagnostics, gated on conf.autoplay (this is
+    // for the harness, not normal play): confirms whether all three RNG
+    // streams end up in the same state across two process launches loading
+    // the identical save. See IMPLEMENTATION_DETAILS.md 5.3.5.
+    if (conf.autoplay) {
+        debug("load_daemon rng: game_rand=%u mod_rng=%u map_rng=%u\n",
+            game_rand_state(), random_state(), map_rand.get_state());
+    }
+    return result;
 }
 
 void __cdecl mod_auto_save() {

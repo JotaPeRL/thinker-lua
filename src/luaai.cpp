@@ -139,6 +139,24 @@ static int32_t host_vehs_ptr() {
     return (int32_t)Vehs;
 }
 
+// Phase 5.3.5 determinism diagnostics (IMPLEMENTATION_DETAILS.md):
+// map_rand.get_state() and the draw counters need a wrapper since they're
+// a member call / plain globals, not free functions matching the
+// LuaHostApi field signature directly (game_rand_state/random_state
+// already match and are assigned with no wrapper, below).
+static uint32_t host_map_rand_state() {
+    return map_rand.get_state();
+}
+static uint32_t host_game_rand_draws() {
+    return g_game_rand_draws;
+}
+static uint32_t host_mod_rng_draws() {
+    return g_mod_rng_draws;
+}
+static uint32_t host_map_rng_draws() {
+    return g_map_rand_draws;
+}
+
 static int32_t host_mod_veh_avail(int32_t unit_id, int32_t faction_id, int32_t base_id) {
     return mod_veh_avail(unit_id, faction_id, base_id);
 }
@@ -266,7 +284,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 8,
+    /* api_version          */ 9,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -324,6 +342,12 @@ static LuaHostApi g_host_api = {
     /* contacted_factions   */ host_contacted_factions,
     /* ocean_colony_land_site */ host_ocean_colony_land_site,
     /* vehs_ptr             */ host_vehs_ptr,
+    /* game_rand_state      */ game_rand_state,
+    /* mod_rand_state       */ random_state,
+    /* map_rand_state       */ host_map_rand_state,
+    /* game_rand_draws      */ host_game_rand_draws,
+    /* mod_rng_draws        */ host_mod_rng_draws,
+    /* map_rng_draws        */ host_map_rng_draws,
 };
 
 static lua_State* L = NULL;

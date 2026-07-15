@@ -12,4 +12,12 @@ local funcs = dofile_once("lua/ffi/funcs.lua")
 return {
     game = funcs.rand_game,
     map = funcs.rand_map,
+    -- Phase 5.3.5 determinism diagnostics (IMPLEMENTATION_DETAILS.md):
+    -- read-only peeks, never consume their stream (unlike game/map above).
+    game_state = funcs.game_rand_state,
+    mod_state = funcs.mod_rand_state,
+    map_state = funcs.map_rand_state,
+    game_draws = funcs.game_rand_draws,
+    mod_draws = funcs.mod_rng_draws,
+    map_draws = funcs.map_rng_draws,
 }

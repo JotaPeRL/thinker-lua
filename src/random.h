@@ -11,6 +11,18 @@ uint32_t random_state();
 int32_t random(int32_t limit);
 int32_t random_get(int32_t low, int32_t high);
 
+// Phase 5.3.5 determinism diagnostics: cheap, always-incrementing draw
+// counters (never reset), one per RNG stream. Not a state snapshot -- a
+// running count of how many times each stream has been drawn from since
+// process start, so two runs' logs can be diffed to find the first turn/
+// faction where a *count* diverges, without needing the actual random
+// values to differ yet (a divergence here always precedes -- and often
+// far predates -- a visible state_hash mismatch). See
+// IMPLEMENTATION_DETAILS.md 5.3.5.
+extern uint32_t g_mod_rng_draws;   // random()/random_get(), this file
+extern uint32_t g_game_rand_draws; // game_randv(), the engine's own RNG
+extern uint32_t g_map_rand_draws;  // GameRandom::get*(), below (map_rand)
+
 class GameRandom {
     private:
     uint32_t state = 0;

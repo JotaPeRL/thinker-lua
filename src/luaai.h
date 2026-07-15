@@ -118,6 +118,18 @@ struct LuaHostApi {
     // Vehs is a mutable, re-pointable global (3.2), so lua/api/veh.lua
     // re-fetches this on every access rather than caching a stale cast.
     int32_t (*vehs_ptr)();
+    // Phase 5.3.5 determinism diagnostics (IMPLEMENTATION_DETAILS.md):
+    // read-only peeks at RNG state/draw counts, never consumed by these
+    // calls themselves -- distinct from rand_game/rand_map above, which
+    // both advance their stream. Folded into lua/harness/state_hash.lua's
+    // per-turn line so a divergence between two runs' RNG state is visible
+    // directly, without needing the state hash itself to differ yet.
+    uint32_t (*game_rand_state)();
+    uint32_t (*mod_rand_state)();     // -> random_state()
+    uint32_t (*map_rand_state)();     // -> map_rand.get_state()
+    uint32_t (*game_rand_draws)();    // -> g_game_rand_draws
+    uint32_t (*mod_rng_draws)();      // -> g_mod_rng_draws
+    uint32_t (*map_rng_draws)();      // -> g_map_rand_draws
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

@@ -1899,6 +1899,20 @@ this", one fixed, one still open.**
    picks this up next: try alternate Xvfb screen depths/extensions, or a
    PRACX-disabling launch path if one exists, before assuming it's
    unfixable — this was time-boxed, not exhaustively diagnosed.
+   >
+   > **Update (2026-07-15, later the same day): the three follow-ups
+   > above were tried, none fixed it — see 5.3.5.** Higher screen
+   > depth/resolution, the GDI renderer, and `WINEDLLOVERRIDES=ddraw=b`
+   > (each alone and combined) all still die at the identical point. A
+   > plain `wine notepad` survives fine under the same Xvfb, ruling out
+   > Xvfb-vs-wine breakage in general. The DirectDraw/PRACX hypothesis
+   > this section proposed is now considered **ruled out**, not just
+   > unconfirmed — whoever picks this up next should look elsewhere
+   > entirely, not retry graphics-related variations. Demoted to
+   > nice-to-have in the consolidation gate (`IMPLEMENTATION_PLAN.md`,
+   > item (a)'s status) — `--no-xvfb` already satisfies every run this
+   > harness needs; headless only matters once parallelizing runs becomes
+   > the actual goal.
 
 ### 5.3.3 Real validation runs (2026-07-15) — 4/4 runs clean, 3 real bugs found (2 fixed, 1 open), the six-primitive catalog corrected
 
@@ -2135,15 +2149,122 @@ post-fix pair). Two independent findings, both confirmed from
 **Where this leaves Phase 5.3's determinism goal:** the state-hash
 mechanism and the seed-pinning fix both work correctly and are validated
 — the *tooling* is sound. Full bit-exact reproducibility across separate
-process launches is not yet achieved, for a reason that (per the
-mechanism traced above) looks like it predates this session's work
-entirely and is not obviously a Lua-port bug — consistent with the
-plan's own framing that bit-exact equality is "the goal only where it is
-achievable," graduated equivalence levels exist precisely for this. Left
-open rather than chased further this session; whoever picks this up next
-should start from the `goody_opened`/`MultiplayerActive` trace above, not
-from scratch. Artifacts for a fresh look: `runs/determinism-save/` (the
-save file, `run-A`/`run-B`/`run-C-seed`/`run-D-seed` state-hash logs).
+process launches is not yet achieved. **Correction (external review,
+2026-07-15, same day): this is not the "bit-exact only where achievable"
+case the paragraph above originally invoked** — that framing covers
+Lua-vs-C++ tolerance (comparing two different implementations), not a
+single binary diverging from itself across two launches of the identical
+save with the identical pinned seed. That's ambient nondeterminism, and
+it directly blocks the consolidation gate's item (d) (`IMPLEMENTATION_
+PLAN.md`), whose whole method is a systemic state-hash comparison — see
+5.3.5 for the diagnostics landed to root-cause it (not yet run). Artifacts
+for a fresh look: `runs/determinism-save/` (the save file,
+`run-A`/`run-B`/`run-C-seed`/`run-D-seed` state-hash logs).
+
+### 5.3.5 RNG divergence diagnostics + Xvfb re-attempt (2026-07-15, external review follow-up)
+
+> Second-opinion review (via a separate model, prompted with this
+> session's findings) re-ranked the three open gaps from 5.3.3/5.3.4: the
+> turn-2+ RNG divergence is **blocking** (it invalidates gate item (d)'s
+> whole comparison method, not just "nice to have bit-exactness"), Xvfb
+> is **not** blocking (item (a)'s validation matrix is already satisfied
+> by `--no-xvfb` on the real desktop). This section covers instrumentation
+> only — the actual root-cause run (loading the same save twice with the
+> new diagnostics active, diffing the logs) is manual follow-up, not done
+> this session.
+
+**RNG diagnostics added, all gated cheap-or-conf.autoplay-only:**
+
+1. **Save-load RNG snapshot** (`src/game.cpp`, `mod_load_daemon`): logs
+   `game_rand_state()`, `random_state()` (the mod's own LCG), and
+   `map_rand.get_state()` immediately after `load_daemon()` returns,
+   gated on `conf.autoplay` (`debug.txt`: `load_daemon rng: game_rand=...
+   mod_rng=... map_rng=...`). Answers the question 5.3.4 left open: is
+   the *engine's own* `game_rand` state (not just the mod's, which
+   `fixed_rng_seed` already pins) identical across two loads of the same
+   save? Not yet run to find out — the instrumentation is built, the
+   comparison isn't done.
+2. **Per-faction RNG draw counters** (`src/random.cpp` + `src/veh_turn.cpp`):
+   three new running counters, never reset, incremented on every call to
+   `random()`/`random_get()` (`g_mod_rng_draws`), `game_randv()`
+   (`g_game_rand_draws`), and `GameRandom::get()`/`get(low,high)`
+   (`g_map_rand_draws` — `map_rand`, used by `pick_tile` and friends).
+   Logged at the top of `mod_enemy_turn` (`veh_turn.cpp`, once per faction
+   per turn, right where the existing `enemy_turn %d %d` line already is),
+   gated on `conf.autoplay` since this one *is* noisy (up to 7x/turn).
+   Turns "audit all turn-1 AI code for a source of nondeterminism" into
+   "diff two `debug.txt`s and find the first faction whose counter already
+   differs before any value does" — counts diverging always precedes (and
+   is far cheaper to spot than) a value divergence.
+3. **Per-turn RNG state in `state_hashes.log`** (`lua/harness/state_hash.lua`):
+   the existing per-turn line gained `rng=<game_rand_state>:<mod_rand_state>:
+   <map_rand_state>` (hex, matching the hash's own format) — deliberately
+   **not** folded into the hash itself (a different signal, kept visible
+   rather than opaque). Lets a future comparison spot "the first turn
+   where RNG state differs while the state hash still happens to match"
+   directly from `state_hashes.log` alone, no `debug.txt` correlation
+   needed for that specific question.
+
+**Plumbing:** `LuaHostApi` gained six new read-only accessors
+(`game_rand_state`/`mod_rand_state`/`map_rand_state`/`game_rand_draws`/
+`mod_rng_draws`/`map_rng_draws` — `src/luaai.h`/`.cpp`, `api_version`
+8→9), `lua/ffi/funcs.lua` (`HOST_API_VERSION` bumped to match),
+`lua/api/rand.lua` (six new exports: `game_state`/`mod_state`/
+`map_state`/`game_draws`/`mod_draws`/`map_draws`). None of these consume
+their stream (unlike `rand.game`/`rand.map`, which do) — pure peeks, safe
+to call from anywhere without perturbing determinism themselves. Both
+presets rebuild clean. **Not yet exercised live** — validating this needs
+an actual save-load-twice session, which is the follow-up work this
+instrumentation was built for, not something this pass did.
+
+**Xvfb re-attempt (Task 3 of the external review, run autonomously — no
+gameplay needed, success criterion was just "process survives past
+`patch_setup` and creates `lua.log`"):** all three suspects from 5.3.2's
+"whoever picks this up next" note, tried individually then combined:
+
+- Higher screen depth/resolution (`xvfb-run --server-args="-screen 0
+  1024x768x24"`, up from whatever `-a`'s default was — confirmed via
+  `patch_setup screen: 1024x768 window: 1024x768` in `debug.txt`, so the
+  args did take effect): no change, same failure point.
+- GDI renderer (`wine reg add "HKCU\Software\Wine\Direct3D" /v renderer
+  /d gdi /f`, reverted after testing): no change.
+- `WINEDLLOVERRIDES="ddraw=b"` to rule out PRACX's `ddraw.dll`
+  (confirmed active via `err:winediag:wined3d_dll_init Disabling 3D
+  support` in the wine log): no change.
+- All three combined: no change. Every variant dies at the exact same
+  point (`patch_setup`/`random_reseed` logged, then gone within ~1-2s),
+  regardless of graphics configuration.
+- Sanity check: `wine notepad` under the identical Xvfb instance survives
+  and stays interactive-ready — rules out Xvfb-vs-wine breakage in
+  general, confirms the failure is specific to this game/DLL.
+
+**Conclusion: the DirectDraw/PRACX hypothesis (5.3.2) is ruled out, not
+just unconfirmed.** Whatever kills the process under Xvfb, it isn't
+graphics configuration — three independent graphics-related fixes and
+their combination made zero difference to either the failure point or the
+timing. No replacement hypothesis tested yet. Given `--no-xvfb` already
+covers every run the harness's validation matrix needs, and headless
+operation only matters for future parallelization (not a current
+blocker), this is demoted to nice-to-have rather than chased further —
+`IMPLEMENTATION_PLAN.md`'s consolidation gate item (a) status and
+`tools/autoplay_run.sh`'s KNOWN GAP #2 both updated to say so.
+
+**Files touched:** `src/random.h`/`.cpp` (three draw counters),
+`src/game.cpp` (`mod_load_daemon` RNG snapshot log), `src/veh_turn.cpp`
+(`mod_enemy_turn` draw-count log), `src/luaai.h`/`.cpp` (six new
+`LuaHostApi` entries, `api_version` 9), `lua/ffi/funcs.lua`
+(`HOST_API_VERSION` 9), `lua/api/rand.lua` (six new exports),
+`lua/harness/state_hash.lua` (`rng=` field on the per-turn line). Wine
+prefix registry change made and reverted (GDI renderer test). Both
+presets rebuild clean throughout.
+
+**Not yet done — pick up here:** the actual root-cause run (load the
+determinism save from `runs/determinism-save/` twice with `--rng-seed`,
+diff the new `debug.txt` RNG snapshots and per-faction draw counts, find
+the first faction/turn where a *count* already differs); the two item-(a)
+sub-items explicitly deferred by the external review (harness menu
+bootstrap, tech-discovery preference-flag experiment) — see
+`IMPLEMENTATION_PLAN.md`'s updated item (a) status for both.
 
 ### 5.4 Performance instrumentation
 

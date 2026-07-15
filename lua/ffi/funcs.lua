@@ -68,10 +68,16 @@ typedef struct {
     int32_t (*contacted_factions)(int32_t faction_id);
     int32_t (*ocean_colony_land_site)(int32_t base_id, int32_t land);
     int32_t (*vehs_ptr)();
+    uint32_t (*game_rand_state)();
+    uint32_t (*mod_rand_state)();
+    uint32_t (*map_rand_state)();
+    uint32_t (*game_rand_draws)();
+    uint32_t (*mod_rng_draws)();
+    uint32_t (*map_rng_draws)();
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 8
+local HOST_API_VERSION = 9
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -136,4 +142,10 @@ return {
     contacted_factions = function(faction_id) return api.contacted_factions(faction_id) end,
     ocean_colony_land_site = function(base_id, land) return api.ocean_colony_land_site(base_id, land) end,
     vehs_ptr = function() return api.vehs_ptr() end,
+    game_rand_state = function() return api.game_rand_state() end,
+    mod_rand_state = function() return api.mod_rand_state() end,
+    map_rand_state = function() return api.map_rand_state() end,
+    game_rand_draws = function() return api.game_rand_draws() end,
+    mod_rng_draws = function() return api.mod_rng_draws() end,
+    map_rng_draws = function() return api.map_rng_draws() end,
 }

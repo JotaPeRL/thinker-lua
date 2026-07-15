@@ -866,19 +866,72 @@ a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
    > the other six AI-controlled factions already drew that turn, outside
    > the human's control. Root cause not found — candidate is
    > non-deterministic iteration somewhere in that turn-1 AI processing,
-   > not confirmed. **This looks like it predates this session's Lua-port
-   > work and may not be a porting bug at all**; left open rather than
-   > chased further, per the plan's own "bit-exact only where achievable"
-   > framing (5.3's graduated equivalence levels exist for exactly this).
+   > not confirmed. **Correction (external review, 2026-07-15): this is
+   > NOT covered by the plan's "bit-exact only where achievable" framing**
+   > — that framing is about Lua-vs-C++ tolerance (different
+   > implementations of the same logic); this is the **same binary, same
+   > save, same pinned seed** diverging across two launches. That's ambient
+   > nondeterminism, not an equivalence-level question, and it makes gate
+   > item (d)'s systemic comparison (state hashes at equivalence levels
+   > 3-5) mathematically meaningless until fixed — you cannot tell port
+   > divergence from background noise. **Item (d) is now blocked on this**
+   > (see there). Diagnostics to root-cause it (not the fix itself) landed
+   > this session — 5.3.5.
    >
-   > **Still open, none blocking:** tech-discovery announcements still
-   > need a manual click (code baked into the un-decompiled engine binary,
-   > no pointer redirect reaches it); secret-project completion down to
+   > **Honest framing (external review, 2026-07-15): item (a)'s own
+   > definition — "one real unattended all-AI run" — has still never
+   > happened.** All four rounds had the user manually clicking through:
+   > the New Game screen every time, one manual End Turn per Load (before
+   > the blink-timer fix, and even after it for the very first turn after
+   > a load), and — every session — recurring clicks for tech-discovery
+   > announcements and (before `minimal_popups`) secret-project
+   > completion. What's actually done is the **mechanism**: dialog bypass
+   > (nine primitives), demote-human, auto-End-Turn, the state-hash
+   > harness, PID tracking, all confirmed working in combination over
+   > several hours of AI-vs-AI play. What's **not** done is a run with
+   > zero human interaction from launch to completion. Two concrete,
+   > named sub-items close that gap, both **deferred to next session**:
+   >
+   > - **Harness menu bootstrap.** No mechanism exists to reach an
+   >   in-progress game without a human clicking New Game (or Load) at
+   >   least once. `tools/autoplay_run.sh --save FILE` forwards a save
+   >   path as a bare `wine` argument on the chance the engine honors it —
+   >   **presumed dead**, not just unverified: `cmd_parse()`
+   >   (`src/main.cpp`) only recognizes four flags
+   >   (`-smac`/`-native`/`-screen`/`-windowed`), nothing save-related, so
+   >   there's no reason to expect a bare path argument does anything.
+   >   Needs either a real load-by-path mechanism added to Thinker, or
+   >   input automation (`xdotool`-style) against the New Game screen —
+   >   not designed yet.
+   > - **Tech-discovery popup.** Confirmed live as the actual recurring
+   >   blocker in an otherwise-running all-AI session (not tech-discovery
+   >   "eventually", but every few turns) — the demoted faction is still
+   >   `MapWin->cOwner` after `autoplay_demote_human()` runs (that call
+   >   only clears the human *bit*, not this pointer), so `tech_achieved`
+   >   still treats it as the UI's owner faction for announcement
+   >   purposes. A preference-flag experiment (some `GamePreferences`/
+   >   `GameMorePreferences` bit might suppress the announcement, same
+   >   family as 5.3.1's `MPREF_AUTO_ALWAYS_INSPECT_MONOLITH` fix) is the
+   >   likely next move but **not attempted this session** — explicitly
+   >   out of scope, see 5.3.5.
+   >
+   > **Xvfb (KNOWN GAP #2) demoted from blocking to nice-to-have.**
+   > Re-attempted this session (5.3.5): higher screen depth/resolution,
+   > the GDI renderer, and disabling PRACX's `ddraw.dll` override, each
+   > alone and combined — none fixed it, still dies at the identical point
+   > every time, ruling out the original DirectDraw/PRACX hypothesis (a
+   > plain `wine notepad` survives fine under the same Xvfb, so it isn't
+   > Xvfb-vs-wine in general either). Given `--no-xvfb` on the real desktop
+   > already satisfies every run in this gate's validation matrix, and
+   > headless operation only starts to matter for *parallel* runs (a later
+   > concern, not this gate), Xvfb is no longer worth blocking on — pick
+   > it back up only if/when parallelizing validation runs becomes the
+   > actual bottleneck.
+   >
+   > **Also still open, none blocking:** secret-project completion down to
    > one click (was two) via `minimal_popups`, not fully solved; the
-   > turn-2+ determinism gap above. Item (a)'s harness and mechanism work
-   > is substantially done; full bit-exact determinism is not, and may
-   > need a decision on how much to invest before this gate closes for
-   > real — see 5.3.4 for the full record and where to resume.
+   > turn-2+ RNG divergence (now tracked under gate item (d), which it
+   > blocks — see there, not here).
 
 b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
    five hand-rolled per-hook mismatch-logging blocks (`src/tech.cpp`,
@@ -907,6 +960,21 @@ d. **All five ported domains re-validated on the harness**, per each
    porting-order items 1, 2, 2b, and 3-partial (the `find_proto`/
    `select_colony`/`select_combat`/`unit_score` slice — not the
    still-unfinished `select_build` itself).
+
+   > **Blocked (2026-07-15, external review) on the turn-2+ RNG
+   > divergence found under item (a) — see `IMPLEMENTATION_DETAILS.md`
+   > 5.3.4/5.3.5.** This item's whole method is a systemic state-hash
+   > comparison at equivalence levels 3-5 (per-phase/per-turn/N-turn
+   > hashes, plan 5.3) — but two launches of the **same binary**, same
+   > save, same pinned seed already diverge starting turn 2, before any
+   > port-fidelity question even enters the picture. Until that ambient
+   > divergence is root-caused (or at least bounded), a mismatch between
+   > two harness runs can't be attributed to a Lua-port bug versus this
+   > pre-existing noise — the comparison this item depends on is not yet
+   > meaningful. Diagnostics to localize it (per-faction RNG draw counts,
+   > RNG state logged on save load and per turn) landed this session
+   > (5.3.5); the actual root-cause run is manual follow-up work, not yet
+   > done.
 
 e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
    (Phase 4.4/6) — needed before any upstream merge is even attempted, and
