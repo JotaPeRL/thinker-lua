@@ -611,19 +611,11 @@ and type constraints. For any combat-capable unit, mode is set to WMODE_COMBAT.
 */
 int find_proto(int base_id, TriadFlag triad, VehWeaponMode mode, bool defend) {
     assert(base_id >= 0 && base_id < *BaseCount);
-    // TEMPORARY porting-order-item-3 verification instrumentation, same
-    // dual-run mismatch pattern as mod_tech_val/mod_social_ai/
-    // mod_wants_to_attack (IMPLEMENTATION_DETAILS.md 4.7). find_proto
-    // consumes RNG (random(128) inside its scoring loop below), so this
-    // needs the same snapshot/restore treatment as mod_tech_ai, not the
-    // simpler snapshot-free pattern mod_wants_to_attack got away with.
-    uint32_t saved_rng = random_state();
-    int lua_proto_id;
-    bool lua_handled = lua_ai_hook("find_proto", &lua_proto_id,
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b).
+    // find_proto consumes RNG (random(128) inside its scoring loop below);
+    // lua_ai_shadow_call snapshots/restores both streams unconditionally.
+    LuaShadowCall shadow = lua_ai_shadow_call("find_proto", 1,
         {base_id, (int)triad, (int)mode, defend});
-    if (lua_handled) {
-        random_reseed(saved_rng);
-    }
     BASE* base = &Bases[base_id];
     int faction_id = base->faction_id;
     int gov = base->gov_config();
@@ -681,31 +673,18 @@ int find_proto(int base_id, TriadFlag triad, VehWeaponMode mode, bool defend) {
         }
 
     }
-    if (lua_handled && lua_proto_id != best_id) {
-        debug("lua/cpp find_proto mismatch: base=%d triad=%d mode=%d defend=%d lua=%d cpp=%d\n",
-            base_id, triad, mode, defend, lua_proto_id, best_id);
-    }
+    lua_ai_shadow_check("find_proto", shadow, &best_id, 1);
     return best_id;
 }
 
 int select_colony(int base_id, int num_colony, bool build_ships) {
-    // TEMPORARY porting-order-item-3 verification instrumentation, same
-    // dual-run mismatch pattern as find_proto (IMPLEMENTATION_DETAILS.md
-    // 4.8). Multiple return points, so wrapped like mod_tech_val's seam
-    // (report_and_return lambda) rather than find_proto's single-exit
-    // pattern. Consumes RNG (random()), same snapshot/restore as
-    // find_proto/mod_tech_ai.
-    uint32_t saved_rng = random_state();
-    int lua_choice;
-    bool lua_handled = lua_ai_hook("select_colony", &lua_choice, {base_id, num_colony, build_ships});
-    if (lua_handled) {
-        random_reseed(saved_rng);
-    }
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b). Multiple
+    // return points, so wrapped like mod_tech_val's seam (report_and_return
+    // lambda). Consumes RNG (random()); lua_ai_shadow_call snapshots/
+    // restores both streams unconditionally.
+    LuaShadowCall shadow = lua_ai_shadow_call("select_colony", 1, {base_id, num_colony, build_ships});
     auto report_and_return = [&](int cpp_choice) -> int {
-        if (lua_handled && lua_choice != cpp_choice) {
-            debug("lua/cpp select_colony mismatch: base=%d num_colony=%d build_ships=%d lua=%d cpp=%d\n",
-                base_id, num_colony, build_ships, lua_choice, cpp_choice);
-        }
+        lua_ai_shadow_check("select_colony", shadow, &cpp_choice, 1);
         return cpp_choice;
     };
 
@@ -753,20 +732,12 @@ int select_colony(int base_id, int num_colony, bool build_ships) {
 }
 
 int select_combat(int base_id, bool sea_base, bool build_ships) {
-    // TEMPORARY porting-order-item-3 verification instrumentation, same
-    // dual-run mismatch pattern as select_colony/find_proto
-    // (IMPLEMENTATION_DETAILS.md 4.8). Consumes RNG, same snapshot/restore.
-    uint32_t saved_rng = random_state();
-    int lua_choice;
-    bool lua_handled = lua_ai_hook("select_combat", &lua_choice, {base_id, sea_base, build_ships});
-    if (lua_handled) {
-        random_reseed(saved_rng);
-    }
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b). Consumes
+    // RNG; lua_ai_shadow_call snapshots/restores both streams
+    // unconditionally.
+    LuaShadowCall shadow = lua_ai_shadow_call("select_combat", 1, {base_id, sea_base, build_ships});
     auto report_and_return = [&](int cpp_choice) -> int {
-        if (lua_handled && lua_choice != cpp_choice) {
-            debug("lua/cpp select_combat mismatch: base=%d sea_base=%d build_ships=%d lua=%d cpp=%d\n",
-                base_id, sea_base, build_ships, lua_choice, cpp_choice);
-        }
+        lua_ai_shadow_check("select_combat", shadow, &cpp_choice, 1);
         return cpp_choice;
     };
 
@@ -962,7 +933,7 @@ int select_build(int base_id) {
     // debug("select_build ...") line below, which already prints
     // def/frm/prb/crw/pods/scouts for this same base.
     int lua_vehicle_counts_dummy;
-    lua_ai_hook("vehicle_counts_check", &lua_vehicle_counts_dummy, {base_id, sea_base});
+    lua_ai_hook("vehicle_counts_check", &lua_vehicle_counts_dummy, 1, {base_id, sea_base});
     WItem Wgov;
     governor_priorities(Bases[base_id], Wgov);
     need_ferry = need_ferry && !transports

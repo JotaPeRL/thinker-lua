@@ -1480,13 +1480,10 @@ int __cdecl mod_social_ai(int faction_id, int a2, int a3, int a4, int a5, CSocia
     }
     debug("social_params %d %d %8s defense: %d creche: %d pop_boom: %d want_pop: %3d pop_total: %3d\n",
         *CurrentTurn, faction_id, m->filename, def_value, has_creche, pop_boom, want_pop, pop_total);
-    // TEMPORARY porting-order-item-2 verification instrumentation, same
-    // dual-run mismatch pattern as src/tech.cpp's mod_tech_val/mod_tech_ai
-    // (IMPLEMENTATION_PLAN.md Phase 4 verification notes). pop_boom is
-    // final at this point and nothing has been mutated yet, so this is
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b). pop_boom
+    // is final at this point and nothing has been mutated yet, so this is
     // safe to run before C++'s own selection loop below.
-    int lua_prop;
-    bool lua_handled = lua_ai_hook("mod_social_ai", &lua_prop, {faction_id, pop_boom ? 1 : 0});
+    LuaShadowCall shadow = lua_ai_shadow_call("mod_social_ai", 1, {faction_id, pop_boom ? 1 : 0});
     int score_diff = 1 + (*CurrentTurn + 11*faction_id) % 6;
     int sf = -1;
     int sm2 = -1;
@@ -1512,10 +1509,7 @@ int __cdecl mod_social_ai(int faction_id, int a2, int a3, int a4, int a5, CSocia
         }
     }
     int cpp_prop = (sf >= 0) ? sf * MaxSocialModelNum + sm2 : -1;
-    if (lua_handled && lua_prop != cpp_prop) {
-        debug("lua/cpp mod_social_ai mismatch: faction=%d pop_boom=%d lua=%d cpp=%d\n",
-            faction_id, pop_boom, lua_prop, cpp_prop);
-    }
+    lua_ai_shadow_check("mod_social_ai", shadow, &cpp_prop, 1);
     int cost;
     if (sf >= 0 && f->energy_credits > (cost = social_upheaval(faction_id, &soc))) {
         int sm1 = current->models[sf];
@@ -1718,19 +1712,11 @@ static int __cdecl evaluate_attack(int faction_id, int faction_id_tgt, int facti
 }
 
 int __cdecl mod_wants_to_attack(int faction_id, int faction_id_tgt, int faction_id_unk) {
-    // TEMPORARY porting-order-item-2b verification instrumentation, same
-    // dual-run mismatch pattern as mod_tech_val/mod_social_ai
-    // (IMPLEMENTATION_DETAILS.md 4.6). No RNG consumed by evaluate_attack,
-    // so unlike mod_tech_ai this needs no snapshot/restore around the Lua
-    // call.
-    int lua_value;
-    bool lua_handled = lua_ai_hook("mod_wants_to_attack", &lua_value,
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b).
+    LuaShadowCall shadow = lua_ai_shadow_call("mod_wants_to_attack", 1,
         {faction_id, faction_id_tgt, faction_id_unk});
     int value = evaluate_attack(faction_id, faction_id_tgt, faction_id_unk);
-    if (lua_handled && lua_value != value) {
-        debug("lua/cpp mod_wants_to_attack mismatch: faction=%d target=%d unk=%d lua=%d cpp=%d\n",
-            faction_id, faction_id_tgt, faction_id_unk, lua_value, value);
-    }
+    lua_ai_shadow_check("mod_wants_to_attack", shadow, &value, 1);
 
     debug("wants_to_attack turn: %d factions: %d %d %d value: %d\n",
         *CurrentTurn, faction_id, faction_id_tgt, faction_id_unk, value);

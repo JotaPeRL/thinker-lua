@@ -609,7 +609,7 @@ void lua_ai_request_reload() {
     reload_requested = true;
 }
 
-bool lua_ai_hook(const char* name, int* out, std::initializer_list<int> args) {
+bool lua_ai_hook(const char* name, int* out, int out_count, std::initializer_list<int> args) {
     if (!conf.lua_ai || disabled_for_session || !L) {
         return false;
     }
@@ -631,10 +631,25 @@ bool lua_ai_hook(const char* name, int* out, std::initializer_list<int> args) {
         return false;
     }
 
+    // out_count == 1: a single Lua number, as every hook before this one
+    // returned. out_count > 1: a 1-indexed Lua table of out_count numbers
+    // (Consolidation gate typed-descriptor generalization -- see luaai.h).
     bool handled = false;
-    if (lua_isnumber(L, -1)) {
-        *out = lua_tointeger(L, -1);
+    if (out_count == 1 && lua_isnumber(L, -1)) {
+        out[0] = lua_tointeger(L, -1);
         handled = true;
+    } else if (out_count > 1 && lua_istable(L, -1)) {
+        handled = true;
+        for (int i = 0; i < out_count; i++) {
+            lua_rawgeti(L, -1, i + 1);
+            if (!lua_isnumber(L, -1)) {
+                handled = false;
+                lua_pop(L, 1);
+                break;
+            }
+            out[i] = lua_tointeger(L, -1);
+            lua_pop(L, 1);
+        }
     }
     lua_settop(L, errfunc - 1);
 
@@ -644,7 +659,74 @@ bool lua_ai_hook(const char* name, int* out, std::initializer_list<int> args) {
     // mod_tech_val can be called hundreds of times per turn.
     static std::unordered_set<std::string> logged_first_call;
     if (handled && logged_first_call.insert(name).second) {
-        lua_logf("lua_ai_hook: '%s' invoked and handled (result=%d)\n", name, *out);
+        lua_logf("lua_ai_hook: '%s' invoked and handled (result[0]=%d)\n", name, out[0]);
     }
     return handled;
+}
+
+// See luaai.h for the full contract. Zero-overhead when conf.lua_shadow
+// is off: returns immediately, never touches the Lua state or either RNG
+// stream.
+LuaShadowCall lua_ai_shadow_call(const char* name, int out_count, std::initializer_list<int> args) {
+    LuaShadowCall shadow;
+    if (!conf.lua_shadow) {
+        return shadow;
+    }
+    shadow.active = true;
+    for (int a : args) {
+        if (shadow.arg_count >= (int)(sizeof(shadow.args) / sizeof(shadow.args[0]))) {
+            break;
+        }
+        shadow.args[shadow.arg_count++] = a;
+    }
+
+    uint32_t saved_game_rand = game_rand_state();
+    uint32_t saved_mod_rng = random_state();
+    uint32_t game_draws_before = g_game_rand_draws;
+    uint32_t mod_draws_before = g_mod_rng_draws;
+
+    shadow.handled = lua_ai_hook(name, shadow.out, out_count, args);
+
+    shadow.game_rand_draws = g_game_rand_draws - game_draws_before;
+    shadow.mod_rng_draws = g_mod_rng_draws - mod_draws_before;
+    // Restore both streams so the C++ computation the caller runs next
+    // sees the RNG exactly as if this Lua call never happened -- Plan 5.1
+    // Class 1/2 procedure, step "restore RNGs" before "run C++".
+    game_rand_restore(saved_game_rand);
+    random_reseed(saved_mod_rng);
+    return shadow;
+}
+
+void lua_ai_shadow_check(const char* name, const LuaShadowCall& shadow,
+        const int* cpp_out, int out_count) {
+    if (!shadow.active || !shadow.handled) {
+        return;
+    }
+    bool mismatch = false;
+    for (int i = 0; i < out_count; i++) {
+        if (shadow.out[i] != cpp_out[i]) {
+            mismatch = true;
+            break;
+        }
+    }
+    if (!mismatch) {
+        return;
+    }
+    char args_buf[96] = {0};
+    char lua_buf[64] = {0};
+    char cpp_buf[64] = {0};
+    int pos = 0;
+    for (int i = 0; i < shadow.arg_count; i++) {
+        pos += snprintf(args_buf + pos, sizeof(args_buf) - pos, "%s%d", i ? "," : "", shadow.args[i]);
+    }
+    pos = 0;
+    for (int i = 0; i < out_count; i++) {
+        pos += snprintf(lua_buf + pos, sizeof(lua_buf) - pos, "%s%d", i ? "," : "", shadow.out[i]);
+    }
+    pos = 0;
+    for (int i = 0; i < out_count; i++) {
+        pos += snprintf(cpp_buf + pos, sizeof(cpp_buf) - pos, "%s%d", i ? "," : "", cpp_out[i]);
+    }
+    lua_logf("lua/cpp %s mismatch: args=[%s] lua=[%s] cpp=[%s] rng_draws: game=%u mod=%u\n",
+        name, args_buf, lua_buf, cpp_buf, shadow.game_rand_draws, shadow.mod_rng_draws);
 }

@@ -569,16 +569,11 @@ local function vehicle_counts_check(base_id, sea_base)
 end
 
 -- Production/plans port, third slice (porting-order item 3,
--- IMPLEMENTATION_DETAILS.md 4.9): plan.cpp:8-13/15-31. Neither fits
--- lua_ai_hook's int-args-in/int-result-out contract (facility_score takes
--- a WItem *input*, governor_priorities is void with a WItem *output*), so
--- unlike every other function in this file, these are NOT hooked -- plain
--- library functions only, validated by inspection now, not a live
--- dual-run (see 4.9 for why). WItem is a plain table here
--- ({AI_growth=.., AI_tech=.., AI_wealth=.., AI_power=.., AI_fight=..}),
--- not an FFI struct: lua/ai/ never touches ffi, and there's no engine
--- memory backing a WItem to justify one -- it's a short-lived scoring
--- accumulator in the C++ original too.
+-- IMPLEMENTATION_DETAILS.md 4.9): plan.cpp:8-13/15-31. WItem is a plain
+-- table here ({AI_growth=.., AI_tech=.., AI_wealth=.., AI_power=..,
+-- AI_fight=..}), not an FFI struct: lua/ai/ never touches ffi, and
+-- there's no engine memory backing a WItem to justify one -- it's a
+-- short-lived scoring accumulator in the C++ original too.
 local function facility_score(item_id, wgov)
     local p = tech.facility(item_id)
     return wgov.AI_fight * p.AI_fight
@@ -607,6 +602,32 @@ local function governor_priorities(base_id)
     return wgov
 end
 
+-- Consolidation gate item b (IMPLEMENTATION_PLAN.md, typed hook-descriptor
+-- refactor): facility_score/governor_priorities above don't fit the C
+-- side's flat-int-args/flat-int-result contract directly -- WItem is a
+-- named-field table on both sides here, and facility_score's second
+-- argument is a whole WItem, not a scalar. These are thin marshalling
+-- adapters at that specific boundary, same precedent as
+-- lua/api/faction.lua's models_to_cdata: the real logic stays in the
+-- named-table functions above, unchanged, so any future internal Lua
+-- caller (once select_build is ported and starts calling these directly)
+-- gets the convenient interface, not this one.
+--
+-- Field order matches WItem's C++ declaration exactly (src/engine.h):
+-- AI_growth, AI_tech, AI_wealth, AI_power, AI_fight. src/plan.cpp's hook
+-- seams flatten/unflatten in this same order.
+local function facility_score_hook(item_id, ai_growth, ai_tech, ai_wealth, ai_power, ai_fight)
+    return facility_score(item_id, {
+        AI_growth = ai_growth, AI_tech = ai_tech, AI_wealth = ai_wealth,
+        AI_power = ai_power, AI_fight = ai_fight,
+    })
+end
+
+local function governor_priorities_hook(base_id)
+    local wgov = governor_priorities(base_id)
+    return { wgov.AI_growth, wgov.AI_tech, wgov.AI_wealth, wgov.AI_power, wgov.AI_fight }
+end
+
 port.need_police = need_police
 port.unit_support_plan = unit_support_plan
 port.check_retool = check_retool
@@ -620,5 +641,7 @@ port.select_colony = select_colony
 port.select_combat = select_combat
 port.facility_score = facility_score
 port.governor_priorities = governor_priorities
+port.facility_score_hook = facility_score_hook
+port.governor_priorities_hook = governor_priorities_hook
 port.vehicle_counts_check = vehicle_counts_check
 return port

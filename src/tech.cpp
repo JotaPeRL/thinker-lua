@@ -366,16 +366,12 @@ determines whether a simplistic or extended calculation is required for technolo
 Return Value: Value of tech_id to the specified faction
 */
 int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
-    // TEMPORARY M4 verification instrumentation: run both sides, log a
-    // mismatch, but let C++ still govern (revert once confirmed clean --
-    // see IMPLEMENTATION_PLAN.md Phase 4 verification notes).
-    int lua_value;
-    bool lua_handled = lua_ai_hook("mod_tech_val", &lua_value, {tech_id, faction_id, simple_calc});
+    // Class 1 shadow mode (IMPLEMENTATION_PLAN.md Phase 5.1, Consolidation
+    // gate item b) -- C++ always governs; lua_shadow=1 just compares and
+    // logs. Zero overhead beyond one flag check when lua_shadow=0.
+    LuaShadowCall shadow = lua_ai_shadow_call("mod_tech_val", 1, {tech_id, faction_id, simple_calc});
     auto report_and_return = [&](int cpp_value) -> int {
-        if (lua_handled && lua_value != cpp_value) {
-            debug("lua/cpp mod_tech_val mismatch: tech=%d faction=%d simple=%d lua=%d cpp=%d\n",
-                tech_id, faction_id, simple_calc, lua_value, cpp_value);
-        }
+        lua_ai_shadow_check("mod_tech_val", shadow, &cpp_value, 1);
         return cpp_value;
     };
     Faction* f = &Factions[faction_id];
@@ -625,19 +621,13 @@ int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
 }
 
 int __cdecl mod_tech_ai(int faction_id) {
-    // TEMPORARY M4 verification instrumentation, mirroring mod_tech_val's
-    // dual-run mismatch check above -- but this hook draws from the map
-    // RNG (random_get, once per available tech) via lua's rand.map(), so
-    // per IMPLEMENTATION_PLAN.md 5.1's Class-1 shadow procedure the RNG
-    // must be snapshotted before the Lua run and restored before the C++
-    // run, or running both sides would burn the stream twice and desync
-    // it from what a Lua-only (or C++-only) run would have consumed.
-    uint32_t saved_rng = random_state();
-    int lua_tech_id;
-    bool lua_handled = lua_ai_hook("mod_tech_ai", &lua_tech_id, {faction_id});
-    if (lua_handled) {
-        random_reseed(saved_rng);
-    }
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b). This
+    // hook draws from the map RNG (random_get, once per available tech)
+    // via Lua's rand.map() -- lua_ai_shadow_call snapshots/restores both
+    // RNG streams around the Lua call unconditionally, so the C++ loop
+    // below always sees the RNG exactly as if the shadow call never
+    // happened, whether or not this particular hook actually consumes it.
+    LuaShadowCall shadow = lua_ai_shadow_call("mod_tech_ai", 1, {faction_id});
     int tech_id = -1;
     int best_value = INT_MIN;
     for (int i = 0; i < MaxTechnologyNum; i++) {
@@ -648,10 +638,7 @@ int __cdecl mod_tech_ai(int faction_id) {
             if (*GameRules & RULES_BLIND_RESEARCH) {
                 if (is_human(faction_id) && i == Units[BSC_FORMERS].preq_tech
                 && (Factions[faction_id].AI_growth || Factions[faction_id].AI_wealth)) {
-                    if (lua_handled && lua_tech_id != i) {
-                        debug("lua/cpp mod_tech_ai mismatch: faction=%d lua=%d cpp=%d (blind-research formers early return)\n",
-                            faction_id, lua_tech_id, i);
-                    }
+                    lua_ai_shadow_check("mod_tech_ai", shadow, &i, 1);
                     return i;
                 }
                 int preq = tech_level(i, 0); // Replaces tech_recurse
@@ -665,10 +652,7 @@ int __cdecl mod_tech_ai(int faction_id) {
             }
         }
     }
-    if (lua_handled && lua_tech_id != tech_id) {
-        debug("lua/cpp mod_tech_ai mismatch: faction=%d lua=%d cpp=%d\n",
-            faction_id, lua_tech_id, tech_id);
-    }
+    lua_ai_shadow_check("mod_tech_ai", shadow, &tech_id, 1);
     return tech_id;
 }
 

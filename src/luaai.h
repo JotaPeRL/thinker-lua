@@ -149,12 +149,54 @@ void lua_ai_request_reload();
 // Class 1 (pure query) hook dispatch (IMPLEMENTATION_PLAN.md Phase 4.1).
 // Looks up `name` in the registry populated from lua/ai/init.lua's
 // returned table at (re)load, calls it with `args` pushed as plain Lua
-// numbers, and writes the result to *out. Returns false ("not handled":
-// caller must run its own C++ body instead) when lua_ai=0, the hook
-// isn't registered, the Lua call returned nil, or it errored (Class 1
-// contract: always safe to fall back, since nothing is mutated before
-// this returns) -- errors still go through the same dedup/lua_strict
-// path as any other Lua error. One function instead of a family of
-// `_i`/`_ii`/`_b` variants, per the plan's explicit rule -- every hook
-// needed so far is int-args-in, int-result-out.
-bool lua_ai_hook(const char* name, int* out, std::initializer_list<int> args);
+// numbers, and writes the result(s) to out[0..out_count-1]. Returns false
+// ("not handled": caller must run its own C++ body instead) when lua_ai=0,
+// the hook isn't registered, the Lua call returned nil/wrong-shaped, or it
+// errored (Class 1 contract: always safe to fall back, since nothing is
+// mutated before this returns) -- errors still go through the same
+// dedup/lua_strict path as any other Lua error.
+//
+// out_count is the Consolidation gate's typed-descriptor generalization
+// (2026-07-16): out_count == 1 expects the hook to return a single Lua
+// number, unchanged from every hook written before this (mod_tech_val,
+// find_proto, ...). out_count > 1 expects a 1-indexed Lua table of
+// out_count numbers -- this is what makes facility_score/
+// governor_priorities hookable (WItem is 5 ints; IMPLEMENTATION_DETAILS.md
+// 4.9 found the old int-in/int-result-out contract couldn't express that).
+// Still one function, not a zoo of `_i`/`_ii`/`_b`/`_witem` variants.
+bool lua_ai_hook(const char* name, int* out, int out_count, std::initializer_list<int> args);
+
+// Class 1/2 shadow-mode comparison (IMPLEMENTATION_PLAN.md Phase 5.1,
+// Consolidation gate item b) -- the one generic mechanism that replaced
+// five hand-rolled per-hook dual-run blocks (src/tech.cpp, src/faction.cpp
+// x2, src/build.cpp x3). Usage at a hook site:
+//
+//   LuaShadowCall shadow = lua_ai_shadow_call("name", out_count, {args...});
+//   ...C++ body computes its own result, unaffected -- RNG is
+//   snapshotted/restored inside lua_ai_shadow_call itself...
+//   lua_ai_shadow_check("name", shadow, cpp_out, out_count);
+//   return cpp_value; // C++ always governs; shadow mode never acts on Lua
+//
+// conf.lua_shadow == 0: lua_ai_shadow_call returns immediately with
+// active=false -- no Lua call, no RNG state touched, no further work in
+// lua_ai_shadow_check either. Zero overhead beyond this one flag check.
+// conf.lua_shadow == 1: snapshots game_rand_state()/random_state(),
+// resolves and calls the hook exactly like lua_ai_hook() would, restores
+// both streams (so the real C++ computation that follows sees the RNG
+// exactly as if the Lua call never happened), and records how many draws
+// from each stream the Lua call consumed (Phase 5.3.5's counters) for the
+// divergence log line. Class 3 hooks are never shadow-run twice (plan
+// 5.1) -- this pair is Class 1/2 only, by construction (no mutation
+// happens between the two calls).
+struct LuaShadowCall {
+    bool active = false;
+    bool handled = false;
+    int out[5] = {};
+    int args[8] = {};
+    int arg_count = 0;
+    uint32_t game_rand_draws = 0;
+    uint32_t mod_rng_draws = 0;
+};
+LuaShadowCall lua_ai_shadow_call(const char* name, int out_count, std::initializer_list<int> args);
+void lua_ai_shadow_check(const char* name, const LuaShadowCall& shadow,
+    const int* cpp_out, int out_count);

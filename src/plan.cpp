@@ -6,13 +6,35 @@ int move_upkeep_faction = -1;
 
 
 int facility_score(FacilityId item_id, WItem& Wgov) {
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b). Args
+    // flattened in WItem's declared field order (engine.h): AI_growth,
+    // AI_tech, AI_wealth, AI_power, AI_fight -- matches
+    // lua/ai/build.lua's facility_score_hook exactly. Closes the gap
+    // IMPLEMENTATION_DETAILS.md 4.9 left open (the old int-args-in/
+    // int-result-out contract couldn't express a WItem input at all).
+    LuaShadowCall shadow = lua_ai_shadow_call("facility_score", 1,
+        {(int)item_id, Wgov.AI_growth, Wgov.AI_tech, Wgov.AI_wealth, Wgov.AI_power, Wgov.AI_fight});
     CFacility& p = Facility[item_id];
-    return Wgov.AI_fight * p.AI_fight
+    int value = Wgov.AI_fight * p.AI_fight
         + Wgov.AI_growth * p.AI_growth + Wgov.AI_power * p.AI_power
         + Wgov.AI_tech * p.AI_tech + Wgov.AI_wealth * p.AI_wealth;
+    lua_ai_shadow_check("facility_score", shadow, &value, 1);
+    return value;
 }
 
 void governor_priorities(BASE& base, WItem& Wgov) {
+    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b).
+    // base_id: every call site passes a Bases[] element (build.cpp), so
+    // pointer arithmetic recovers the index the Lua port needs (it
+    // re-fetches BASE via FFI from base_id, not a raw reference) without
+    // adding a base_id parameter to this function's own signature.
+    // out_count=5: the typed-descriptor generalization this hook needed
+    // (WItem is an *output* here, 4.9's other unhookable case) -- field
+    // order matches WItem's declaration (engine.h): AI_growth, AI_tech,
+    // AI_wealth, AI_power, AI_fight, mirrored by
+    // lua/ai/build.lua's governor_priorities_hook.
+    int base_id = &base - Bases;
+    LuaShadowCall shadow = lua_ai_shadow_call("governor_priorities", 5, {base_id});
     Faction& f = Factions[base.faction_id];
     uint32_t gov = base.governor_flags;
     if (is_human(base.faction_id)) {
@@ -28,6 +50,8 @@ void governor_priorities(BASE& base, WItem& Wgov) {
         Wgov.AI_power  = (f.AI_power ? 4 : 1);
         Wgov.AI_fight  = clamp(2*f.AI_fight, -2, 2);
     }
+    int cpp_out[5] = {Wgov.AI_growth, Wgov.AI_tech, Wgov.AI_wealth, Wgov.AI_power, Wgov.AI_fight};
+    lua_ai_shadow_check("governor_priorities", shadow, cpp_out, 5);
 }
 
 void reset_state() {

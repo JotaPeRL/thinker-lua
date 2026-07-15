@@ -21,4 +21,10 @@ return {
     select_combat = build.select_combat,
     vehicle_counts_check = build.vehicle_counts_check,
     turn_state_hash = state_hash.dump,
+    -- Consolidation gate item b: facility_score/governor_priorities
+    -- become hookable via the typed-descriptor refactor (out_count > 1)
+    -- plus these two thin adapters (lua/ai/build.lua) -- closes the gap
+    -- IMPLEMENTATION_DETAILS.md 4.9 left open.
+    facility_score = build.facility_score_hook,
+    governor_priorities = build.governor_priorities_hook,
 }

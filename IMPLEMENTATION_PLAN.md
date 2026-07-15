@@ -874,12 +874,26 @@ a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
    > nondeterminism, not an equivalence-level question, and it makes gate
    > item (d)'s systemic comparison (state hashes at equivalence levels
    > 3-5) mathematically meaningless until fixed — you cannot tell port
-   > divergence from background noise. **Item (d) is now blocked on this**
-   > (see there). Diagnostics to root-cause it landed this session
-   > (5.3.5), then actually run: found and fixed a real gap
-   > (`game_rand`, the engine's own RNG, was never pinned by
+   > divergence from background noise. Diagnostics to root-cause it
+   > landed this session (5.3.5), then actually run: found and fixed a
+   > real gap (`game_rand`, the engine's own RNG, was never pinned by
    > `fixed_rng_seed` — fixed), pushing the divergence from turn 2 to
-   > turn 3 — progress, not a resolution. See 5.3.6.
+   > turn 3 — progress, not a resolution.
+   >
+   > **Closed by decision (2026-07-16), not resolved — see
+   > `IMPLEMENTATION_DETAILS.md` 5.3.6's closing note.** The full-trajectory
+   > determinism chase this whole sub-section describes is dropped: item
+   > (d)'s acceptance criterion no longer depends on it (changed to real
+   > shadow mode, item b), and chasing engine-internal nondeterminism
+   > further is out of this project's charter (engine debugging, not
+   > AI porting). What the work permanently bought: `fixed_rng_seed` +
+   > post-load `game_rand_restore()` give **single-turn** reproducibility
+   > (confirmed: turn 1 *and* turn 2 byte-identical across launches before
+   > this fix pushed the residual divergence to turn 3) — exactly the
+   > prerequisite M6 (movement) will need for its own windowed determinism
+   > method (reload the same autosave twice, compare one turn — not a full
+   > trajectory). Not wasted, re-purposed. The turn-3 mystery itself is
+   > parked, not forgotten — 5.3.6 has the resume point.
    >
    > **Honest framing (external review, 2026-07-15): item (a)'s own
    > definition — "one real unattended all-AI run" — has still never
@@ -932,12 +946,13 @@ a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
    > actual bottleneck.
    >
    > **Also still open, none blocking:** secret-project completion down to
-   > one click (was two) via `minimal_popups`, not fully solved; the
-   > turn-2+ RNG divergence (now tracked under gate item (d), which it
-   > blocks — see there, not here).
+   > one click (was two) via `minimal_popups`, not fully solved. The
+   > turn-2+ RNG divergence is **closed by decision (2026-07-16)** — no
+   > longer tracked as blocking anything; see item (d) and
+   > `IMPLEMENTATION_DETAILS.md` 5.3.6.
 
 b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
-   five hand-rolled per-hook mismatch-logging blocks (`src/tech.cpp`,
+   hand-rolled per-hook mismatch-logging blocks (`src/tech.cpp`,
    `src/faction.cpp` x2, `src/build.cpp` x3) with the actual
    `lua_shadow`-gated generic wrapper from Phase 5.1, instead of deleting
    the temporary code once each is separately declared "done" — one
@@ -949,38 +964,65 @@ b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
    instead of a real comparison) — fix the contract once, here, rather
    than carrying two hook-shape generations forward into shadow mode.
 
+   > **Status (2026-07-16): done, not yet exercised live.**
+   > `lua_ai_shadow_call`/`lua_ai_shadow_check` (`src/luaai.h`/`.cpp`) is
+   > the one generic mechanism, gated on `conf.lua_shadow`
+   > (`lua_shadow=0`: returns immediately, no Lua call, no RNG state
+   > touched — zero overhead beyond the flag check). Snapshots
+   > `game_rand_state()`/`random_state()` before the Lua call, restores
+   > both after (the `game_rand_restore()` pair 5.3.6 added), and records
+   > the Phase 5.3.5 draw-count deltas for the log line — implements
+   > Plan 5.1's Class 1/2 procedure exactly. All seven existing hooks
+   > (`mod_tech_val`/`mod_tech_ai`/`mod_social_ai`/`mod_wants_to_attack`/
+   > `find_proto`/`select_colony`/`select_combat`) migrated off their
+   > hand-rolled blocks onto it. Typed-descriptor refactor:
+   > `lua_ai_hook` gained an `out_count` parameter (1 = single number,
+   > unchanged for every existing hook; >1 = a 1-indexed Lua table) —
+   > closes the 4.9 gap: `facility_score`/`governor_priorities` are now
+   > hooked too (`src/plan.cpp`), via thin marshalling adapters
+   > (`lua/ai/build.lua`) that flatten/unflatten `WItem`'s 5 fields in
+   > its declared order, since the underlying Lua implementations keep
+   > their natural named-table interface for any future internal caller.
+   > Both presets rebuild clean; Lua files pass `luajit loadfile`
+   > syntax checks. **Not yet exercised in an actual `lua_shadow=1`
+   > session** — that's manual follow-up, same as every prior C++ change
+   > this project has landed without immediate in-game verification.
+
 c. **Golden traces (Phase 5.2), starting with the two functions currently
    "validated by inspection" only** — `governor_priorities` and
    `facility_score` (`IMPLEMENTATION_DETAILS.md` 4.9) — since they have no
    dual-run seam at all today and are therefore the least-validated code
    in the port so far, not the most.
 
-d. **All five ported domains re-validated on the harness**, per each
-   module's actual "Done when" (Phase 4.4): 3+ distinct saves/maps plus 1
-   new game with a fixed seed, **including at least one game where
-   `rule_psi` factions exist** (an under-exercised branch class across
-   every dual-run session so far). Only then formally close M4 and
-   porting-order items 1, 2, 2b, and 3-partial (the `find_proto`/
-   `select_colony`/`select_combat`/`unit_score` slice — not the
+d. **All five ported domains re-validated on the harness, by REAL shadow
+   mode (item b), not by trajectory comparison.**
+   **Acceptance criterion changed (2026-07-16, by decision — see
+   `IMPLEMENTATION_DETAILS.md` 5.3.6's closing note for the full
+   rationale):** zero `lua_shadow=1` divergences, at the class-appropriate
+   level, over long autoplay runs on **3+ distinct saves/maps, including
+   at least one game where `rule_psi` factions exist** (an
+   under-exercised branch class across every dual-run session so far).
+   **No longer** "byte-identical `state_hashes.log` across two same-seed
+   runs" — that determinism prerequisite is dropped, not deferred (see
+   below). Only then formally close M4 and porting-order items 1, 2, 2b,
+   and 3-partial (the `find_proto`/`select_colony`/`select_combat`/
+   `unit_score`/`facility_score`/`governor_priorities` slice — not the
    still-unfinished `select_build` itself).
-
-   > **Still blocked (2026-07-15), but narrowed — see
-   > `IMPLEMENTATION_DETAILS.md` 5.3.6.** This item's whole method is a
-   > systemic state-hash comparison at equivalence levels 3-5
-   > (per-phase/per-turn/N-turn hashes, plan 5.3) — but two launches of
-   > the **same binary**, same save, same pinned seed still diverge
-   > before any port-fidelity question even enters the picture, so a
-   > mismatch between two harness runs still can't be attributed to a
-   > Lua-port bug versus this pre-existing noise. Progress: the root-cause
-   > run (5.3.5's diagnostics, actually run) found the engine's own
-   > `game_rand` was never pinned by `fixed_rng_seed` — fixed
-   > (`game_rand_restore()` right after save load), confirmed live to
-   > push the divergence point from **turn 2 to turn 3**. Turn 3's
-   > divergence itself localized to a specific event (an extra "Unity
-   > Rover" pod-opening outcome, faction 1) but not root-caused — per
-   > this session's own instructions, not chased further once localized.
-   > Still not meaningful for item (d) as stated until turn-3+ is also
-   > resolved or bounded.
+   >
+   > **Why per-call shadow comparison is the right acceptance test, and
+   > trajectory comparison isn't:** shadow mode compares Lua against C++
+   > on the *same call, same inputs, same turn* — it needs no
+   > cross-launch determinism at all, since both sides run inside the
+   > same process invocation. It is strictly stronger evidence of port
+   > fidelity than "did two separate processes end up in the same state
+   > after N turns", which conflates two different questions (does the
+   > port match C++? does the engine reproduce itself?) into one signal
+   > that can't tell them apart when it fails — exactly the problem
+   > 5.3.4-5.3.6 ran into. Full history of the abandoned chase (turn-2/
+   > turn-3 ambient nondeterminism, `fixed_rng_seed`, `game_rand_restore`)
+   > is preserved in `IMPLEMENTATION_DETAILS.md` 5.3.4-5.3.6 — closed by
+   > decision, not resolved; see there for what to do if it ever matters
+   > again (M6).
 
 e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
    (Phase 4.4/6) — needed before any upstream merge is even attempted, and

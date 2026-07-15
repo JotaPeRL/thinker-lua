@@ -1486,6 +1486,108 @@ see plan 5.1 (decision traces in separate runs + determinism harness). Log
 format: one line per divergence with function, args, both results and RNG
 draws consumed — greppable, diffable.
 
+### 5.1.1 Shadow mode implemented (2026-07-16) — Consolidation gate item b, done; not yet exercised live
+
+Replaced the sketch above (and every hand-rolled per-hook dual-run block
+it was standing in for) with the real thing: two functions in
+`src/luaai.h`/`.cpp`, `LuaShadowCall lua_ai_shadow_call(name, out_count,
+args)` and `void lua_ai_shadow_check(name, shadow, cpp_out, out_count)`,
+called in pairs at each hook site — `_call` before the C++ body runs,
+`_check` once the C++ result is known. Implements Plan 5.1's Class 1/2
+procedure exactly: `_call` returns immediately with `active=false` (no
+Lua call, no RNG state touched) when `conf.lua_shadow` is 0 — the "zero
+overhead beyond the flag check" requirement; when 1, it snapshots
+`game_rand_state()`/`random_state()`, resolves and calls the hook exactly
+like `lua_ai_hook()` would, restores both streams (so the caller's own,
+about-to-run C++ computation sees the RNG exactly as if the shadow call
+never happened), and records the Phase 5.3.5 draw-count deltas
+(`g_game_rand_draws`/`g_mod_rng_draws`) for the log line. `_check`
+compares `shadow.out[0..out_count-1]` against the caller's own result and
+logs one line per divergence (`lua/cpp <hook> mismatch: args=[...]
+lua=[...] cpp=[...] rng_draws: game=N mod=N`) via `lua_logf` (not
+`debug()` — this file's own convention throughout, and it means mismatch
+lines now land in `lua.log` too, not just `debug.txt`-only builds).
+
+**Typed hook-descriptor refactor, same pass.** `lua_ai_hook` gained an
+`out_count` parameter: `1` means "a single Lua number", unchanged for
+every hook written before this session (`mod_tech_val`, `mod_tech_ai`,
+`mod_social_ai`, `mod_wants_to_attack`, `find_proto`, `select_colony`,
+`select_combat` all pass `1`, zero Lua-side changes needed); `>1` means
+"a 1-indexed Lua table of `out_count` numbers". One function, not a
+family of `_i`/`_ii`/`_witem` variants — the plan's explicit rule (4.1)
+held. This is what makes `facility_score`/`governor_priorities` hookable,
+closing the gap 4.9 left open (`WItem` is 5 ints; the old int-in/
+int-result-out contract couldn't express a struct input, let alone a
+struct output).
+
+**`facility_score`/`governor_priorities` hooked** (`src/plan.cpp`):
+- `facility_score(FacilityId item_id, WItem& Wgov)`: args flattened as
+  `{item_id, Wgov.AI_growth, Wgov.AI_tech, Wgov.AI_wealth, Wgov.AI_power,
+  Wgov.AI_fight}` (`WItem`'s declared field order, `engine.h`), `out_count=1`.
+- `governor_priorities(BASE& base, WItem& Wgov)`: `void`, output-only —
+  `out_count=5`, same field order. Needed `base_id` for the Lua side
+  (which re-fetches `BASE` via FFI, doesn't take a raw reference) but the
+  function's own signature only has `BASE&` — recovered via pointer
+  arithmetic, `int base_id = &base - Bases;`, valid because both call
+  sites (`build.cpp`) always pass a `Bases[]` element directly.
+- **Lua-side adapters, not a signature change to the real functions**
+  (`lua/ai/build.lua`): `facility_score_hook`/`governor_priorities_hook`
+  are thin marshalling functions between the C side's flat-int
+  convention and `facility_score`/`governor_priorities`'s own named-table
+  `WItem` interface (`{AI_growth=.., AI_tech=.., ...}`), which stays
+  exactly as 4.9 wrote it. Same precedent as `lua/api/faction.lua`'s
+  `models_to_cdata`: marshal at the boundary, keep the natural
+  representation everywhere else — a future internal Lua caller (once
+  `select_build` is ported and calls these two directly) gets the
+  convenient named-table interface, not the hook's flat-array one.
+  Registered in `lua/ai/init.lua` as `facility_score`/
+  `governor_priorities` (the hook names, not the underlying Lua function
+  names — `build.facility_score`/`build.governor_priorities` remain the
+  real implementations).
+
+**All seven pre-existing hooks migrated.** `mod_tech_val`/`mod_tech_ai`
+(`tech.cpp`), `mod_social_ai`/`mod_wants_to_attack` (`faction.cpp`),
+`find_proto`/`select_colony`/`select_combat` (`build.cpp`) — every
+hand-rolled `report_and_return` lambda or inline mismatch check replaced
+by the `_call`/`_check` pair, same call-site shape (the project's
+established "1-3 line seam" convention held), backed by shared
+infrastructure instead of copy-pasted `debug()` format strings. The
+manual RNG snapshot/restore some of these carried (`mod_tech_ai`,
+`find_proto`, `select_colony`, `select_combat` — the ones known to
+consume RNG) was removed: `lua_ai_shadow_call` now does this
+unconditionally for every hook, regardless of whether that specific hook
+is known to touch RNG, which is both simpler and more robust (no
+per-hook classification to keep correct as hooks evolve). Two
+non-AI-decision hooks (`vehicle_counts_check`, `turn_state_hash`) kept
+using plain `lua_ai_hook` directly (`out_count=1`) — no shadow
+comparison needed, they're diagnostics with no "C++ equivalent result"
+to compare against.
+
+**`conf.lua_shadow`** (`src/main.h`/`docs/thinker.ini`) was already wired
+as a config option since Phase 2B but documented as "reserved... no-op
+for now" — it does something now; comments updated in both places.
+
+**Sanity-checked, not exercised live.** Both presets (`ninja-debug`,
+`ninja-develop`) rebuild clean throughout (checked after every file, not
+just at the end); every touched/new Lua file
+(`lua/ai/build.lua`, `lua/ai/init.lua`) passes a native-`luajit`
+`loadfile` syntax check. **Not yet done:** an actual `lua_shadow=1`
+session — confirm `register_hooks: 11 hook(s) registered` (up from 9:
+the seven original hooks + `vehicle_counts_check`/`turn_state_hash`,
+plus `facility_score`/`governor_priorities` now), confirm mismatch lines
+(if any) look sane, confirm `lua_shadow=0` really does add no measurable
+overhead. This is the Consolidation gate item (a)-style split: mechanism
+built and statically verified this session, in-game exercise is the next
+session's manual follow-up.
+
+**Files touched:** `src/luaai.h`/`.cpp` (`out_count` param, `LuaShadowCall`,
+`lua_ai_shadow_call`/`lua_ai_shadow_check`), `src/tech.cpp`,
+`src/faction.cpp`, `src/build.cpp`, `src/game.cpp` (`out_count` added to
+the two non-shadow hook calls), `src/plan.cpp` (two new hook seams),
+`lua/ai/build.lua` (two new adapters), `lua/ai/init.lua` (two new
+registrations), `src/main.h`/`docs/thinker.ini` (`lua_shadow` comment
+update).
+
 ### 5.2 Golden traces and out-of-game tests
 
 - Instrument the C++ side (debug build) to emit JSON fixtures per function:
@@ -2318,20 +2420,51 @@ original finding (single-player pod-related content/outcomes are order-
 and history-dependent) but now narrowed to a specific turn, faction, and
 event type instead of "somewhere in turn 2's processing."
 
-**Net effect on the consolidation gate:** real, measurable progress
-(divergence pushed one full turn later, one genuine bug fixed using
-existing infrastructure) but **item (d) stays blocked** — the acceptance
-criterion (byte-identical `state_hashes.log` for the full run) was not
-met. Not a regression from 5.3.4/5.3.5's status, a narrowing of it.
+**Net effect at the time:** real, measurable progress (divergence pushed
+one full turn later, one genuine bug fixed using existing infrastructure)
+but item (d) as then stated stayed blocked — the acceptance criterion
+(byte-identical `state_hashes.log` for the full run) was not met. Not a
+regression from 5.3.4/5.3.5's status, a narrowing of it.
 
 **Files touched:** `src/game.cpp` (`mod_load_daemon`, one
 `game_rand_restore` call). Both presets rebuild clean.
 
-**Not yet done — pick up here:** find why turn 3/faction 1's Unity Rover
-event differs despite identical RNG draw counts going in — the `veh_init`/
-`enemy_move`/`set_move_to` lines around it (`debug.txt`) are the starting
-point, not the six-primitive dialog funnel or anything already covered by
-this project's existing traces.
+**Closed by decision (2026-07-16) — full-trajectory determinism dropped
+as gate item (d)'s prerequisite, not resolved.** Rationale: per-call
+shadow-mode comparison (5.1.1, item b) is strictly stronger evidence of
+port fidelity than trajectory comparison, and needs no cross-launch
+determinism at all — both sides run inside the same process invocation,
+same call, same turn. The only future consumer of trajectory-style
+comparison this project has is movement (M6), which per its own
+performance/complexity profile will use a **windowed** method instead:
+reload the same autosave twice, compare exactly one turn — not a full
+N-turn trajectory. That windowed method's prerequisite is **single-turn**
+reproducibility, which this session's work already delivers: turn 1 and
+turn 2 came back byte-identical across launches once both
+`fixed_rng_seed` and `game_rand_restore()` were in place (the pre-fix
+baseline only had turn 1). Chasing engine-internal nondeterminism further
+is also, on reflection, engine debugging rather than AI porting — outside
+this project's charter (see `CLAUDE.md`'s scope). Net: the RNG-pinning
+work is not wasted, it's re-purposed from "prove two processes reach the
+same state" (dropped) to "prove one save reloads deterministically for
+one turn" (M6's actual need, already met).
+
+**Resume point, only if M6's windowed method fails for a reason that
+traces back to this:** two discriminating tests were proposed (external
+review) and deliberately **not run** this session —
+1. Binary-diff the turn-2 autosaves between runs E and F (`runs/
+   determinism-save/`, if still present, or a fresh same-seed pair) —
+   confirms whether the state itself is identical at the point the
+   divergence starts, independent of the state-hash mechanism.
+2. Repeat the same-seed pair again (a third and fourth run) and see
+   whether the divergence point (turn 3 this session) wanders to a
+   different turn, or stays put — wandering would point at genuine
+   nondeterminism (timing, uninitialized memory, ASLR-dependent container
+   iteration); a stable turn 3 every time would point at something more
+   mundane and reproducible, worth a real look.
+Do not restart general-purpose determinism-chasing from here without a
+concrete M6 trigger — this section's job now is to be found quickly if
+that trigger happens, not to be worked proactively.
 
 ### 5.4 Performance instrumentation
 

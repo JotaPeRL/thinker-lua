@@ -232,7 +232,10 @@ struct Config {
     int social_ai = 1;
     int social_ai_bias = 10;
     int lua_ai = 1;
-    int lua_shadow = 0; // reserved for Phase 5 shadow mode; no-op for now
+    int lua_shadow = 0; // Phase 5.1 shadow mode: compare Lua vs C++ per
+        // hook, log divergences, C++ always governs (src/luaai.h's
+        // lua_ai_shadow_call/lua_ai_shadow_check). 0 = zero overhead
+        // beyond this flag check -- no Lua call, no RNG state touched.
     int lua_strict = 0;
     int autoplay = 0; // Phase 5.3 spike: bypass modal popups, log to autoplay.log
     // Phase 5.3 determinism harness: 0 (default) = seed the mod's own RNG

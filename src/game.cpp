@@ -1018,7 +1018,7 @@ void __cdecl mod_turn_upkeep() {
     // same "reuse the dispatch plumbing for its side effect" pattern as
     // build.cpp's vehicle_counts_check seam.
     int lua_state_hash_dummy;
-    lua_ai_hook("turn_state_hash", &lua_state_hash_dummy, {*CurrentTurn});
+    lua_ai_hook("turn_state_hash", &lua_state_hash_dummy, 1, {*CurrentTurn});
     debug("turn_upkeep %d bases: %d vehs: %d\n", (*CurrentTurn)+1, *BaseCount, *VehCount);
     snprintf(ThinkerVars->build_date, 12, MOD_DATE);
     if (*CurrentTurn == 0) {
