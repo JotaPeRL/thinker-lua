@@ -7,9 +7,14 @@ single-player AI development easier. Lua is a client of a versioned Thinker
 API — FFI may implement parts of it, but is not itself the API. Engine bug
 fixes, rendering, mapgen, UI and launcher stay in C++ and follow upstream.
 
-Read `IMPLEMENTATION_PLAN.md` (roadmap, phases, status) and
-`IMPLEMENTATION_DETAILS.md` (tactical, code-grounded notes per phase) before
-starting any work. Update phase status in the plan as work completes.
+Read `IMPLEMENTATION_PLAN.md` (roadmap, phases, normative requirements, one-line
+status per item) and `IMPLEMENTATION_DETAILS.md` (tactical, code-grounded
+reference: scope, field/enum catalogs, resume points) before starting any work.
+`DEVELOPMENT_DIARY.md` is chronological session history (bugs found, dead
+ends, decision rationale) — read only when the "why" behind a specific past
+decision matters; it is not needed to resume day-to-day work. Update phase
+status in the plan as work completes; put narrative/session detail in the
+diary, not the plan.
 
 ## Build, deploy, run (Arch Linux + Wine)
 

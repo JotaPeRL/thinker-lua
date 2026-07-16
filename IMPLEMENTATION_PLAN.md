@@ -1,7 +1,11 @@
 # Implementation Plan — Thinker AI in Lua (rev 2)
 
-> Tactical, code-grounded notes for executing each phase live in
-> `IMPLEMENTATION_DETAILS.md` — read both before starting work on a phase.
+> This file is normative: what's required, and one-line status per item.
+> Tactical, code-grounded reference (scope, field/enum catalogs, resume
+> points) lives in `IMPLEMENTATION_DETAILS.md` — read both before starting
+> work on a phase. Session-by-session history (bugs found, dead ends,
+> decision rationale) lives in `DEVELOPMENT_DIARY.md` — read only when the
+> "why" behind a past decision matters, not needed to resume work.
 
 Goal: extract Thinker Mod's deterministic AI (currently written in C++ inside
 `thinker.dll`) into Lua scripts executed by an interpreter embedded in the DLL,
@@ -131,77 +135,9 @@ to Lua (see Phase 4.3).
 
 ## Phase 1 — Build on Arch Linux + running via Wine
 
-> **Status: ✅ completed (2026-07-10)** — `develop` and `debug` builds compile
-> cleanly (mingw GCC 16.1.0, CMake 4.3.4, Ninja 1.13.2); GOG game installed at
-> `~/.wine-smac/drive_c/Games/SMAC` (terranx.exe v2.0, SHA-1 confirmed);
-> `tools/deploy.sh` created; game launches normally via Wine with the mod loaded.
-
-The project already supports mingw-w64 i686 cross-compile via CMake
-(`CMakeLists.txt` hardcodes `i686-w64-mingw32-g++`; presets in
-`CMakePresets.json`).
-
-### Day-to-day commands (validated)
-
-```sh
-# Develop build (optimized, statically linked)
-cmake --preset ninja-develop            # configure (first time)
-cmake --build --preset ninja-develop    # artifacts in build/develop/
-
-# Debug build (BUILD_DEBUG: dev shortcuts Alt+D/M/V, verbose debug.txt)
-cmake --preset ninja-debug              # configure (first time)
-cmake --build --preset ninja-debug      # artifacts in build/debug/
-
-# Deploy to the game folder (copies dll/exe, modmenu.txt, basenames/;
-# the debug build also copies the mingw runtime DLLs)
-tools/deploy.sh develop                 # or: tools/deploy.sh debug
-
-# Launch the game
-WINEPREFIX=~/.wine-smac wine ~/.wine-smac/drive_c/Games/SMAC/thinker.exe -windowed
-```
-
-### 1.1 Toolchain
-
-```sh
-sudo pacman -S --needed mingw-w64-gcc cmake ninja wine
-```
-
-Arch-specific notes:
-
-- Arch's `mingw-w64-gcc` package provides both triplets, including
-  `i686-w64-mingw32-g++` — confirm with `i686-w64-mingw32-g++ --version`.
-- `cmake_minimum_required(VERSION 3.31)` — fine, Arch ships a recent CMake.
-- Arch's Wine runs 32-bit binaries (WoW64/multilib). Enable `[multilib]` in
-  `pacman.conf` if not already enabled (also needed to build LuaJIT's host
-  tools, Phase 2).
-
-### 1.2 Build
-
-Results observed in the actual build:
-
-- Arch's mingw GCC 16.1.0 compiles both presets **with zero warnings**.
-- Arch's mingw links against **UCRT** (`api-ms-win-crt-*` imports), unlike the
-  msvcrt toolkit mentioned in upstream `Technical.md`. Transparent under Wine
-  (built-in ucrtbase) and on Windows 10+; it would only break on XP.
-- The `debug` build is **not static** (`-static` only applies to
-  develop/release): it depends on `libgcc_s_dw2-1.dll`, `libstdc++-6.dll` and
-  `libwinpthread-1.dll`, copied from `/usr/i686-w64-mingw32/bin/` by
-  `deploy.sh`.
-
-### 1.3 Installation and testing under Wine
-
-How it was done (prefix at `~/.wine-smac`, game at `drive_c/Games/SMAC`):
-
-1. Arch's Wine ≥ 11 is **WoW64-only**: `WINEARCH=win32` is no longer supported.
-   Use a default prefix — 32-bit binaries run via WoW64 normally:
-   `WINEPREFIX=~/.wine-smac wineboot -u`.
-2. GOG installer (Inno Setup) in silent mode; verify `terranx.exe` v2.0
-   (SHA-1 `4b19c1fe3266b5ebc4305cd182ed6e864e3a1c4a` — confirmed).
-3. Deploy with `tools/deploy.sh [develop|debug]`. The mod requires
-   `docs/modmenu.txt` in the game folder and uses `docs/basenames/`;
-   `deploy.sh` copies both.
-4. Launch and validate (done): game opens in windowed mode, mod loaded, Alt+T
-   works. `WINEDEBUG=-all` for performance; the GOG `1.1_pracx_ddraw` release
-   ships `ddraw.dll` and PRACX in the folder — they did not interfere.
+**Status: ✅ completed (2026-07-10).** Day-to-day build/deploy/launch commands
+are in `CLAUDE.md`. Toolchain quirks, exact versions and Wine setup notes:
+`IMPLEMENTATION_DETAILS.md` "Phases 0–1".
 
 **Done when:** game runs via Wine with the locally compiled `thinker.dll`,
 Alt+T menu visible, a game playable for 50+ turns without crashing. ✅
@@ -255,20 +191,11 @@ make -C third_party/luajit/src HOST_CC="gcc -m32" \
 
 ### Phase 2A — Feasibility spike (gate for everything else)
 
-> **Status: ✅ completed (2026-07-13)** — LuaJIT pinned at
-> `3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3` (v2.1), builds clean on both
-> presets, deployed. Checklist items 1–7 verified in `lua.log` (init, host
-> reads, C→Lua call, contained error with traceback, per-turn calls). Item 9
-> (JIT off, then on) verified across two manual play sessions. **Item 8
-> relaxed:** no autoplay facility exists yet (`test.cpp`/`extra_setup()` is an
-> empty scaffold), so the 100+-turn run was not automated; validation instead
-> covered ~15 manually-played turns (turns 19–33) split across the JIT
-> off/on sessions with zero crashes or unexpected errors, judged sufficient
-> for this gate. LuaJIT is confirmed stable in-process under mingw
-> static-link + Wine; the spike's purpose (de-risking the interpreter choice)
-> is satisfied. Automated long-run autoplay remains open — see Phase 5.3's
-> `autoplay_turns=N` — and should be picked up before the Phase 5.3
-> determinism harness needs it, not blocking Phase 2B.
+**Status: ✅ completed (2026-07-13).** LuaJIT confirmed stable in-process
+under mingw static-link + Wine; checklist items 1–7 and 9 verified, item 8
+(100+ autoplayed turns) relaxed to manual play — no negative (project-ending)
+outcome. Details and exact verification evidence:
+`IMPLEMENTATION_DETAILS.md` 2.4.
 
 A disposable branch (or clearly marked experimental commits) containing **only**:
 
@@ -292,30 +219,11 @@ criterion, a negative answer ends the project cheaply.
 
 ### Phase 2B — Production runtime
 
-> **Status: ✅ completed (2026-07-13)** — `src/luaai.cpp/.h` rewritten from
-> the Phase 2A spike into the production lifecycle: `lua_ai`/`lua_shadow`/
-> `lua_strict` config options (`src/main.h`, `src/main.cpp`,
-> `docs/thinker.ini`, same 3-place pattern as `social_ai`); sandboxed VM
-> (`base`/`table`/`string`/`math`/`bit`, `io`/`os`/`debug`/`package` gated
-> behind `BUILD_DEBUG`); `math.random`/`randomseed` replaced with
-> error-raising stubs; deduplicated error logging keyed on
-> `(hook, turn, traceback)`; `lua_strict` policy (0/1/2); safe-point hot
-> reload on Alt+U (`src/gui.cpp`, sets a flag, applied at the top of the
-> next `mod_turn_upkeep`), with a generation counter. `lua/init.lua`
-> stripped of the Phase 2A spike fixtures (`spike_add`, `spike_error`,
-> `on_turn`, `host_current_turn`, `host_base_pop`) down to the sandbox
-> smoke test. In-game validation (manual play via Wine, `lua.log`
-> inspected): sandboxed init logs cleanly with no spike fixtures; a
-> deliberate `error()` in `init.lua` is contained, traceback-logged, and
-> deduplicated per turn (confirmed distinct at turn 44 and turn 50 across
-> two sessions); `lua_strict=1` logs the error once and then disables the
-> Lua runtime for the rest of the session without crashing. **Not
-> separately exercised:** `lua_ai=0` full bypass, the `io`/`os` sandbox
-> boundary in a `develop` (non-debug) build vs. a `debug` build, the
-> `math.random` stub, and same-turn (as opposed to cross-session) dedup —
-> these follow directly from code already reviewed and are low-risk;
-> accepted without a dedicated manual pass. `lua_shadow` remains wired but
-> inert until Phase 5.1.
+**Status: ✅ completed (2026-07-13).** `src/luaai.cpp/.h` implements the
+production lifecycle below (config options, sandboxing, error policy, dedup
+logging, safe-point hot reload); in-game validated (contained/deduplicated
+error, `lua_strict=1` session-disable). Implementation detail and what wasn't
+separately exercised: `IMPLEMENTATION_DETAILS.md` 2.5–2.8.
 - **Init:** a `lua_init()` in the new `src/luaai.cpp/.h`, invoked from a safe
   point after process startup is complete (e.g. lazily on the first hook call,
   or from an existing patched engine callback that runs post-init). `DllMain`
@@ -406,48 +314,13 @@ with a strict asymmetry between reads and everything else:
 
 ### 3.1 Low layer: generated cdefs and the host API
 
-> **Status: ✅ completed (2026-07-13)** — `tools/gen_ffi.cpp` compiles as a
-> native host binary (`g++ -m32`, not the project's `i686-w64-mingw32-g++`;
-> `sizeof`/`alignof`/`offsetof` are compiler-frontend values that don't need
-> the real target OS, and the startup validation below is the actual safety
-> net) and runs as a CMake build step producing `lua/ffi/types.lua`.
-> Includes only the portable, `#pragma pack(1)` struct headers
-> (`engine_types.h`/`engine_base.h`/`engine_veh.h`), not `engine.h` (avoids
-> its `<windows.h>` dependency); a small block of stub `extern` declarations
-> satisfies the inline C++ methods those headers mix in with their fields
-> (never called, only compiled). Field cdef types are derived from each
-> field's real declared type via a template (`CTypeName`/`FieldShape`), not
-> typed in by hand — this caught a real bug during implementation
-> (`CChassis::preq_tech` is `int16_t`, a hand-typed `"int32_t"` would have
-> produced a self-inconsistent cdef with no way to detect it before runtime).
-> Scoped to the tech-AI pilot's read surface (`Faction`, `MFaction`, `CTech`,
-> `CFacility`, `CReactor`, `CWeapon`, `UNIT`, `CChassis`, `Continent`,
-> `CRules`, `TechOwners`) per M3A — every generated `sizeof` cross-checked
-> against the existing hand-maintained `static_assert` table in
-> `engine.h:227-261` and matches exactly. Startup validation
-> (`lua/ffi/validate.lua`, run once from `init.lua`) asserts every
-> `sizeof`/`alignof`/`offsetof` via `ffi.*` and routes a mismatch through the
-> Phase 2B `lua_strict` error path. `LuaHostApi` (`src/luaai.h`) is a
-> minimal versioned struct — `api_version` plus `rand_game`/`rand_map` only;
-> wrapping the C++ helper functions the tech port will call
-> (`has_tech`/`is_human`/etc.) and re-exposing `UNIT`'s inline methods are
-> deferred to Phase 4, decided on demand as that code is written, per
-> `IMPLEMENTATION_DETAILS.md` 4.3. `game_rand_restore()` added to
-> `random.cpp`/`.h` next to `game_rand_state()` (Phase 5 shadow mode,
-> unused for now). `lua/api/cmath.lua` (`idiv`/`imod`) added. The sandbox
-> now opens `ffi` — caught a real LuaJIT quirk along the way:
-> `luaopen_ffi` (unlike `base`/`table`/`string`/`math`/`bit`) does not
-> self-register a global (`lib_ffi.c` comments "no global 'ffi' created!"
-> and returns the module table instead), so it needs its own 1-result open
-> call plus an explicit `lua_setglobal`, not the shared 0-result
-> `open_lib()` helper used for the other libraries. `package`/`require`
-> stays disabled outside debug builds as originally designed; the new
-> `lua/ffi/`, `lua/api/` modules load each other via `dofile` (base
-> library, always open) instead. All of the above validated in-game via
-> Wine (`lua.log`): clean layout validation, then
-> `rand.game(10)=7 rand.map(0,10)=7 cmath.idiv(-7,2)=-3 cmath.imod(-7,2)=-1`
-> — the `idiv`/`imod` values hand-verified against C truncating-division
-> semantics before the in-game run.
+**Status: ✅ completed (2026-07-13).** `tools/gen_ffi.cpp` generates
+`lua/ffi/types.lua` (cdefs + validation table) from the real engine headers,
+compiler-verified field types (caught a real `int16_t`/`int32_t` mismatch
+before runtime). Startup validation asserts every `sizeof`/`alignof`/
+`offsetof`. `LuaHostApi`/`cmath`/`rand` scoped to the tech-AI pilot per M3A,
+validated in-game. Full implementation notes (including a real LuaJIT `ffi`
+sandboxing quirk found along the way): `IMPLEMENTATION_DETAILS.md` 3.1–3.5.
 
 1. **cdef generator — generate from the compiler, not from parsing.** A small
    generator program (`tools/gen_ffi.cpp`) that `#include`s the same engine
@@ -507,32 +380,12 @@ with a strict asymmetry between reads and everything else:
 
 ### 3.2 High layer: idiomatic API
 
-> **Status: 🔨 narrowed slice done (2026-07-13)** — this section as written
-> below describes the full engine-wide `game`/`map`/`veh`/`base`/`path`/
-> `rules` API; per M3A's "do not build the full API up front" and a
-> deliberate scoping decision this session, only the slice
-> `mod_tech_val`/`mod_tech_ai` need was built: `lua/api/faction.lua`
-> (`is_human`, `has_treaty`, `climactic_battle`, `mod_wants_to_attack` +
-> ID-validated `Faction`/`MFaction` accessors), `lua/api/tech.lua`
-> (`has_tech`, `tech_level`, `tech_is_preq`, `mod_tech_avail` + accessors
-> for `CTech`/`CFacility`/`CReactor`/`CWeapon`/`CChassis`/`CArmor`/unit
-> prototypes, plus `proto_offense_value`/`proto_defense_value`/`proto_speed`
-> re-porting `UNIT`'s three inline methods dropped by field-only cdef
-> generation), `lua/api/map.lua` (`bad_reg` + a `Continent` accessor,
-> deliberately minimal — one function). `LuaHostApi` bumped to
-> `api_version=2` with the 9 new entries, all direct function-pointer
-> assignments (no trampolines — confirmed `extern "C"` is irrelevant for
-> same-TU pointer assignment, only `is_human`'s `bool` return needed its
-> own field type rather than a generic `int`, since C++ function-pointer
-> types don't implicitly convert). Also added `dofile_once` (`lua/init.lua`)
-> — a path-memoized loader closing a fragility flagged in the Phase 3.1
-> commit message, now load-bearing since `lua/ffi/types.lua` and
-> `lua/ffi/funcs.lua` gained real second/third callers this session.
-> Validated in-game: `faction.is_human(1)=false`,
-> `tech.get(0).AI_growth=2`, `map.bad_reg(0)=true`. `game`/`veh`/`base`/
-> `path`/live-tile access below remain undone — no consumer until
-> Phase 4's later porting-order items (social engineering, production,
-> movement) need them.
+**Status: 🔨 built on demand, per module, as each porting-order item needs
+it** (started 2026-07-13, per M3A's "do not build the full API up front").
+The full engine-wide `game`/`map`/`veh`/`base`/`path`/`rules` API described
+below is the target shape; actual coverage tracks the porting order (Phase
+4.2) and lags intentionally. Current coverage and file-level detail:
+`IMPLEMENTATION_DETAILS.md` 3.6 and the per-module sections under Phase 4.2.
 
 Thin Lua modules over the FFI reads + host API calls, with the semantics of the
 helpers already in `veh.h`/`base.h`/`map.h`:
@@ -630,127 +483,42 @@ Implementation notes:
 
 ### 4.2 Porting order (lowest risk to highest)
 
-> **Item 1 (research pilot) status: 🔨 in-game verified (2026-07-13), formal
-> validation still open.** `mod_tech_val`/`mod_tech_ai` ported 1:1 to
-> `lua/ai/tech.lua`, registered as Class 1 hooks via `lua/ai/init.lua` and
-> `luaai.cpp`'s registry (`register_hooks()`, `lua_ai_hook()`,
-> `LuaHostApi` bumped to `api_version=3` with `revised_tech_cost`/
-> `tech_balance_enabled` added). Both hooks in `src/tech.cpp` now carry
-> **temporary** dual-run instrumentation: every call runs both Lua and C++,
-> C++'s value still governs, and a mismatch is logged
-> (`lua/cpp mod_tech_val mismatch: ...` / `lua/cpp mod_tech_ai mismatch: ...`)
-> — this is a manual stand-in for Phase 5.1's shadow mode, not shadow mode
-> itself. `mod_tech_ai` additionally consumes the map RNG (`random_get`,
-> once per available tech via Lua's `rand.map()`); its dual-run follows the
-> plan's 5.1 Class-1 shadow procedure precisely — snapshot `random_state()`
-> before the Lua run, `random_reseed()` back to it before the real C++ run —
-> so comparing both sides doesn't burn the RNG stream twice or desync it.
-> Verified via `lua.log`/`debug.txt` across two Wine play sessions (the
-> second one after adding `mod_tech_ai`'s comparison): both sessions show
-> `register_hooks: 2 hook(s) registered`, both hooks logged
-> `invoked and handled` (confirming they actually ran, not just registered),
-> **zero `mismatch` lines in either session**, no
-> `error in 'mod_tech_val'`/`'mod_tech_ai'` lines. **Not yet done:**
-> multi-session/multi-faction coverage beyond these two sessions (many
-> `tech_val` branches — `climactic_battle`, `tech_balance_enabled`,
-> weapon-preq loops — may be under-exercised so far); the real Phase 5.1/
-> 5.2 machinery (golden traces, `lua_shadow` flag) this instrumentation
-> stands in for; removing the temporary dual-run code once formal
-> validation lands; provenance entries in `docs/LUA_PORTING.md` (Phase 6).
-
 Each item follows the same cycle: port 1:1 → golden traces pass (5.2) → shadow
 mode per class (5.1) until divergences reach zero at the applicable level →
 enable Lua by default on the branch → next.
 
 1. **Pilot — research AI** (`tech.cpp`: `mod_tech_val` scoring, `mod_tech_ai`;
    ~400 relevant loc). Pure query, small, easy to compare. Validates the whole
-   pipeline (hook, FFI reads, host API, RNG, traces, shadow). See status note
-   above.
+   pipeline (hook, FFI reads, host API, RNG, traces, shadow).
+
+   **Status: 🔨 pilot-proven (2026-07-13), zero mismatches over two manual
+   sessions; not yet formally closed** (real Phase 5.1/5.2 machinery —
+   golden traces, `lua_shadow` — still stood in for by temporary dual-run
+   instrumentation at that point). Superseded by the Consolidation gate
+   below, which closes this formally. Detail: `IMPLEMENTATION_DETAILS.md`
+   4.2's seam table and Phase 5 sections.
 2. **Social engineering** (`faction.cpp`: `mod_social_ai` scoring,
    `mod_wants_to_attack`). Transactional/pure, once per faction per turn.
 
-   > **Status: ✅ in-game verified clean (2026-07-14).** Two Wine play
-   > sessions (turns 9-13 and turns 80-89, all 7 AI factions, ~145
-   > `mod_social_ai` calls combined, covering both `pop_boom` 0/1 and both
-   > `sf=-1`/a real proposed-and-applied social-model change) — zero `lua/cpp
-   > mod_social_ai mismatch` lines in either. See `IMPLEMENTATION_DETAILS.md`
-   > 4.5 for the numbers. `mod_wants_to_attack` (item 2b) also in-game
-   > verified clean now (123 calls, turns 90-92, zero mismatches, both
-   > outcomes exercised) — see `IMPLEMENTATION_DETAILS.md` 4.6. Porting-order
-   > item 2 and its 2b follow-up are both done in this sense; temporary
-   > dual-run instrumentation still in place pending real Phase 5.1 shadow
-   > mode, same as M4/tech.
-   > `social_score()` + `mod_social_ai`'s selection loop ported to
-   > `lua/ai/social.lua`, registered as a Class-2-shaped `mod_social_ai`
-   > hook with the same temporary dual-run pattern as item 1 (M4); the
-   > `pop_boom`/`want_pop` base-iteration stays in C++ (no `BASE` struct in
-   > the FFI yet), passed in as a plain int hook argument. The proposal
-   > (category + model choice) is a packed int (`sf*4+sm2`, or `-1` for "no
-   > change"), so `lua_ai_hook`'s existing int-args/int-result signature
-   > needed no changes. `mod_wants_to_attack` deferred to follow-up item
-   > **2b** (large, self-contained, ~180 loc) — now implemented, see
-   > `IMPLEMENTATION_DETAILS.md` 4.6. `LuaHostApi`
-   > bumped to `api_version=4` with 11 new entries (`social_calc`,
-   > `society_avail`, `social_upheaval`, `has_project`, `has_free_facility`,
-   > `has_aircraft`, `mineral_factor`, `un_charter`, `defense_modifier`,
-   > `keep_fungus`, `social_ai_bias`). `tools/gen_ffi.cpp` gained a 2D-array
-   > `FieldShape` specialization (`Faction::social_psych` is `int32_t[8][9]`,
-   > flattened to a `[72]` cdef field, indexed `i*9+j` from Lua). Full
-   > detail, including corrections to the original scope found while
-   > implementing (a few fields/enums it missed, a few it over-listed), is
-   > in `IMPLEMENTATION_DETAILS.md` 4.5 — read that before touching this
-   > again. Both build presets compile clean; every touched Lua file passed
-   > a native-`luajit` syntax check.
+   **Status: ✅ in-game verified clean (2026-07-14)**, zero mismatches
+   across ~145 `mod_social_ai` calls and 123 `mod_wants_to_attack` calls
+   (item 2b). `LuaHostApi` bumped to `api_version=4`. Formally closed by the
+   Consolidation gate below. Detail: `IMPLEMENTATION_DETAILS.md` 4.5–4.6.
 3. **Production and plans** (`build.cpp` + `plan.cpp`): `governor_priorities`,
    `facility_score`, `unit_score`/`find_proto`, `select_colony`/`select_combat`,
    `select_build`, `find_project`, `mod_base_hurry`, then `plans_upkeep`,
    `design_units`, `former_plans`. The heart of the single-player challenge.
 
-   > **Status: first and second slices ✅ in-game verified clean
-   > (2026-07-14).** First slice (`unit_score`+`find_proto`,
-   > `lua/ai/build.lua`): 769 calls over turns 93-100, all 7 AI factions,
-   > zero mismatches — `IMPLEMENTATION_DETAILS.md` 4.7. Second slice
-   > (`select_colony`+`select_combat`, same file): both hooked;
-   > `select_build` itself was surveyed and found too large (454 loc,
-   > ~45-item priority table, a `std::priority_queue`, ~57 distinct helper
-   > calls) to scope in one pass, so these two internal helpers were
-   > ported first instead, extending the helper library `select_build` will
-   > eventually need. First in-game run caught a real bug fast (`BASE.x`/
-   > `BASE.y` missing from the FFI since 4.7 — nothing had needed base
-   > coordinates until now); fixed, re-verified clean over turns 101-105,
-   > zero mismatches. Also switched `lua_strict` to `0` for iterative
-   > testing (a single hook error no longer kills the whole session's Lua
-   > AI). See `IMPLEMENTATION_DETAILS.md` 4.8. Third slice
-   > (`governor_priorities`+`facility_score`): implemented as plain
-   > unhooked library functions — neither fits `lua_ai_hook`'s int-in/
-   > int-out contract (one takes a struct input, the other returns a
-   > struct via out-param), so there's no dual-run seam possible for
-   > these two; validated by inspection only, see `IMPLEMENTATION_
-   > DETAILS.md` 4.9. **`select_build` itself: fully scoped**
-   > (`IMPLEMENTATION_DETAILS.md` 4.10 has the complete dependency catalog
-   > from the original 467-loc read: `VEH`'s first-ever exposure, ~50 new
-   > fields/enums/wrappers, a second `MAP`-touching loop needing the same
-   > opaque-wrapper treatment as 4.8's, confirmation that the
-   > `std::priority_queue` output mechanism needs no real port — a
-   > running-best tracker suffices, the float-arithmetic block that's a
-   > first for this project, and a recommended 4-stage implementation
-   > order).
-   >
-   > **Status superseded — this paragraph described 2026-07-14's step 1
-   > only, before that day's remaining work landed. Current state:** step 1
-   > (`VEH` + the vehicle-count loop) and step 2 (`push_item`/`has_retool`/
-   > `skip_facility`) are done and live-verified; step 3 (the `build_order`
-   > loop) has 4 sub-steps done and live-verified (the shared prologue;
-   > `DefendUnit`/`CombatUnit`'s early-return decision; the per-item base
-   > formula, complete for 14 of 38 facilities; 3 more of the remaining 24
-   > with a real branch, done). 17 of 38 facilities fully correct; step 4
-   > (wiring the real hook) is still open, along with 13 more
-   > facility-branch code blocks (21 facilities) and 7 more special
-   > unit-type branches. **Full detail and the actual resume point: the
-   > Consolidation gate's "Resuming after the gate" progress log, below —
-   > and `IMPLEMENTATION_DETAILS.md` 4.10.10 through 4.10.15.**
-   > `find_project`/`mod_base_hurry`/`plans_upkeep`/`design_units`/
-   > `former_plans` remain unsurveyed.
+   **Status: 🔨 in progress.** `unit_score`/`find_proto`,
+   `select_colony`/`select_combat`, `governor_priorities`/`facility_score`
+   are ✅ in-game verified clean and formally closed by the Consolidation
+   gate below (`IMPLEMENTATION_DETAILS.md` 4.7–4.9). `select_build` itself
+   (the final, largest piece) is mid-port: steps 1–2 and step 3's 4
+   sub-steps are done and live-verified, 17 of 38 facility branches fully
+   correct — see "Resuming after the gate" below for the exact resume
+   point and `IMPLEMENTATION_DETAILS.md` 4.10 for the full catalog.
+   `find_project`/`mod_base_hurry`/`plans_upkeep`/`design_units`/
+   `former_plans` remain unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +
@@ -798,406 +566,85 @@ metadata present; drift report clean at the pinned upstream commit.
 
 ---
 
-## Consolidation gate (2026-07-14)
+## Consolidation gate (2026-07-14, closed 2026-07-16)
 
-**Porting is frozen** — no more of `select_build` (stages 2-4), movement, or
-any later porting-order item — until the items below land, in this order.
-Five domains (research, social engineering, war decisions, and two
-production/plans slices) are ported and "in-game verified clean" in the
-session-record sense, but every one of them is validated only by temporary
-dual-run instrumentation over manual play sessions on a single game
-trajectory. None has met its module-level "Done when" (golden traces, real
-shadow mode, the 3-save + 1-new-game matrix). Accumulating a sixth and
-seventh ported-but-not-formally-validated domain on top of that debt makes
-the eventual validation pass strictly harder to attribute divergences in,
-for no benefit — this gate exists to pay that debt down before it grows
-further.
+**Was:** porting frozen — no more of `select_build` (stages 2-4), movement,
+or any later porting-order item — until items (a)-(e) below landed. Reason:
+five ported domains were "in-game verified clean" only by temporary dual-run
+instrumentation over manual play, none had met its module-level "Done when"
+(golden traces, real shadow mode, a multi-save matrix). Full rationale for
+opening the gate: `IMPLEMENTATION_DETAILS.md`'s Phase 5 intro.
 
-a. **Autoplay harness finished.** `autoplay_demote_human` retested (Phase
-   5.3.1 left this as "rebuilt and redeployed; retest pending" after fixing
-   the human-faction-exclusion bug), plus one real unattended all-AI run.
-   Termination is always an **external kill by the harness script**, never
-   an in-game exit: the per-turn state hash (below) gives an
-   externally-observable progress signal, and the existing
-   `autosave_interval=1` already makes every turn's state durable, so a
-   kill from outside loses nothing needed for diagnosis or resumption. The
-   previously deferred `autoplay_turns` internal-exit idea (auto-save-and-
-   `ControlTurnA`/`ControlTurnB`-exit from inside `mod_turn_upkeep`,
-   Phase 5.3) is **dropped** — external kill supersedes it, and it was
-   already flagged as poorly-understood.
+**Now: closed.** All five items done; porting resumed (see "Resuming after
+the gate" below). Session-by-session history of how each item was reached —
+including the abandoned cross-launch determinism chase and the autoplay
+harness bug hunts — lives in `DEVELOPMENT_DIARY.md` (2026-07-14 through
+2026-07-16 entries) and is cross-referenced from each `IMPLEMENTATION_
+DETAILS.md` section below; not repeated here.
 
-   > **Status (2026-07-15): retested for real, 4/4 clean runs, mostly
-   > done.** `tools/autoplay_run.sh` (`--no-xvfb`, real desktop — Xvfb
-   > itself still doesn't work on the dev machine, see
-   > `IMPLEMENTATION_DETAILS.md` 5.3.2's KNOWN GAP #2) ran 3 distinct new
-   > games plus a 4th with a recorded fixed seed (**15373264**), all
-   > `COMPLETED`, zero Lua errors, `state_hash` sequential throughout. Two
-   > real bugs found and fixed along the way: the watchdog was checking
-   > the wrong PID (`thinker.exe`'s launcher exits by design after
-   > spawning `terranx.exe`, not a crash — was misclassified as `CRASH`
-   > every run), and `autoplay_try_end_turn` (5.3.1, marked experimental)
-   > was **never once invoked** because the timer callback that calls it
-   > is normally only installed under an unrelated `smooth_scrolling`
-   > option, off by default — fixed, confirmed live: turns now advance
-   > with no manual End Turn. The six-primitive dialog-bypass catalog
-   > (5.3.1) was also found incomplete and corrected to nine (`X_pop`/
-   > `X_pop_2`/`X_pops` added — see `IMPLEMENTATION_DETAILS.md` 5.3.3 for
-   > why the original grep missed them).
-   >
-   > **Determinism (the fixed-seed run's actual purpose) attempted and
-   > only partially achieved — see `IMPLEMENTATION_DETAILS.md` 5.3.4.** A
-   > real gap surfaced along the way: the mod's own RNG
-   > (`random_reseed`/`map_rand`) was seeded from `GetTickCount()` on
-   > every process launch, independent of the save file — fixed with a
-   > new `fixed_rng_seed` option, confirmed working (two separate launches
-   > loading the same save now produce byte-identical `random_reseed`
-   > values and an identical turn-1 state hash). But turn 2 still diverges
-   > even with the seed pinned and the human's turn-1 actions deliberately
-   > reproduced — traced to single-player pod-opening drawing from the
-   > *main* sequential RNG stream (a `*MultiplayerActive`-only reseed
-   > exists but doesn't apply here), so its outcome depends on everything
-   > the other six AI-controlled factions already drew that turn, outside
-   > the human's control. Root cause not found — candidate is
-   > non-deterministic iteration somewhere in that turn-1 AI processing,
-   > not confirmed. **Correction (external review, 2026-07-15): this is
-   > NOT covered by the plan's "bit-exact only where achievable" framing**
-   > — that framing is about Lua-vs-C++ tolerance (different
-   > implementations of the same logic); this is the **same binary, same
-   > save, same pinned seed** diverging across two launches. That's ambient
-   > nondeterminism, not an equivalence-level question, and it makes gate
-   > item (d)'s systemic comparison (state hashes at equivalence levels
-   > 3-5) mathematically meaningless until fixed — you cannot tell port
-   > divergence from background noise. Diagnostics to root-cause it
-   > landed this session (5.3.5), then actually run: found and fixed a
-   > real gap (`game_rand`, the engine's own RNG, was never pinned by
-   > `fixed_rng_seed` — fixed), pushing the divergence from turn 2 to
-   > turn 3 — progress, not a resolution.
-   >
-   > **Closed by decision (2026-07-16), not resolved — see
-   > `IMPLEMENTATION_DETAILS.md` 5.3.6's closing note.** The full-trajectory
-   > determinism chase this whole sub-section describes is dropped: item
-   > (d)'s acceptance criterion no longer depends on it (changed to real
-   > shadow mode, item b), and chasing engine-internal nondeterminism
-   > further is out of this project's charter (engine debugging, not
-   > AI porting). What the work permanently bought: `fixed_rng_seed` +
-   > post-load `game_rand_restore()` give **single-turn** reproducibility
-   > (confirmed: turn 1 *and* turn 2 byte-identical across launches before
-   > this fix pushed the residual divergence to turn 3) — exactly the
-   > prerequisite M6 (movement) will need for its own windowed determinism
-   > method (reload the same autosave twice, compare one turn — not a full
-   > trajectory). Not wasted, re-purposed. The turn-3 mystery itself is
-   > parked, not forgotten — 5.3.6 has the resume point.
-   >
-   > **Honest framing (external review, 2026-07-15): item (a)'s own
-   > definition — "one real unattended all-AI run" — has still never
-   > happened.** All four rounds had the user manually clicking through:
-   > the New Game screen every time, one manual End Turn per Load (before
-   > the blink-timer fix, and even after it for the very first turn after
-   > a load), and — every session — recurring clicks for tech-discovery
-   > announcements and (before `minimal_popups`) secret-project
-   > completion. What's actually done is the **mechanism**: dialog bypass
-   > (nine primitives), demote-human, auto-End-Turn, the state-hash
-   > harness, PID tracking, all confirmed working in combination over
-   > several hours of AI-vs-AI play. What's **not** done is a run with
-   > zero human interaction from launch to completion. Two concrete,
-   > named sub-items close that gap, both **deferred to next session**:
-   >
-   > - **Harness menu bootstrap.** No mechanism exists to reach an
-   >   in-progress game without a human clicking New Game (or Load) at
-   >   least once. `tools/autoplay_run.sh --save FILE` forwards a save
-   >   path as a bare `wine` argument on the chance the engine honors it —
-   >   **presumed dead**, not just unverified: `cmd_parse()`
-   >   (`src/main.cpp`) only recognizes four flags
-   >   (`-smac`/`-native`/`-screen`/`-windowed`), nothing save-related, so
-   >   there's no reason to expect a bare path argument does anything.
-   >   Needs either a real load-by-path mechanism added to Thinker, or
-   >   input automation (`xdotool`-style) against the New Game screen —
-   >   not designed yet.
-   > - **Tech-discovery popup.** Confirmed live as the actual recurring
-   >   blocker in an otherwise-running all-AI session (not tech-discovery
-   >   "eventually", but every few turns) — the demoted faction is still
-   >   `MapWin->cOwner` after `autoplay_demote_human()` runs (that call
-   >   only clears the human *bit*, not this pointer), so `tech_achieved`
-   >   still treats it as the UI's owner faction for announcement
-   >   purposes. A preference-flag experiment (some `GamePreferences`/
-   >   `GameMorePreferences` bit might suppress the announcement, same
-   >   family as 5.3.1's `MPREF_AUTO_ALWAYS_INSPECT_MONOLITH` fix) is the
-   >   likely next move but **not attempted this session** — explicitly
-   >   out of scope, see 5.3.5.
-   >
-   > **Xvfb (KNOWN GAP #2) demoted from blocking to nice-to-have.**
-   > Re-attempted this session (5.3.5): higher screen depth/resolution,
-   > the GDI renderer, and disabling PRACX's `ddraw.dll` override, each
-   > alone and combined — none fixed it, still dies at the identical point
-   > every time, ruling out the original DirectDraw/PRACX hypothesis (a
-   > plain `wine notepad` survives fine under the same Xvfb, so it isn't
-   > Xvfb-vs-wine in general either). Given `--no-xvfb` on the real desktop
-   > already satisfies every run in this gate's validation matrix, and
-   > headless operation only starts to matter for *parallel* runs (a later
-   > concern, not this gate), Xvfb is no longer worth blocking on — pick
-   > it back up only if/when parallelizing validation runs becomes the
-   > actual bottleneck.
-   >
-   > **Also still open, none blocking:** secret-project completion down to
-   > one click (was two) via `minimal_popups`, not fully solved. The
-   > turn-2+ RNG divergence is **closed by decision (2026-07-16)** — no
-   > longer tracked as blocking anything; see item (d) and
-   > `IMPLEMENTATION_DETAILS.md` 5.3.6.
+a. **Autoplay harness finished** (real unattended all-AI runs, dialog
+   bypass, state-hash progress signal, external-kill termination). ✅ done
+   in the sense needed for this gate: 4/4 clean `--no-xvfb` runs on the real
+   desktop, nine-primitive dialog bypass, auto-End-Turn. **Two sub-items
+   explicitly deferred, non-blocking:** a harness menu-bootstrap mechanism
+   (no way to reach an in-progress game without one manual New-Game click),
+   and the tech-discovery popup (still requires manual clicks — root cause
+   identified, fix not attempted). Xvfb itself (headless launch) doesn't
+   work on the dev machine; demoted to nice-to-have since `--no-xvfb`
+   already covers this gate's validation matrix — only matters once
+   parallelizing runs becomes the actual goal. Detail: `IMPLEMENTATION_
+   DETAILS.md` 5.3.1–5.3.3, diary entries 2026-07-14/15.
+b. **Dual-run instrumentation promoted to real shadow mode**
+   (`lua_ai_shadow_call`/`_check`, gated on `conf.lua_shadow`), plus the
+   **typed hook-descriptor refactor** (Phase 4.1: `out_count` param,
+   closing the gap that left `facility_score`/`governor_priorities`
+   unhookable). ✅ done and exercised live: all 9 decision hooks migrated,
+   zero mismatches over a full `--lua-shadow` autoplay run. Detail:
+   `IMPLEMENTATION_DETAILS.md` 5.1.1–5.1.2.
+c. **Golden traces (Phase 5.2), first slice** — `governor_priorities`/
+   `facility_score`, the two functions with no dual-run seam before item
+   (b). ✅ done: capture side (`src/golden_trace.h`/`.cpp`,
+   `conf.golden_trace`) + native-`luajit` replay runner
+   (`tools/golden_trace_replay.lua`), verified against a real captured
+   corpus — 1265/1265 passed. Complementary to shadow mode: runs offline,
+   no Wine/Xvfb, in principle CI-runnable. Extending to more hooks is
+   future work. Detail: `IMPLEMENTATION_DETAILS.md` 5.2.1.
+d. **All five ported domains re-validated by real shadow mode, not
+   trajectory comparison.** ✅ done. **Acceptance criterion changed
+   (2026-07-16):** zero `lua_shadow=1` divergences over long autoplay runs
+   on 3+ distinct saves/maps including one `rule_psi` game — **no longer**
+   "byte-identical `state_hashes.log` across two same-seed runs" (that
+   determinism prerequisite is dropped, not deferred; see below). Per-call
+   shadow comparison needs no cross-launch determinism at all (both sides
+   run in the same process invocation) and is strictly stronger evidence of
+   port fidelity than trajectory comparison, which conflates "does the port
+   match C++" with "does the engine reproduce itself." Met in full: three
+   autoplay runs, three distinct games, one with `rule_psi`, zero
+   divergences. Formally closes M4 and porting-order items 1, 2, 2b, and
+   3-partial (`find_proto`/`select_colony`/`select_combat`/`unit_score`/
+   `facility_score`/`governor_priorities`) — not `select_build` itself.
+   Detail: `IMPLEMENTATION_DETAILS.md` 5.1.2, diary 2026-07-15/16 for why
+   the cross-launch determinism approach was dropped.
+e. **`tools/port_drift.py` + provenance entries in `docs/LUA_PORTING.md`.**
+   ✅ done: drift script verified against all three real outcomes (clean,
+   drifted, error), `docs/LUA_PORTING.md` written, 11 tracked functions.
+   Detail: `IMPLEMENTATION_DETAILS.md` 4.11.
 
-b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
-   hand-rolled per-hook mismatch-logging blocks (`src/tech.cpp`,
-   `src/faction.cpp` x2, `src/build.cpp` x3) with the actual
-   `lua_shadow`-gated generic wrapper from Phase 5.1, instead of deleting
-   the temporary code once each is separately declared "done" — one
-   generic mechanism, applied everywhere at once. Do the **typed
-   hook-descriptor refactor (Phase 4.1)** in the same pass: 4.9 already
-   proved the int-args-in/int-result-out contract is too narrow
-   (`facility_score`/`governor_priorities` couldn't be hooked at all,
-   and 4.10's vehicle-count check needed a 12-counter side-channel log
-   instead of a real comparison) — fix the contract once, here, rather
-   than carrying two hook-shape generations forward into shadow mode.
-
-   > **Status (2026-07-16): done, not yet exercised live.**
-   > `lua_ai_shadow_call`/`lua_ai_shadow_check` (`src/luaai.h`/`.cpp`) is
-   > the one generic mechanism, gated on `conf.lua_shadow`
-   > (`lua_shadow=0`: returns immediately, no Lua call, no RNG state
-   > touched — zero overhead beyond the flag check). Snapshots
-   > `game_rand_state()`/`random_state()` before the Lua call, restores
-   > both after (the `game_rand_restore()` pair 5.3.6 added), and records
-   > the Phase 5.3.5 draw-count deltas for the log line — implements
-   > Plan 5.1's Class 1/2 procedure exactly. All seven existing hooks
-   > (`mod_tech_val`/`mod_tech_ai`/`mod_social_ai`/`mod_wants_to_attack`/
-   > `find_proto`/`select_colony`/`select_combat`) migrated off their
-   > hand-rolled blocks onto it. Typed-descriptor refactor:
-   > `lua_ai_hook` gained an `out_count` parameter (1 = single number,
-   > unchanged for every existing hook; >1 = a 1-indexed Lua table) —
-   > closes the 4.9 gap: `facility_score`/`governor_priorities` are now
-   > hooked too (`src/plan.cpp`), via thin marshalling adapters
-   > (`lua/ai/build.lua`) that flatten/unflatten `WItem`'s 5 fields in
-   > its declared order, since the underlying Lua implementations keep
-   > their natural named-table interface for any future internal caller.
-   > Both presets rebuild clean; Lua files pass `luajit loadfile`
-   > syntax checks. **Exercised live the same day
-   > (`IMPLEMENTATION_DETAILS.md` 5.1.2):** `register_hooks: 11 hook(s)
-   > registered`, zero `lua/cpp ... mismatch` lines over a full
-   > `--lua-shadow` autoplay run. Found and fixed two real gaps along the
-   > way — the harness was silently discarding `lua_shadow=1` (overwrote
-   > `thinker.ini` with the shipped `lua_shadow=0` default and never
-   > re-forced it, fixed with a new `--lua-shadow` flag), and there was no
-   > way to confirm which config flags were actually in effect after the
-   > fact (fixed with a `config: lua_ai=.. lua_shadow=.. lua_strict=..
-   > autoplay=..` line at Lua runtime init). See 5.1.2 for detail.
-
-c. ~~**Golden traces (Phase 5.2), starting with the two functions currently
-   "validated by inspection" only** — `governor_priorities` and
-   `facility_score` (`IMPLEMENTATION_DETAILS.md` 4.9) — since they have no
-   dual-run seam at all today and are therefore the least-validated code
-   in the port so far, not the most.~~ **Done (2026-07-16), first slice —
-   see `IMPLEMENTATION_DETAILS.md` 5.2.1.**
-   >
-   > **Framing correction:** the "no dual-run seam" rationale is now
-   > stale — item (b)'s shadow-mode work (done, same session) generalized
-   > the hook contract and both functions are shadow-hooked in
-   > `src/plan.cpp` today, confirmed live with zero divergences (item d).
-   > Golden traces are still worth building on top of that: a
-   > *complementary* validation layer that runs the Lua port offline,
-   > under Arch's native `luajit`, against captured (args, engine state,
-   > result) fixtures — no Wine, no Xvfb, no live game, in principle
-   > CI-runnable, unlike shadow mode which only ever exercises anything
-   > inside an actual running game process.
-   >
-   > **What landed:** `src/golden_trace.h`/`.cpp` (new) — two
-   > purpose-built functions, gated on a new `conf.golden_trace` flag
-   > (same "unlisted debug option" pattern as `minimal_popups`, not in
-   > the shipped `docs/thinker.ini`), appending one JSON-Lines fixture
-   > per call to `golden_traces.jsonl` in the game dir (append mode, not
-   > cleared between runs — meant to accumulate into a corpus, unlike
-   > `lua.log`/`debug.txt`). One call each added in `src/plan.cpp`'s
-   > `facility_score`/`governor_priorities`, next to the existing
-   > shadow-mode calls. `tools/golden_trace_replay.lua` (new): a
-   > native-`luajit`-only replay runner with its own minimal JSON parser
-   > and a `dofile` override that substitutes fixture-backed stand-ins
-   > for `lua/api/base.lua`/`faction.lua`/`tech.lua` (the only three
-   > modules the two functions actually call into) while loading
-   > `lua/ai/build.lua` itself for real — no production Lua file changes.
-   > `tools/autoplay_run.sh` gained a `--golden-trace` flag (same shape as
-   > `--lua-shadow`). Verified genuinely end-to-end (not just syntax
-   > checked): hand-built fixture lines exercising both
-   > `governor_priorities` branches (`is_human` true/false) and a
-   > deliberately-wrong `facility_score` case, replayed correctly
-   > (PASS/PASS/FAIL, correct exit code) — proves the checker isn't
-   > vacuous. Both presets rebuild clean. **Then confirmed against a real
-   > capture, same session:** `--no-xvfb --golden-trace` autoplay run,
-   > replayed with `tools/golden_trace_replay.lua` — **1265/1265 passed**,
-   > zero failures, across many distinct `facility_score` item IDs
-   > (including negative results) and both `governor_priorities` branches
-   > over 100+ distinct base IDs. First slice fully done, item (c) closed
-   > for these two functions — extending to more hooks is future work,
-   > not scoped here.
-
-d. ~~**All five ported domains re-validated on the harness, by REAL shadow
-   mode (item b), not by trajectory comparison.**~~ **Done (2026-07-16).**
-   **Acceptance criterion changed (2026-07-16, by decision — see
-   `IMPLEMENTATION_DETAILS.md` 5.3.6's closing note for the full
-   rationale):** zero `lua_shadow=1` divergences, at the class-appropriate
-   level, over long autoplay runs on **3+ distinct saves/maps, including
-   at least one game where `rule_psi` factions exist** (an
-   under-exercised branch class across every dual-run session so far).
-   **No longer** "byte-identical `state_hashes.log` across two same-seed
-   runs" — that determinism prerequisite is dropped, not deferred (see
-   below). Only then formally close M4 and porting-order items 1, 2, 2b,
-   and 3-partial (the `find_proto`/`select_colony`/`select_combat`/
-   `unit_score`/`facility_score`/`governor_priorities` slice — not the
-   still-unfinished `select_build` itself).
-   >
-   > **Why per-call shadow comparison is the right acceptance test, and
-   > trajectory comparison isn't:** shadow mode compares Lua against C++
-   > on the *same call, same inputs, same turn* — it needs no
-   > cross-launch determinism at all, since both sides run inside the
-   > same process invocation. It is strictly stronger evidence of port
-   > fidelity than "did two separate processes end up in the same state
-   > after N turns", which conflates two different questions (does the
-   > port match C++? does the engine reproduce itself?) into one signal
-   > that can't tell them apart when it fails — exactly the problem
-   > 5.3.4-5.3.6 ran into. Full history of the abandoned chase (turn-2/
-   > turn-3 ambient nondeterminism, `fixed_rng_seed`, `game_rand_restore`)
-   > is preserved in `IMPLEMENTATION_DETAILS.md` 5.3.4-5.3.6 — closed by
-   > decision, not resolved; see there for what to do if it ever matters
-   > again (M6).
-   >
-   > **Closed (2026-07-16) — `IMPLEMENTATION_DETAILS.md` 5.1.2.** Three
-   > full autoplay runs on three distinct manually-started games (71, 70,
-   > and 70 turns; all 9 hooked functions —
-   > `mod_tech_val`/`mod_tech_ai`/`mod_social_ai`/`mod_wants_to_attack`/
-   > `find_proto`/`select_colony`/`select_combat`/`facility_score`/
-   > `governor_priorities` — exercised every run; the second game
-   > deliberately included a `rule_psi` faction), **zero `lua_shadow=1`
-   > divergences in any run.** Acceptance criterion met in full: 3+
-   > distinct saves/maps, `rule_psi` covered. M4 and porting-order items
-   > 1, 2, 2b, and 3-partial (the `find_proto`/`select_colony`/
-   > `select_combat`/`unit_score`/`facility_score`/`governor_priorities`
-   > slice) are formally closed. `select_build` itself (stages 2-4)
-   > remains open and still frozen pending gate items (c) and (e).
-
-e. ~~**`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
-   (Phase 4.4/6) — needed before any upstream merge is even attempted, and
-   currently entirely unwritten despite five domains already carrying
-   `port.source` metadata that nothing reads yet.~~ **Done (2026-07-16) —
-   see `IMPLEMENTATION_DETAILS.md` 4.11.**
-   >
-   > `tools/port_drift.py` (new): extracts each `port.source`-tracked C++
-   > function's body at its pinned `upstream_commit` and at the current
-   > `upstream/master` tip, normalizes whitespace/comments, hashes both,
-   > reports drift. Verified against all three real outcomes, not just
-   > the trivial case: run as-is (`upstream/master` happens to equal
-   > every pin right now) reports **11 clean, 0 drifted, 0 errors**;
-   > pointed at a synthetic older base ref (5 commits before the pin)
-   > correctly reports **6 clean, 3 drifted** — exactly the three
-   > functions actually touched by the intervening "Rewrite faction and
-   > movement code" commit; pointed at a bogus ref correctly reports all
-   > entries as errors. Also closed a real gap found while scoping this:
-   > `facility_score`/`governor_priorities` (5.2.1's golden-trace slice)
-   > had no `port.source` entry at all — added
-   > (`lua/ai/build.lua`), so the count is 11 tracked functions, not the
-   > 9 that existed before this session. `docs/LUA_PORTING.md` (new):
-   > human-readable index of all 11, usage docs for the drift script, and
-   > the convention for adding new entries.
-
-**Consolidation gate closed (2026-07-16).** All five items (a-e) are
-done — see each item's own status block above and
-`IMPLEMENTATION_DETAILS.md`'s 5.1.1/5.1.2 (b), 5.2.1 (c), and 4.11 (e)
-for the session records. Item (a) has two sub-items explicitly deferred
-to a future session (harness menu bootstrap, tech-discovery popup) but
-these were already scoped as non-blocking for the gate itself. Porting
-resumes below.
-
-**Resuming after the gate:** `select_build` stages 2-4 pick up where
-`IMPLEMENTATION_DETAILS.md` 4.10.9's 4-stage order left off (step 1 done
-at the time this was written). **The progress log right below is the
-current state — read it, not this sentence** — steps 2 and 3 (sub-steps
-1-4) are done as of 2026-07-16; `IMPLEMENTATION_DETAILS.md` 4.10.15 is
-the actual resume point, with the full catalog of what's left. Re-read
-4.10's float-arithmetic note (3.7, below) before touching further
-`float` fields — `Wbase`/`Wthreat` already used it correctly.
-
-> **Progress (2026-07-16):** step 2 done and live-verified —
-> `IMPLEMENTATION_DETAILS.md` 4.10.11. `push_item`/`has_retool`/
-> `skip_facility` ported to Lua as standalone building blocks (not wired
-> into `select_build` yet). Both presets build clean, `port_drift.py`
-> clean at 14 tracked functions. First live autoplay run (via the
-> temporary `push_item_check` diagnostic hook, same precedent as step 1's
-> `vehicle_counts_check`) found a real bug — not in the port, in the
-> hook's own placement, double-applying score adjustments — fixed, second
-> run confirmed **859/859 clean**.
->
-> **Step 3, sub-step 1 done and live-verified** —
-> `IMPLEMENTATION_DETAILS.md` 4.10.12. Read the full `select_build` body
-> before planning: after the prologue, the scoring loop really does have
-> 9 special unit-type branches plus ~35 individual facility branches, each
-> bespoke — real, not overstated, though "confirmed by counting" here
-> overclaimed precision it didn't have yet: the actual count (4.10.15,
-> programmatic) is 15 code blocks / 24 facility IDs, not "~35" of
-> either. Ported only the shared
-> prologue through `Wbase`/`Wthreat` (nothing that depends on it yet).
-> `port_drift.py` clean at 15. First autoplay run found a real bug — an
-> ordering error (`select_build_prologue` referenced `governor_priorities`
-> before its `local function` declaration; Lua doesn't hoist locals),
-> not a math bug — every call errored out, zero comparable lines logged.
-> Fixed, second run confirmed **556/556 clean**.
->
-> **Step 3, sub-step 2 done and live-verified** —
-> `IMPLEMENTATION_DETAILS.md` 4.10.13. Cataloged `DefendUnit`/
-> `CombatUnit` against current source first; ported only their
-> early-return decision (not `CombatUnit`'s `push_item` fallback, which
-> needs the still-unported `build_order[]` loop skeleton). These are the
-> first RNG-consuming shadow hooks with no existing debug line to diff
-> against, so — a design departure from steps 1-3.1 — used 3 real
-> `lua_ai_shadow_call`/`_check` hooks (same mechanism as `find_proto`/
-> `mod_tech_ai`) instead of another temporary diagnostic one, since a
-> plain hook has no RNG snapshot/restore and would desync the real RNG
-> stream. `port_drift.py` clean at 18. First run: `defend_unit_*` clean,
-> but `combat_unit_early_return` showed 147 mismatches — root-caused to
-> the shadow-call snapshot being taken *after* C++'s own `select_combat`
-> call instead of before it, so Lua's own independent `select_combat`
-> call started from an already-advanced RNG position. Fixed, second run:
-> **all three hooks clean, 0 mismatches.** Three distinct bug classes
-> found this session (double-application, ordering, shadow-placement) —
-> all caught the same way, by shipping the verification and running it
-> against real data.
->
-> **Step 3, sub-step 3 done and live-verified** —
-> `IMPLEMENTATION_DETAILS.md` 4.10.14. Cataloged the loop skeleton first:
-> of `build_order[]`'s 38 facility entries (recounted precisely in
-> 4.10.15 — corrected from an earlier "~36" estimate), 14 have no dedicated scoring
-> branch at all, so the shared per-item base formula + energy gate is a
-> *complete* computation for exactly those. Scoped to just that (not
-> `allow_units`/`project_change`, deferred — needs `queue_items[0]`, an
-> array field not yet exposed by anything this session). `port_drift.py`
-> clean at 19. Live run: 587 mismatches, and every one falls on a
-> facility with a real, unported branch — **zero mismatches on any of
-> the 14 no-branch facilities**, confirmed by checking there's no overlap
-> between mismatched item_ids and the 14 expected-clean ones.
->
-> **Facility-branch catalog + first branch done** —
-> `IMPLEMENTATION_DETAILS.md` 4.10.15. Cataloged all remaining
-> branches (15 code blocks, 24 facility IDs — counted programmatically,
-> not by eye) — genuinely heterogeneous, two recurring blockers
-> (`queue_items[0]`, `base.eco_damage`) and several new subsystems
-> (social-engineering fields, a new `ResInfo` global, tile scanning, a
-> two-out-param engine call). Implemented only
-> `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER` (zero
-> new engine surface) — 1 of 15 blocks, 3 of 24 facilities, leaving
-> **13 blocks / 21 facilities open** (17 of 38 facilities now fully
-> correct, counting 3.3's 14). Found a fourth distinct bug class: a field
-> (`defend_range`) computed but never included in
-> `select_build_prologue`'s own returned table — invisible until this
-> was the first sub-step to need it externally, caught immediately via
-> the shadow hook (56 errors logged, safely contained — shadow mode
-> never risks real gameplay). Fixed; second run confirmed **0 mismatches
-> on all three facilities** across 2234 total mismatches (all on the
-> other, still-unported facilities). Next: pick another zero-or-low-new-
-> surface branch from the catalog, or tackle one of the two recurring
-> blockers (`queue_items[0]`/`eco_damage`) to unblock several at once.
+**Resuming after the gate:** `select_build` porting (Phase 4.2 item 3) is
+mid-flight. Current state: steps 1-2 done; step 3 (the `build_order` loop)
+has 4 sub-steps done — shared prologue, `DefendUnit`/`CombatUnit`'s
+early-return decision, the per-item base formula (14 of 38 facilities), and
+3 more facilities with a real branch (`FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/
+`FAC_BIOENHANCEMENT_CENTER`). **17 of 38 facilities fully correct.** Still
+open: step 4 (wiring the real hook), 13 more facility-branch code blocks (21
+facilities, two recurring blockers — `queue_items[0]` array-field support,
+`base.eco_damage`), and 7 more special unit-type branches.
+**`IMPLEMENTATION_DETAILS.md` 4.10.15 is the resume point** — full catalog
+of what's left, per-facility engine-surface requirements. Re-read 3.7's
+float-arithmetic rule before touching further `float` fields
+(`Wbase`/`Wthreat` already apply it correctly). Session-by-session bug hunts
+across steps 1-3 (four distinct bug classes found and fixed): `DEVELOPMENT_
+DIARY.md`, 2026-07-14/16.
 
 ---
 
@@ -1264,60 +711,14 @@ that can only confirm the port matches the mock. Priority order:
 
 ### 5.3 Determinism and regression — graduated equivalence
 
-> **Autoplay spike status: ✅ dialog-bypass mechanism implemented
-> (2026-07-14), in-game verification pending.** Motivation: validating the
-> social-engineering port (4.2 item 2) needs many turns/factions, and an
-> all-AI game (every faction computer-controlled — a native game feature,
-> `is_human()` just reads a setup-time bitmask, `faction.cpp:109`) can run
-> unattended *except* that several event/announcement dialogs fire
-> unconditionally, not gated on `is_human`, and block the message loop
-> waiting for a click. Rather than trying to enumerate every such path up
-> front (acknowledged as impossible in general — this is deliberately an
-> iterative spike, not a project), a grep across all of `src/` found that
-> every popup/dialog call funnels through exactly six raw engine
-> primitives: `POP2`, `popp`, `popp_2`, `interlude`, `X_pop_9`,
-> `X_pops_18`. New `conf.autoplay` option (0/1, `main.h`/`main.cpp`/
-> `docs/thinker.ini`) + new `src/autoplay.cpp`/`.h`: `engine.cpp`'s
-> definitions of those six globals now point at thin shims instead of the
-> raw addresses (kept as `<name>_engine`) — a 6-line change, zero call
-> sites touched, since the redirection happens once at the pointer
-> definition, not per caller. When `conf.autoplay` is on, each shim logs
-> the call (function + label argument) to `autoplay.log` in the game
-> folder and returns a safe default (`0`) instead of opening the real
-> modal; when off, it forwards to the real engine function unchanged —
-> `autoplay=0` is a no-op by construction. Both build presets compile and
-> link clean. **Iteration model, not a finished catalog:** if some path
-> still hangs, `autoplay.log`'s last line names exactly which of the six
-> primitives and which label was reached right before it — add a
-> label-specific case in that one shim (`src/autoplay.cpp`), rebuild,
-> retry. Expected to converge quickly given the funnel is this narrow.
-> **Caveat (not a bug, a scope limit):** the shims key only on
-> `conf.autoplay`, not on `is_human` — if a human faction exists in the
-> same session with `autoplay=1`, dialogs meant for that human's own
-> choices (diplomacy proposals, the SOCIETY social-engineering picker,
-> event notices) are auto-dismissed too, same as AI-facing ones. This
-> option is for unattended all-AI sessions only; leave it at the default
-> `0` for normal human play. **Deliberately not implemented in this
-> pass:** the `autoplay_turns=N` auto-save-and-exit idea below — forcing
-> an exit via `ControlTurnA`/`ControlTurnB` outside `end_of_game`'s own
-> sequence (which also does `report_score`/`hall_of_fame`/replay
-> bookkeeping first) isn't well-understood enough yet to do blind; that
-> was a separate ask from the dialog-hang problem this spike actually
-> targets, and stopping unattended runs manually is sufficient for now.
-> **Not yet done:** an actual unattended all-AI play session confirming
-> turns advance without any hang; if one is found, treat it as the next
-> iteration of this spike, not a regression.
->
-> **Correction found on first test (2026-07-14):** the New Game screen has
-> no "0 human players" option — a faction must always be picked to
-> control. That faction then kept running with *no* Thinker AI at all
-> (not just undismissed popups): `thinker_enabled()` (`faction.cpp:142`)
-> separately excludes any human-marked faction from the whole AI stack.
-> Fixed with `autoplay_demote_human()` (`src/autoplay.cpp`, called from
-> the `mod_turn_upkeep` seam): with `conf.autoplay=1` it clears the picked
-> faction's human bit every turn, handing it to Thinker AI like any other
-> — see `IMPLEMENTATION_DETAILS.md` 5.3.1 for the mechanism. Rebuilt and
-> redeployed; retest pending.
+**Autoplay harness status: ✅ implemented and validated** — dialog-bypass
+shims (nine engine popup primitives redirected via a pointer-swap at their
+definition site, not their call sites), `autoplay_demote_human()`, auto-End-
+Turn, and the state-hash progress signal, all confirmed working in
+combination over multiple unattended AI-vs-AI sessions (Consolidation gate
+item a, above). Mechanism, scope limits (`conf.autoplay` doesn't check
+`is_human`), and the still-open sub-items (harness menu bootstrap,
+tech-discovery popup): `IMPLEMENTATION_DETAILS.md` 5.3.1–5.3.3.
 
 Bit-exact equality is the goal only where it is achievable. Known threats to
 exactness even in a faithful port: float/double vs Lua number conversions,
@@ -1424,15 +825,9 @@ Verbose `debug.txt` diffable between runs.
   where `debug_verbose` defaults on). **Do not build the full map/veh/
   base/path API up front** — its ideal shape is discovered by porting.
   Nothing blocks M4 (research pilot) from starting now.
-- **M4 — Research pilot:** 🔨 in progress (2026-07-13) — `mod_tech_val`/
-  `mod_tech_ai` ported and hooked, both now with dual-run mismatch
-  instrumentation, in-game verified clean (zero mismatches) over two manual
-  play sessions (see Phase 4.2 item-1 status note). Still open: broader
-  autoplay/multi-faction coverage, the real Phase 5.1/5.2 machinery (golden
-  traces, `lua_shadow` flag) this temporary dual-run stands in for, and
-  removing that temporary instrumentation once formal validation lands. Not
-  yet "enabled by default" in the Done-when sense — treat as pilot-proven,
-  not closed.
+- **M4 — Research pilot:** ✅ formally closed (2026-07-16) by the
+  Consolidation gate's item (d) — `mod_tech_val`/`mod_tech_ai` shadow-clean
+  over the full 3-save + `rule_psi` matrix. See Phase 4.2 item 1.
 - **M3B — API expansion on demand:** the API grows as each subsequent domain
   requires, with the same generate-validate discipline.
 - **M5 — Production/social in Lua:** porting-order modules 2 and 3 active.
