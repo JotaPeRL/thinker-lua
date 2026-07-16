@@ -1131,8 +1131,22 @@ before touching `Wbase`/`Wthreat`.
 > temporary `push_item_check` diagnostic hook, same precedent as step 1's
 > `vehicle_counts_check`) found a real bug — not in the port, in the
 > hook's own placement, double-applying score adjustments — fixed, second
-> run confirmed **859/859 clean**. Next: step 3 (the `build_order`
-> scoring loop itself, ~45 branches, its own multi-session effort).
+> run confirmed **859/859 clean**.
+>
+> **Step 3, sub-step 1 done and live-verified** —
+> `IMPLEMENTATION_DETAILS.md` 4.10.12. Read the full `select_build` body
+> before planning: after the prologue, the scoring loop really does have
+> 9 special unit-type branches plus ~35 individual facility branches, each
+> bespoke — confirmed by counting, not estimating. Ported only the shared
+> prologue through `Wbase`/`Wthreat` (nothing that depends on it yet).
+> `port_drift.py` clean at 15. First autoplay run found a real bug — an
+> ordering error (`select_build_prologue` referenced `governor_priorities`
+> before its `local function` declaration; Lua doesn't hoist locals),
+> not a math bug — every call errored out, zero comparable lines logged.
+> Fixed, second run confirmed **556/556 clean**. Next: catalog the exact
+> new engine surface each remaining branch needs (not trusting the
+> 2026-07-14 pass) — likely starting with `DefendUnit`/`CombatUnit`,
+> which reuse the most already-ported infrastructure.
 
 ---
 

@@ -376,6 +376,12 @@ int main() {
         // Production/plans port, third slice (item 3, IMPLEMENTATION_
         // DETAILS.md 4.9).
         FIELD(BASE, defend_goal),
+        // select_build itself, step 3 sub-step 1 (item 3, final piece,
+        // IMPLEMENTATION_DETAILS.md 4.10.9/4.10.12, resumed after the
+        // Consolidation gate): the shared prologue's allow_pods needs
+        // these two.
+        FIELD(BASE, pop_size),
+        FIELD(BASE, nutrient_surplus),
     }});
 
     // select_build itself (porting-order item 3, final piece,
@@ -457,6 +463,10 @@ int main() {
     printf("    MaxProtoFactionNum = %d,\n", 64);  // main.h:117
     printf("    MaxRegionNum = %d,\n", 128);       // main.h:106
     printf("    MaxRegionLandNum = %d,\n", 64);    // main.h:107
+    // select_build step 3 sub-step 1 (IMPLEMENTATION_DETAILS.md 4.10.9/
+    // 4.10.12, resumed after the Consolidation gate): defend_range's
+    // default and Wbase's clamp condition both need this.
+    printf("    MaxEnemyRange = %d,\n", 50);       // main.h:172
     printf("    MaxSocialCatNum = %d,\n", 4);      // main.h:146
     printf("    MaxSocialModelNum = %d,\n", 4);    // main.h:147
     printf("    MaxSocialEffectNum = %d,\n", 11);  // main.h:148

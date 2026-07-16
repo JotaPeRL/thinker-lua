@@ -32,4 +32,8 @@ return {
     -- precedent as vehicle_counts_check -- deleted once step 4 wires the
     -- real select_build hook.
     push_item_check = build.push_item_check,
+    -- select_build step 3 sub-step 1 (IMPLEMENTATION_DETAILS.md
+    -- 4.10.9/4.10.12, resumed after the Consolidation gate): same
+    -- temporary, verification-only precedent.
+    select_build_prologue_check = build.select_build_prologue_check,
 }

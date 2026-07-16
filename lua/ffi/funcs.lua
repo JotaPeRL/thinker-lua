@@ -76,10 +76,18 @@ typedef struct {
     uint32_t (*map_rng_draws)();
     int32_t (*mod_base_making)(int32_t item_id, int32_t base_id);
     int32_t (*skip_gov_facility_bit)(int32_t item_id);
+    int32_t (*region_at)(int32_t x, int32_t y);
+    int32_t (*allow_expand)(int32_t faction_id);
+    int32_t (*project_limit)(int32_t faction_id);
+    int32_t (*main_region)(int32_t faction_id);
+    int32_t (*target_land_region)(int32_t faction_id);
+    int32_t (*enemy_bases)(int32_t faction_id);
+    float (*enemy_mil_factor)(int32_t faction_id);
+    float (*enemy_base_range)(int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 10
+local HOST_API_VERSION = 11
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -152,4 +160,12 @@ return {
     map_rng_draws = function() return api.map_rng_draws() end,
     mod_base_making = function(item_id, base_id) return api.mod_base_making(item_id, base_id) end,
     skip_gov_facility_bit = function(item_id) return api.skip_gov_facility_bit(item_id) end,
+    region_at = function(x, y) return api.region_at(x, y) end,
+    allow_expand = function(faction_id) return api.allow_expand(faction_id) ~= 0 end,
+    project_limit = function(faction_id) return api.project_limit(faction_id) end,
+    main_region = function(faction_id) return api.main_region(faction_id) end,
+    target_land_region = function(faction_id) return api.target_land_region(faction_id) end,
+    enemy_bases = function(faction_id) return api.enemy_bases(faction_id) end,
+    enemy_mil_factor = function(faction_id) return api.enemy_mil_factor(faction_id) end,
+    enemy_base_range = function(faction_id) return api.enemy_base_range(faction_id) end,
 }

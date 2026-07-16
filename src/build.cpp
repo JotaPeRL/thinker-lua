@@ -964,6 +964,16 @@ int select_build(int base_id) {
     }
     float Wthreat = 1.0f - (1.0f / (1.0f + Wbase));
 
+    // TEMPORARY select_build step 3 sub-step 1 verification
+    // instrumentation (IMPLEMENTATION_DETAILS.md 4.10.9/4.10.12, resumed
+    // after the Consolidation gate) -- same precedent as
+    // vehicle_counts_check (step 1) and push_item_check (step 2).
+    // select_build_prologue_check re-derives everything from base_id
+    // alone via FFI (no C++ value passed in to double-apply, unlike step
+    // 2's bug), so placement here isn't load-bearing the way push_item's
+    // was -- kept next to the comparable debug() line below for clarity.
+    int lua_select_build_prologue_dummy;
+    lua_ai_hook("select_build_prologue_check", &lua_select_build_prologue_dummy, 1, {base_id});
     debug("select_build %3d %3d %3d %3d def: %d frm: %d prb: %d crw: %d pods: %d expand: %d "\
         "scouts: %d min: %2d res: %2d limit: %2d mil: %.4f threat: %.4f\n",
         *CurrentTurn, base_id, base->x, base->y,

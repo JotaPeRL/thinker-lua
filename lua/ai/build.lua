@@ -42,6 +42,12 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         push_item = { file = "src/build.cpp", func = "push_item",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- select_build step 3 sub-step 1 (IMPLEMENTATION_DETAILS.md
+        -- 4.10.9/4.10.12, resumed after the Consolidation gate): the
+        -- shared prologue, part of select_build itself (not a separately
+        -- named C++ function -- same convention choice as push_item).
+        select_build_prologue = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -522,7 +528,13 @@ end
 -- depends on region_at(), not yet wrapped for Lua (deferred alongside
 -- adjacent_region/allow_expand, see 4.10.5) -- everything else this
 -- function needs (BASE, Faction, VEH, gov flags) is already exposed.
-local function vehicle_counts_check(base_id, sea_base)
+-- Extracted from vehicle_counts_check (step 1) so select_build_prologue
+-- (step 3 sub-step 1, IMPLEMENTATION_DETAILS.md 4.10.12) can reuse this
+-- already-verified loop (986/986 and 859/859 clean this session) instead
+-- of duplicating it. Returns raw (pre-transform) counters -- callers
+-- apply their own transforms (e.g. defenders' (x+2)/8), matching how the
+-- C++ original only transforms `defenders` well after this loop ends.
+local function count_vehicles(base_id, sea_base)
     sea_base = not (sea_base == false or sea_base == 0)
     local base = base_api.get(base_id)
     local faction_id = base.faction_id
@@ -576,12 +588,22 @@ local function vehicle_counts_check(base_id, sea_base)
         end
     end
 
+    return {
+        defenders = defenders, formers = formers, landprobes = landprobes,
+        seaprobes = seaprobes, all_crawlers = all_crawlers, pods = pods,
+        scouts = scouts, transports = transports, near_formers = near_formers,
+        artifacts = artifacts, need_ferry = need_ferry, allow_supply = allow_supply,
+    }
+end
+
+local function vehicle_counts_check(base_id, sea_base)
+    local c = count_vehicles(base_id, sea_base)
     log.debug(
         "vehicle_counts base:%d def:%d frm:%d prb:%d crw:%d pods:%d scouts:%d "
         .. "lprb:%d sprb:%d trn:%d near_frm:%d art:%d ferry:%d supply:%s",
-        base_id, idiv(defenders + 2, 8), formers, landprobes + seaprobes,
-        all_crawlers, pods, scouts, landprobes, seaprobes, transports,
-        near_formers, artifacts, need_ferry, tostring(allow_supply))
+        base_id, idiv(c.defenders + 2, 8), c.formers, c.landprobes + c.seaprobes,
+        c.all_crawlers, c.pods, c.scouts, c.landprobes, c.seaprobes, c.transports,
+        c.near_formers, c.artifacts, c.need_ferry, tostring(c.allow_supply))
 end
 
 -- select_build itself (porting-order item 3, final piece), step 2
@@ -715,6 +737,81 @@ local function governor_priorities_hook(base_id)
     return { wgov.AI_growth, wgov.AI_tech, wgov.AI_wealth, wgov.AI_power, wgov.AI_fight }
 end
 
+-- select_build itself, step 3 sub-step 1 (IMPLEMENTATION_DETAILS.md
+-- 4.10.9/4.10.12, resumed after the Consolidation gate): the shared
+-- prologue through Wbase/Wthreat (build.cpp:847-965), everything every
+-- later branch (9 special unit types + ~35 facility branches, none
+-- ported yet) depends on. Deliberately skips retool/project_change/
+-- allow_units/allow_supply/allow_ships/drone_riots/drones -- none of
+-- those feed Wbase/Wthreat or the existing debug() line this is
+-- verified against, they belong to the branches this sub-step defers.
+-- Wbase/Wthreat is genuine C float arithmetic (4.10.7): plain Lua `/`,
+-- not idiv. Placed after governor_priorities (calls it) -- Lua locals
+-- aren't hoisted, an earlier placement here errored live ("attempt to
+-- call global 'governor_priorities' (a nil value)") since it fell
+-- through to a nonexistent global instead of the not-yet-declared local.
+local function select_build_prologue(base_id)
+    local base = base_api.get(base_id)
+    local faction_id = base.faction_id
+    local f = faction.get(faction_id)
+    local gov = base_api.gov_config(base)
+    local minerals = base.mineral_surplus + idiv(base.minerals_accumulated, 10)
+    local reserve = max(2, idiv(base.mineral_intake_2, 2))
+    local base_reg = funcs.region_at(base.x, base.y)
+    local defend_range = base.defend_range > 0 and base.defend_range or idiv(C.MaxEnemyRange, 2)
+    local sea_base = base_reg >= C.MaxRegionLandNum
+    local allow_pods = funcs.allow_expand(faction_id)
+        and (base.pop_size > 1 or base.nutrient_surplus > 0)
+
+    local c = count_vehicles(base_id, sea_base)
+    local wgov = governor_priorities(base_id)
+    local defenders = idiv(c.defenders + 2, 8)
+
+    local project_limit = funcs.project_limit(faction_id)
+    local enemy_mil_factor = funcs.enemy_mil_factor(faction_id)
+    local enemy_base_range = funcs.enemy_base_range(faction_id)
+    local enemy_bases = funcs.enemy_bases(faction_id)
+    local main_region = funcs.main_region(faction_id)
+    local target_land_region = funcs.target_land_region(faction_id)
+
+    local Wbase = clamp(1.0 * minerals / project_limit, 0.4, 1.0)
+        * ((defend_range > 0 and defend_range < 8) and 4.0 or 1.0)
+        * clamp((defend_range < C.MaxEnemyRange and 0.1 or 0.05) * f.base_count, 0.2, 1.0)
+        * max(0.05, 2.0 * enemy_mil_factor / (enemy_base_range * 0.1 + 0.1)
+            + min(1.0, 1.5 * f.base_count / max(16, game.map_area_sq_root()))
+            + 0.8 * enemy_bases + 0.2 * wgov.AI_fight)
+
+    if base_api.plr_owner(base) then
+        Wbase = Wbase * (bit.band(gov, E.GOV_PRIORITY_CONQUER) ~= 0 and 4 or 1)
+    else
+        Wbase = Wbase * ((base_reg ~= main_region and base_reg == target_land_region) and 4 or 1)
+    end
+    local Wthreat = 1.0 - (1.0 / (1.0 + Wbase))
+
+    return {
+        defenders = defenders, formers = c.formers, landprobes = c.landprobes,
+        seaprobes = c.seaprobes, all_crawlers = c.all_crawlers, pods = c.pods,
+        scouts = c.scouts, allow_pods = allow_pods, minerals = minerals,
+        reserve = reserve, project_limit = project_limit,
+        enemy_mil_factor = enemy_mil_factor, wthreat = Wthreat,
+    }
+end
+
+-- Temporary, verification-only (same precedent as vehicle_counts_check/
+-- push_item_check): logs a line comparable to the existing
+-- debug("select_build ...") line's own min/res/limit/mil/threat and
+-- vehicle-count fields. Deleted once step 4 wires the real hook.
+local function select_build_prologue_check(base_id)
+    local r = select_build_prologue(base_id)
+    log.debug(
+        "select_build_prologue_check base:%d def:%d frm:%d prb:%d crw:%d pods:%d "
+        .. "expand:%d scouts:%d min:%d res:%d limit:%d mil:%.4f threat:%.4f",
+        base_id, r.defenders, r.formers, r.landprobes + r.seaprobes, r.all_crawlers,
+        r.pods, r.allow_pods and 1 or 0, r.scouts, r.minerals, r.reserve,
+        r.project_limit, r.enemy_mil_factor, r.wthreat)
+    return 1
+end
+
 port.need_police = need_police
 port.unit_support_plan = unit_support_plan
 port.check_retool = check_retool
@@ -731,6 +828,9 @@ port.governor_priorities = governor_priorities
 port.facility_score_hook = facility_score_hook
 port.governor_priorities_hook = governor_priorities_hook
 port.vehicle_counts_check = vehicle_counts_check
+port.count_vehicles = count_vehicles
+port.select_build_prologue = select_build_prologue
+port.select_build_prologue_check = select_build_prologue_check
 port.has_retool = has_retool
 port.skip_facility = skip_facility
 port.push_item_score = push_item_score

@@ -1062,7 +1062,7 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done and live-verified, steps 3-4 pending
+### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-step 1 done, all live-verified
 
 > **Status (2026-07-16, resuming after the Consolidation gate): step 1
 > now fully verified, not just build-clean.** 4.10.10's own "not yet
@@ -1580,6 +1580,103 @@ scoring loop, ~45 branches, its own multi-session effort).
 `new_build_tracker`, `push_item`, `push_item_check`, three new
 `port.source` entries), `lua/ai/init.lua` (registers `push_item_check`),
 `src/build.cpp` (one hook call inside `push_item()`).
+
+### 4.10.12 Step 3 sub-step 1 session record (2026-07-16) — the shared prologue, implemented and live-verified
+
+> **Status: done.** Both presets build clean, `port_drift.py` clean (15
+> tracked functions, up from 14), live-verified against real autoplay
+> data: 556/556 lines match exactly. One real ordering bug found and
+> fixed along the way (not a math bug).
+
+**Scope, and why it's narrower than "step 3" sounds.** Read the full
+current `select_build` body (`build.cpp:847-1324`, 478 lines) before
+planning anything, rather than trusting 4.10.1-4.10.9's 2026-07-14
+scoping pass at face value — it turns out to be accurate about the
+overall shape but hadn't actually enumerated the branches. After the
+prologue, the `build_order[]` loop has **9 special unit-type branches**
+(`Satellites`/`SecretProject`/`DefendUnit`/`CombatUnit`/`FormerUnit`/
+`SeaProbeUnit`/`CrawlerUnit`/`FerryUnit`/`ColonyUnit`) followed by **~35
+individual `t == FAC_X` facility branches**, each with its own bespoke
+formula — genuinely as large as 4.10.9 warned, confirmed by actually
+counting rather than estimating. This session ported only the shared
+**prologue through `Wbase`/`Wthreat`** (`build.cpp:847-965`) — nothing
+that depends on it (no unit branches, no facility branches) is touched.
+This unblocks everything downstream and was independently verifiable the
+same way steps 1-2 were: `select_build` already has a `debug(...)` line
+printing exactly `min`/`res`/`limit`/`mil`/`threat` plus the six vehicle-
+count fields step 1 already covers.
+
+**New engine surface, checked against current source directly (not the
+old scoping notes):** 2 new `BASE` fields (`pop_size`, `nutrient_surplus`,
+for `allow_pods`); 1 new `types.counts` entry (`MaxEnemyRange = 50`,
+hardcoded literal — `gen_ffi.cpp` doesn't include `main.h`, same
+precedent `MaxRegionLandNum` already used); 8 new opaque `LuaHostApi`
+wrappers (`api_version` 10 → 11): `region_at`/`allow_expand` (real engine
+mechanics), and 6 `AIPlans` per-faction accessors matching the existing
+`psi_score`/`median_limit` tier exactly — `project_limit`/`main_region`/
+`target_land_region`/`enemy_bases` (int) and **`enemy_mil_factor`/
+`enemy_base_range` (float)**, this project's first `float`-returning
+`LuaHostApi` entries (LuaJIT's FFI handles `float` natively, no blocker).
+
+**Caught a real planning gap before it became a bug:** the plan's first
+pass filed `MaxEnemyRange` under "deferred to `DefendUnit`/`CombatUnit`",
+but it's actually needed by the prologue itself (`defend_range`'s default,
+and `Wbase`'s own clamp condition) — found and fixed while implementing,
+before any build/run.
+
+**`lua/ai/build.lua`**: extracted the vehicle-count loop (previously
+inline in `vehicle_counts_check`, step 1) into a reusable
+`count_vehicles(base_id, sea_base)` so `select_build_prologue` doesn't
+duplicate ~40 already-verified lines — `vehicle_counts_check` becomes a
+thin wrapper over it, unchanged output. `select_build_prologue(base_id)`:
+1:1 port of `build.cpp:847-965`, deliberately skipping
+`retool`/`project_change`/`allow_units`/`allow_supply`/`allow_ships`/
+`drone_riots`/`drones` (none feed `Wbase`/`Wthreat` or the debug line,
+they belong to the deferred branches). `Wbase`/`Wthreat` use plain Lua
+`/`, not `idiv` (4.10.7's rule — genuine C float arithmetic here).
+`select_build_prologue_check(base_id)`: temporary, verification-only,
+same precedent as `vehicle_counts_check`/`push_item_check`.
+
+**Real bug found and fixed: an ordering bug, not a math bug.** First
+autoplay run logged zero comparable lines at all — `lua.log` showed
+`error in 'select_build_prologue_check' (turn N): attempt to call global
+'governor_priorities' (a nil value)`, every single call. Root cause:
+`select_build_prologue` was placed *before* `governor_priorities`'s own
+`local function` declaration in the file (both in the "step 3" section,
+inserted ahead of the pre-existing `governor_priorities`/`facility_score`
+section for no good reason). Lua locals aren't hoisted — referencing a
+not-yet-declared local falls through to the global namespace, which is
+nil. Fixed by moving `select_build_prologue`/`select_build_prologue_check`
+to right after `governor_priorities_hook`'s definition. This is a
+different failure class than step 2's bug (a real double-application
+logic error) — worth distinguishing, since this one says nothing about
+whether the ported *math* was correct, only that it never ran. The
+second run, after the fix, confirmed the math too: 556/556 clean.
+Before requesting that second run, manually re-checked `Wbase`/`Wthreat`
+term-by-term against the C++ (operator precedence, the `1.5f *
+base_count / max(...)` grouping, the `idiv` vs plain `/` boundary) —
+useful discipline, though it wouldn't have caught this particular bug
+class (an ordering error, not a math error) since the math itself was
+fine all along.
+
+**Not touched, deferred to a future session's first task:**
+`can_build`/`can_build_unit`/`has_ships`/`adjacent_region`/`need_scouts`/
+`find_satellite`/`find_project`/`has_wmode`/`mineral_output_modifier`/the
+`FormerUnit` tile-scan wrapper (4.10.2)/`ResInfo`, `GOV_ALLOW_COMBAT`/
+`GOV_MAY_PROD_EXPLORE_VEH` and every `FAC_*`/`GOV_*` enum the ~44
+remaining branches reference — cataloging these precisely (not trusting
+the 2026-07-14 pass, same discipline this session used) is the natural
+next step, likely starting with `DefendUnit`/`CombatUnit` since they
+reuse the most already-ported infrastructure (`find_proto`,
+`select_combat`, `has_retool`, `push_item`, all done).
+
+**Files touched:** `tools/gen_ffi.cpp` (2 `BASE` fields, 1 `counts`
+entry), `src/luaai.h`/`.cpp` (8 new `LuaHostApi` entries + wrappers,
+`api_version` bump), `lua/ffi/funcs.lua` (matching cdef + wrappers,
+`HOST_API_VERSION` bump), `lua/ai/build.lua` (`count_vehicles` extracted,
+`select_build_prologue`, `select_build_prologue_check`, one new
+`port.source` entry), `lua/ai/init.lua` (registers
+`select_build_prologue_check`), `src/build.cpp` (one hook call).
 
 ### 4.11 Port drift detection (2026-07-16) — Consolidation gate item e, done
 

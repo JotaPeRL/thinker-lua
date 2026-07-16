@@ -186,6 +186,46 @@ static int32_t host_skip_gov_facility_bit(int32_t item_id) {
         && (conf.skip_gov_facility & (1ULL << (item_id - 1)))) ? 1 : 0;
 }
 
+// select_build step 3 sub-step 1 (IMPLEMENTATION_DETAILS.md 4.10.9/
+// 4.10.12, resumed after the Consolidation gate): the shared prologue
+// through Wbase/Wthreat. region_at/allow_expand are real engine
+// mechanics, not AI policy. The six AIPlans accessors match the existing
+// psi_score/median_limit/defense_modifier tier exactly (bare field name,
+// per-faction lookup) -- enemy_mil_factor/enemy_base_range are this
+// project's first float-returning LuaHostApi entries; LuaJIT's FFI
+// handles float natively, nothing special needed on the Lua side.
+static int32_t host_region_at(int32_t x, int32_t y) {
+    return region_at(x, y);
+}
+
+static int32_t host_allow_expand(int32_t faction_id) {
+    return allow_expand(faction_id);
+}
+
+static int32_t host_project_limit(int32_t faction_id) {
+    return plans[faction_id].project_limit;
+}
+
+static int32_t host_main_region(int32_t faction_id) {
+    return plans[faction_id].main_region;
+}
+
+static int32_t host_target_land_region(int32_t faction_id) {
+    return plans[faction_id].target_land_region;
+}
+
+static int32_t host_enemy_bases(int32_t faction_id) {
+    return plans[faction_id].enemy_bases;
+}
+
+static float host_enemy_mil_factor(int32_t faction_id) {
+    return plans[faction_id].enemy_mil_factor;
+}
+
+static float host_enemy_base_range(int32_t faction_id) {
+    return plans[faction_id].enemy_base_range;
+}
+
 static int32_t host_ignore_reactor_power() {
     return conf.ignore_reactor_power;
 }
@@ -301,7 +341,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 10,
+    /* api_version          */ 11,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -367,6 +407,14 @@ static LuaHostApi g_host_api = {
     /* map_rng_draws        */ host_map_rng_draws,
     /* mod_base_making      */ host_mod_base_making,
     /* skip_gov_facility_bit */ host_skip_gov_facility_bit,
+    /* region_at            */ host_region_at,
+    /* allow_expand         */ host_allow_expand,
+    /* project_limit        */ host_project_limit,
+    /* main_region          */ host_main_region,
+    /* target_land_region   */ host_target_land_region,
+    /* enemy_bases          */ host_enemy_bases,
+    /* enemy_mil_factor     */ host_enemy_mil_factor,
+    /* enemy_base_range     */ host_enemy_base_range,
 };
 
 static lua_State* L = NULL;

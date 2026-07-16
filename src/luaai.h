@@ -135,6 +135,17 @@ struct LuaHostApi {
     // wrappers push_item/has_retool/skip_facility need.
     int32_t (*mod_base_making)(int32_t item_id, int32_t base_id);
     int32_t (*skip_gov_facility_bit)(int32_t item_id);
+    // select_build step 3 sub-step 1 (IMPLEMENTATION_DETAILS.md 4.10.9/
+    // 4.10.12, resumed after the Consolidation gate): the shared
+    // prologue through Wbase/Wthreat.
+    int32_t (*region_at)(int32_t x, int32_t y);
+    int32_t (*allow_expand)(int32_t faction_id);
+    int32_t (*project_limit)(int32_t faction_id);
+    int32_t (*main_region)(int32_t faction_id);
+    int32_t (*target_land_region)(int32_t faction_id);
+    int32_t (*enemy_bases)(int32_t faction_id);
+    float (*enemy_mil_factor)(int32_t faction_id);
+    float (*enemy_base_range)(int32_t faction_id);
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai
