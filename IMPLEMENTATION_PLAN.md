@@ -1086,10 +1086,37 @@ d. ~~**All five ported domains re-validated on the harness, by REAL shadow
    > slice) are formally closed. `select_build` itself (stages 2-4)
    > remains open and still frozen pending gate items (c) and (e).
 
-e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
+e. ~~**`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
    (Phase 4.4/6) — needed before any upstream merge is even attempted, and
    currently entirely unwritten despite five domains already carrying
-   `port.source` metadata that nothing reads yet.
+   `port.source` metadata that nothing reads yet.~~ **Done (2026-07-16) —
+   see `IMPLEMENTATION_DETAILS.md` 4.11.**
+   >
+   > `tools/port_drift.py` (new): extracts each `port.source`-tracked C++
+   > function's body at its pinned `upstream_commit` and at the current
+   > `upstream/master` tip, normalizes whitespace/comments, hashes both,
+   > reports drift. Verified against all three real outcomes, not just
+   > the trivial case: run as-is (`upstream/master` happens to equal
+   > every pin right now) reports **11 clean, 0 drifted, 0 errors**;
+   > pointed at a synthetic older base ref (5 commits before the pin)
+   > correctly reports **6 clean, 3 drifted** — exactly the three
+   > functions actually touched by the intervening "Rewrite faction and
+   > movement code" commit; pointed at a bogus ref correctly reports all
+   > entries as errors. Also closed a real gap found while scoping this:
+   > `facility_score`/`governor_priorities` (5.2.1's golden-trace slice)
+   > had no `port.source` entry at all — added
+   > (`lua/ai/build.lua`), so the count is 11 tracked functions, not the
+   > 9 that existed before this session. `docs/LUA_PORTING.md` (new):
+   > human-readable index of all 11, usage docs for the drift script, and
+   > the convention for adding new entries.
+
+**Consolidation gate closed (2026-07-16).** All five items (a-e) are
+done — see each item's own status block above and
+`IMPLEMENTATION_DETAILS.md`'s 5.1.1/5.1.2 (b), 5.2.1 (c), and 4.11 (e)
+for the session records. Item (a) has two sub-items explicitly deferred
+to a future session (harness menu bootstrap, tech-discovery popup) but
+these were already scoped as non-blocking for the gate itself. Porting
+resumes below.
 
 **Resuming after the gate:** `select_build` stages 2-4 pick up exactly
 where `IMPLEMENTATION_DETAILS.md` 4.10.9's 4-stage order left off (step 1

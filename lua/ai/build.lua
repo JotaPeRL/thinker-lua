@@ -26,6 +26,13 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         select_combat = { file = "src/build.cpp", func = "select_combat",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- plan.cpp, not build.cpp -- 4.9's production/plans third slice,
+        -- unaffected by the 15418b28 rewrite (last touched by 6d37d82,
+        -- "Add probe functions"), so the same pin point is still correct.
+        facility_score = { file = "src/plan.cpp", func = "facility_score",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        governor_priorities = { file = "src/plan.cpp", func = "governor_priorities",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 

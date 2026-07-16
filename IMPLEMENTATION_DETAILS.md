@@ -1472,6 +1472,72 @@ verification than every other item in this file (same category as 4.9's
    scaffolding check for this one step, not permanent AI logic, same fate
    as the other temporary dual-run instrumentation elsewhere in this file.
 
+### 4.11 Port drift detection (2026-07-16) — Consolidation gate item e, done
+
+> **Status: done, verified against all three real outcomes (clean,
+> drifted, and error), not just the trivial case.**
+
+`tools/port_drift.py` (new, Python 3 stdlib only — no third-party deps,
+consistent with this project's existing tooling and this session's own
+choices for the Lua/C++ sides). For every `port.source` entry across
+`lua/ai/*.lua` (Plan 4.4's provenance metadata, present since the tech-AI
+pilot but never read by anything until now), extracts the named C++
+function's body via `git show <ref>:<path>` at both the pinned
+`upstream_commit` and the current tip of `upstream/master` (falling back
+to `master` with a warning if that remote isn't fetched — see
+`CLAUDE.md`'s remote layout), normalizes whitespace and comments, hashes
+both with SHA-256, and reports drift.
+
+**Extraction is regex + brace/paren balancing, not a real C++ parser** —
+same pragmatic-tooling precedent as `tools/gen_ffi.cpp`. Function
+*definitions* are distinguished from prototypes and call sites by
+requiring the parameter list's balanced closing paren to be followed by
+`{` (a call site is followed by `;`, a prototype likewise) — verified
+this matters directly: `mod_tech_val`'s definition
+(`src/tech.cpp:366`, `int __cdecl mod_tech_val(...) {`) sits below its own
+call site (`tech.cpp:618`, `mod_tech_val(i, faction_id, false);`), and a
+naive "find the name, grab the next `{...}`" approach would have latched
+onto unrelated code. Comment/string handling for normalization uses the
+standard "comment-or-string-literal" alternation regex trick so a `//`
+or `/*` inside a string literal isn't misread as a comment start.
+
+**Verified against three real scenarios, not just a smoke test:**
+- **Clean (real run):** `upstream/master`'s current tip *is* the pinned
+  commit (`15418b28...`, "Rewrite faction and movement code") for every
+  existing entry — nothing has landed upstream since this port started.
+  Reports **11 clean, 0 drifted, 0 errors**, exit 0.
+- **Drifted (synthetic — pointed `--base-ref` at a commit 5 commits
+  before the pin):** correctly reports **6 clean, 3 drifted** — the 3
+  flagged (`select_colony`, `social_score`, `mod_social_ai`) are exactly
+  the functions actually touched by the intervening "Rewrite faction and
+  movement code" commit, and the other 8 (genuinely untouched by that
+  rewrite) correctly report clean. This is real evidence the diff
+  detection works, not just that the script runs.
+- **Error (bogus `--base-ref`):** all entries correctly report as errors
+  (`cannot read <file> at <ref>`), exit 1, rather than crashing or
+  silently reporting false negatives.
+
+**Closed a real gap found while scoping this, not left for later:**
+`facility_score`/`governor_priorities` (5.2.1's golden-trace slice, also
+`src/plan.cpp`) had no `port.source` entry at all — 4.9 predates the
+provenance-metadata convention being applied retroactively to them. Added
+both to `lua/ai/build.lua`'s existing `source` table, same pinned commit
+(confirmed via `git log -1 15418b28...:src/plan.cpp` that `plan.cpp` was
+last touched by an earlier commit, `6d37d82` "Add probe functions" — so
+the same pin point is still the correct baseline). Tracked-function count
+is now 11, not the 9 that existed before this session.
+
+**`docs/LUA_PORTING.md`** (new): human-readable index of all 11 ported
+functions (domain, Lua module, C++ origin, pinned commit), usage docs
+for `tools/port_drift.py`, and the convention for adding a new entry when
+porting a new function. Explicitly documented as *not* the source of
+truth (that's the `port.source` tables themselves, which the script
+actually reads) — a curated index that needs manual upkeep, same
+trade-off as this file's own session-record structure.
+
+**Files touched:** `tools/port_drift.py` (new), `docs/LUA_PORTING.md`
+(new), `lua/ai/build.lua` (two new `port.source` entries).
+
 ---
 
 ## Phase 5 — validation
