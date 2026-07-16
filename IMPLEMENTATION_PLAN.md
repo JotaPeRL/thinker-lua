@@ -1031,12 +1031,14 @@ d. **All five ported domains re-validated on the harness, by REAL shadow
    > decision, not resolved; see there for what to do if it ever matters
    > again (M6).
    >
-   > **Progress (2026-07-16):** first data point landed —
-   > `IMPLEMENTATION_DETAILS.md` 5.1.2, one full autoplay run (manually
-   > started new game, 71 turns, all 9 hooked functions exercised), zero
-   > `lua_shadow=1` divergences. **1 of the required 3+ saves/maps**; still
-   > need at least one more, plus one with `rule_psi` factions present,
-   > before this item can formally close.
+   > **Progress (2026-07-16):** two data points landed —
+   > `IMPLEMENTATION_DETAILS.md` 5.1.2, two full autoplay runs on distinct
+   > manually-started games (71 and 70 turns, all 9 hooked functions
+   > exercised each time; the second deliberately included a `rule_psi`
+   > faction), zero `lua_shadow=1` divergences in either. **2 of the
+   > required 3+ saves/maps**, `rule_psi` requirement satisfied; still
+   > need at least one more distinct save/map before this item can
+   > formally close.
 
 e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
    (Phase 4.4/6) — needed before any upstream merge is even attempted, and

@@ -1632,6 +1632,19 @@ criterion requires (still need at least one more, plus one with
 **Files touched:** `tools/autoplay_run.sh` (`--lua-shadow` flag, header
 doc), `src/luaai.cpp` (startup `config:` echo line).
 
+**Second run (2026-07-16), new game including a `rule_psi` faction.**
+Same `--no-xvfb --lua-shadow` harness, different manually-started game
+this time deliberately including a `rule_psi` faction (`src/config.cpp`'s
+`BN_PSI` bonus, `MFactions[].rule_psi` — feeds `plan.cpp`'s psi-combat
+scoring and `veh_combat.cpp`'s psi attack/defense bonus). Confirmed via
+`config:`/`register_hooks:` lines as before; nonzero `psi:` fields in
+`plans_upkeep`/`unit_score` debug lines throughout `debug.txt` are
+consistent with an active `rule_psi` faction exercising that branch.
+`outcome: COMPLETED` at turn 70, **zero `lua/cpp ... mismatch` lines**
+again. **2 of the required 3+ saves/maps for gate item (d)**, and the
+`rule_psi` requirement is now satisfied — still need at least one more
+distinct save/map before the item can formally close.
+
 ### 5.2 Golden traces and out-of-game tests
 
 - Instrument the C++ side (debug build) to emit JSON fixtures per function:
