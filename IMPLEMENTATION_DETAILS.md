@@ -1079,11 +1079,22 @@ change (nothing to register).
 > scoped, and no new game session was needed. `VEH`'s FFI exposure and
 > the vehicle-count loop port are now genuinely confirmed correct, not
 > just untested code that happens to compile. See 4.10.10 for what was
-> touched. **Steps 2-4 (push_item + running-best tracker, the
-> `build_order` scoring loop, wiring the real hook) are still
-> unimplemented** — the rest of this section (4.10.1-4.10.9) is the
-> original scoping pass and remains accurate reference material for the
-> parts not yet done.
+> touched.
+>
+> **Update: steps 2 and 3 (sub-steps 1-4) are now done too — this
+> paragraph is left over from when only step 1 was verified, don't trust
+> it past this point.** Current state, read in this order: 4.10.11
+> (step 2, `push_item`/`has_retool`/`skip_facility`), 4.10.12 (step 3.1,
+> the shared prologue), 4.10.13 (step 3.2, `DefendUnit`/`CombatUnit`),
+> 4.10.14 (step 3.3, the `build_order` loop skeleton + 14 no-branch
+> facilities), 4.10.15 (facility-branch catalog + 3 more facilities
+> done). **4.10.15 is the resume point** — it has the full catalog of
+> what's left (~19 more facility-branch code blocks, 7 more special
+> unit-type branches, then wiring the real hook). The rest of this
+> section (4.10.1-4.10.9) is the original 2026-07-14 scoping pass —
+> still useful background on `VEH`/field locations, but check any
+> specific "already exposed" claim against `lua/ffi/types.lua` directly
+> before trusting it; this session found it wrong more than once.
 
 Full read of `select_build` (`src/build.cpp:867-1334`, 467 loc — the
 number quoted when this was first surveyed, 454, was a rough estimate;
@@ -1335,15 +1346,14 @@ A reasonable split, in order:
 
 ---
 
-### 4.10.10 Step 1 session record (2026-07-14) — implemented, in-game verification pending
+### 4.10.10 Step 1 session record (2026-07-14) — implemented; live-verified 2026-07-16 (see 4.10's status block above)
 
 Implements exactly step 1 of 4.10.9's plan: `VEH`'s first-ever FFI exposure
 plus a standalone correctness check for `select_build`'s own vehicle-count
 loop (`build.cpp:913-955`). **Not a hook** — `select_build` itself is still
-pure C++, unhooked; this only adds a temporary, throwaway call that logs
-counters for a human to diff against a debug line already in the original.
-Steps 2-4 (push_item + running-best tracker, the `build_order` scoring
-loop, wiring the real hook) are untouched.
+pure C++, unhooked (still true as of this writing; steps 2-3's work,
+4.10.11-4.10.15, only ever added shadow/diagnostic comparisons, never
+wired a real decision hook — that's step 4, still open).
 
 **Why this isn't wired through the usual dual-run mismatch pattern:**
 every other seam in this project (`find_proto`, `select_colony`,

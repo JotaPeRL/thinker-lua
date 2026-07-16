@@ -727,35 +727,27 @@ enable Lua by default on the branch → next.
    > struct via out-param), so there's no dual-run seam possible for
    > these two; validated by inspection only, see `IMPLEMENTATION_
    > DETAILS.md` 4.9. **`select_build` itself: fully scoped**
-   > (`IMPLEMENTATION_DETAILS.md` 4.10 has the complete dependency catalog —
-   > full 467-loc read: `VEH`'s first-ever exposure, ~50 new
+   > (`IMPLEMENTATION_DETAILS.md` 4.10 has the complete dependency catalog
+   > from the original 467-loc read: `VEH`'s first-ever exposure, ~50 new
    > fields/enums/wrappers, a second `MAP`-touching loop needing the same
    > opaque-wrapper treatment as 4.8's, confirmation that the
    > `std::priority_queue` output mechanism needs no real port — a
    > running-best tracker suffices, the float-arithmetic block that's a
    > first for this project, and a recommended 4-stage implementation
-   > order), **step 1 of that 4-stage order implemented (2026-07-14),
-   > in-game verification pending.** `VEH` exposed in the FFI (first time,
-   > `x`/`y`/`unit_id`/`faction_id`/`order`/`home_base_id`) plus the 8 new
-   > `tech.lua` UNIT-level predicates and the new `lua/api/veh.lua` module
-   > it backs; `select_build`'s own vehicle-count loop
-   > (`build.cpp:913-955`) ported to `lua/ai/build.lua`'s
-   > `vehicle_counts_check`, called from a temporary (non-hook) seam in
-   > `select_build` that just logs its counters for manual comparison
-   > against the C++ `debug("select_build ...")` line a few statements
-   > later — `select_build` itself is still not hooked. `LuaHostApi` bumped
-   > to `api_version=8` (`vehs_ptr`, mirroring `bases_ptr`). Both presets
-   > build clean, every touched Lua file passed a native-`luajit`
-   > `loadfile` syntax check, and the generated `VEH` offsets were hand
-   > cross-checked against `engine_veh.h`'s field declarations (exact
-   > match). **Not yet done: the actual in-game run** — needs a manual Wine
-   > play session comparing `lua.log`'s `vehicle_counts base:N def:...
-   > frm:... prb:...` lines against `debug.txt`'s `select_build ... def:
-   > ... frm: ... prb: ...` lines for the same base/turn. See
-   > `IMPLEMENTATION_DETAILS.md` 4.10.10 for the full session record and
-   > exactly what to check when resuming. The rest of the 4-stage order
-   > (push_item + running-best tracker, the `build_order` scoring loop
-   > itself, then wiring the real hook) remains unimplemented, and
+   > order).
+   >
+   > **Status superseded — this paragraph described 2026-07-14's step 1
+   > only, before that day's remaining work landed. Current state:** step 1
+   > (`VEH` + the vehicle-count loop) and step 2 (`push_item`/`has_retool`/
+   > `skip_facility`) are done and live-verified; step 3 (the `build_order`
+   > loop) has 4 sub-steps done and live-verified (the shared prologue;
+   > `DefendUnit`/`CombatUnit`'s early-return decision; the per-item base
+   > formula, complete for 14 of 36 facilities; 3 more facilities with a
+   > real branch). Step 4 (wiring the real hook) is still open, along with
+   > the rest of the facility branches and 7 more special unit-type
+   > branches. **Full detail and the actual resume point: the
+   > Consolidation gate's "Resuming after the gate" progress log, below —
+   > and `IMPLEMENTATION_DETAILS.md` 4.10.10 through 4.10.15.**
    > `find_project`/`mod_base_hurry`/`plans_upkeep`/`design_units`/
    > `former_plans` remain unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
@@ -1118,10 +1110,14 @@ to a future session (harness menu bootstrap, tech-discovery popup) but
 these were already scoped as non-blocking for the gate itself. Porting
 resumes below.
 
-**Resuming after the gate:** `select_build` stages 2-4 pick up exactly
-where `IMPLEMENTATION_DETAILS.md` 4.10.9's 4-stage order left off (step 1
-done, steps 2-4 open); re-read 4.10's float-arithmetic note (3.7, below)
-before touching `Wbase`/`Wthreat`.
+**Resuming after the gate:** `select_build` stages 2-4 pick up where
+`IMPLEMENTATION_DETAILS.md` 4.10.9's 4-stage order left off (step 1 done
+at the time this was written). **The progress log right below is the
+current state — read it, not this sentence** — steps 2 and 3 (sub-steps
+1-4) are done as of 2026-07-16; `IMPLEMENTATION_DETAILS.md` 4.10.15 is
+the actual resume point, with the full catalog of what's left. Re-read
+4.10's float-arithmetic note (3.7, below) before touching further
+`float` fields — `Wbase`/`Wthreat` already used it correctly.
 
 > **Progress (2026-07-16):** step 2 done and live-verified —
 > `IMPLEMENTATION_DETAILS.md` 4.10.11. `push_item`/`has_retool`/
