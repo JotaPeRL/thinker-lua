@@ -1052,6 +1052,15 @@ int select_build(int base_id) {
         if (t <= DefendUnit && !allow_units) {
             continue;
         }
+        // select_build step 3 sub-step 3 (IMPLEMENTATION_DETAILS.md
+        // 4.10.9/4.10.14, resumed after the Consolidation gate): the
+        // per-item base score. Snapshot BEFORE random(32) below (which
+        // runs unconditionally, before any unit-type branch too) --
+        // lua_ai_shadow_call's own restore is what makes this safe to
+        // call every iteration regardless of whether the check later
+        // fires (3.2's lesson: the snapshot must sit before the real
+        // draw it's meant to align with, not after).
+        LuaShadowCall shadow_item_score = lua_ai_shadow_call("build_order_item_score", 1, {base_id, t});
         int choice = 0;
         int score = random(32)
             + 4*(Wgov.AI_growth * item.explore + Wgov.AI_tech * item.discover
@@ -1348,6 +1357,14 @@ int select_build(int base_id) {
             score += (base->x == p->naval_start_x && base->y == p->naval_start_y ? 160 : 0);
         }
         assert(t > 0 && t <= SP_ID_Last);
+        // Only reached for facility entries that passed every gate above
+        // -- naturally excludes unit entries (continued past earlier)
+        // and energy-gated facilities (continued inside the energy
+        // block) with no special-casing needed. Lua's score is only
+        // complete for the ~14 facilities with no dedicated branch;
+        // mismatches on the rest are expected, not bugs -- see
+        // lua/ai/build.lua's build_order_item_score comment.
+        lua_ai_shadow_check("build_order_item_score", shadow_item_score, &score, 1);
         push_item(builds, base_id, -t, retool, score, --Wt);
     }
     if (builds.size()) {

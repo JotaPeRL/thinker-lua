@@ -1062,7 +1062,7 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-steps 1-2 done, all live-verified
+### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-steps 1-3 done, all live-verified
 
 > **Status (2026-07-16, resuming after the Consolidation gate): step 1
 > now fully verified, not just build-clean.** 4.10.10's own "not yet
@@ -1772,6 +1772,93 @@ clean.
 `defend_unit_explore_veh`, `combat_unit_early_return`, three new
 `port.source` entries), `lua/ai/init.lua` (registers the three real
 hooks), `src/build.cpp` (3 shadow call-site pairs).
+
+### 4.10.14 Step 3 sub-step 3 session record (2026-07-16) — the `build_order` loop's per-item base score, implemented and live-verified
+
+> **Status: done.** Both presets build clean, `port_drift.py` clean (19
+> tracked functions, up from 18), live-verified: 587 mismatches on the
+> real autoplay run, and **every single one** falls on a facility with a
+> real, not-yet-ported branch (`FAC_RECYCLING_TANKS`/`FAC_CHILDREN_CRECHE`/
+> `FAC_RECREATION_COMMONS`/`FAC_NETWORK_NODE`/`FAC_PERIMETER_DEFENSE`/
+> `FAC_RESEARCH_HOSPITAL`/`FAC_COMMAND_CENTER` — 7 of the ~22 branch-
+> having facilities the run happened to exercise). **Zero mismatches on
+> any of the 14 no-branch facilities** — confirmed by checking there is
+> no overlap between the mismatched item_ids and the 14 expected-clean
+> ones, not just eyeballing a low count.
+
+**Cataloged the loop skeleton before planning.** Of `build_order[]`'s 36
+facility entries, ~14 have no dedicated `if (t == FAC_X)` scoring branch
+at all (`FAC_PRESSURE_DOME`, `FAC_HEADQUARTERS`, `FAC_HAB_COMPLEX`,
+`FAC_AEROSPACE_COMPLEX`, `FAC_HABITATION_DOME`, `FAC_FUSION_LAB`,
+`FAC_QUANTUM_LAB`, `FAC_ENERGY_BANK`, `FAC_NANOHOSPITAL`,
+`FAC_COVERT_OPS_CENTER`, `FAC_EMPTY_FACILITY_42`-`45`) — they only pass
+through the shared energy bonus and `GOV_MAY_FORCE_PSYCH` gates before
+`push_item`. For exactly those, the shared per-item base-score formula
+is a *complete* computation. **Scope, per explicit choice**: only that
+shared formula + energy gate — not `allow_units`/`project_change`/
+`can_build_unit` (which gate whether *unit*-type entries even get
+visited), avoiding `queue_items[0]` (an array field; whether
+`gen_ffi.cpp`'s `FIELD()` macro handles a single array slot hasn't come
+up yet, deferred rather than resolved ad hoc).
+
+**One shadow hook, `build_order_item_score(base_id, item_id)`,
+unconditional per loop iteration — a deliberate, reasoned placement, not
+another instance of 3.2's bug.** Must snapshot *before* C++'s own
+`random(32)` draw, which happens before any of the 9 special unit-type
+branches — so the call fires every iteration, unit entries included.
+`lua_ai_shadow_call`'s own restore is what makes this safe regardless of
+downstream branching: it undoes whatever Lua drew (or didn't) before
+C++'s real `random(32)` runs. The **check**, by contrast, sits only in
+the facility path, immediately before the pre-existing
+`push_item(builds, base_id, -t, retool, score, --Wt)` call — never
+reached for unit entries (`continue`d earlier) or energy-gated
+facilities (`continue`d before push_item), no special-casing needed on
+either side. Re-verified by hand before requesting a run (this session's
+now-standard discipline after 3.2's bug): confirmed none of the ~35
+per-facility branches themselves call `random()` — the only RNG draw
+between snapshot and check is the one `random(32)`, so mismatches on
+branch-having facilities are purely missing score components, not a
+second RNG-alignment bug in disguise.
+
+**`lua/ai/build.lua`**: `select_build_prologue` (3.1-3.2) gains
+`wenergy` (`build.cpp:1044-1045`) and now also returns `wgov` (previously
+computed internally but not exposed — needed here for the base formula's
+`AI_growth`/`AI_tech`/`AI_wealth`/`AI_power` weights). `BUILD_ORDER`: a
+1:1 transcription of `build.cpp:983-1041`'s `build_order[]`, **all 45
+entries** (the 9 unit sentinels too, as plain negative literals matching
+those local consts exactly — not FFI enums, `select_build`'s own locals)
+keyed by `item_id`, not just the 14 this slice can fully evaluate — the
+actual data step 4 will need regardless, one mechanical low-risk pass
+(same precedent as batch enum additions: let the shadow-check comparison
+catch a transcription error, don't hand-verify 45 rows). Verified this
+approach doesn't paper over the transcription risk it introduces: since
+the *result* of the mistranscription would show up as a mismatch, it's
+still checked, just at read-run time rather than build time — accepted
+because the alternative (hand-checking 45 rows against a source listing)
+is exactly the kind of manual verification this project's own discipline
+(4.10.4) says to skip in favor of letting real execution catch it.
+`build_order_item_score(base_id, item_id)`: returns `-1` immediately for
+unit entries or unknown ids (never reached for comparison purposes
+anyway); otherwise replicates the `can_build`/`GOV_MAY_PROD_FACILITIES`
+skip, `skip_facility` (already ported, step 2), the base formula, and
+the energy gate only — explicitly not the `GOV_MAY_FORCE_PSYCH` gate
+(irrelevant to the 14; only gates `FAC_PUNISHMENT_SPHERE`/
+`FAC_GENEJACK_FACTORY`) or any of the ~35 branches.
+
+**New engine surface**: `GOV_MAY_PROD_FACILITIES` enum + 26 `FAC_*` item
+IDs referenced in `build_order[]` not yet exposed (batch, all resolved
+clean via `gen_ffi`'s own compile step — no typos); 2 new opaque
+`LuaHostApi` wrappers (`api_version` 12 → 13): `can_build`, `energy_limit`
+(`AIPlans`, same tier as `project_limit` etc.); 2 new `BASE` fields:
+`energy_surplus`, `energy_inefficiency`.
+
+**Files touched:** `tools/gen_ffi.cpp` (27 enum emit lines, 2 `BASE`
+fields), `src/luaai.h`/`.cpp` (2 new `LuaHostApi` wrappers, `api_version`
+bump), `lua/ffi/funcs.lua` (matching cdef + wrappers, `HOST_API_VERSION`
+bump), `lua/ai/build.lua` (`select_build_prologue` gains `wenergy`/
+`wgov`; `BUILD_ORDER` table; `build_order_item_score`; one new
+`port.source` entry), `lua/ai/init.lua` (registers the real shadow
+hook), `src/build.cpp` (one shadow-call site, one shadow-check site).
 
 ### 4.11 Port drift detection (2026-07-16) — Consolidation gate item e, done
 

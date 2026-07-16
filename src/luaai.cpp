@@ -246,6 +246,17 @@ static int32_t host_adjacent_region(int32_t x, int32_t y, int32_t owner, int32_t
     return adjacent_region(x, y, owner, threshold, ocean != 0);
 }
 
+// select_build step 3 sub-step 3 (IMPLEMENTATION_DETAILS.md 4.10.9/
+// 4.10.14, resumed after the Consolidation gate): the build_order loop's
+// per-item base score. Both real engine mechanics, not AI policy.
+static int32_t host_can_build(int32_t base_id, int32_t item_id) {
+    return can_build(base_id, item_id);
+}
+
+static int32_t host_energy_limit(int32_t faction_id) {
+    return plans[faction_id].energy_limit;
+}
+
 static int32_t host_ignore_reactor_power() {
     return conf.ignore_reactor_power;
 }
@@ -361,7 +372,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 12,
+    /* api_version          */ 13,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -438,6 +449,8 @@ static LuaHostApi g_host_api = {
     /* need_scouts          */ host_need_scouts,
     /* has_ships            */ host_has_ships,
     /* adjacent_region      */ host_adjacent_region,
+    /* can_build            */ host_can_build,
+    /* energy_limit         */ host_energy_limit,
 };
 
 static lua_State* L = NULL;

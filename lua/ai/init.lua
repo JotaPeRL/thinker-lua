@@ -45,4 +45,9 @@ return {
     defend_unit_land_defense = build.defend_unit_land_defense,
     defend_unit_explore_veh = build.defend_unit_explore_veh,
     combat_unit_early_return = build.combat_unit_early_return,
+    -- select_build step 3 sub-step 3 (IMPLEMENTATION_DETAILS.md
+    -- 4.10.9/4.10.14, resumed after the Consolidation gate): the
+    -- build_order loop's per-item base score. Real shadow hook (consumes
+    -- RNG via random(32)), same reasoning as sub-step 2.
+    build_order_item_score = build.build_order_item_score,
 }

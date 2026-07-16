@@ -152,6 +152,11 @@ struct LuaHostApi {
     int32_t (*need_scouts)(int32_t base_id, int32_t triad);
     int32_t (*has_ships)(int32_t faction_id);
     int32_t (*adjacent_region)(int32_t x, int32_t y, int32_t owner, int32_t threshold, int32_t ocean);
+    // select_build step 3 sub-step 3 (IMPLEMENTATION_DETAILS.md 4.10.9/
+    // 4.10.14, resumed after the Consolidation gate): the build_order
+    // loop's per-item base score.
+    int32_t (*can_build)(int32_t base_id, int32_t item_id);
+    int32_t (*energy_limit)(int32_t faction_id);
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

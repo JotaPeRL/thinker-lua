@@ -58,6 +58,11 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         combat_unit_early_return = { file = "src/build.cpp", func = "select_build",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- select_build step 3 sub-step 3 (IMPLEMENTATION_DETAILS.md
+        -- 4.10.9/4.10.14, resumed after the Consolidation gate): the
+        -- build_order loop's per-item base score.
+        build_order_item_score = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -796,6 +801,13 @@ local function select_build_prologue(base_id)
     local wgov = governor_priorities(base_id)
     local defenders = idiv(c.defenders + 2, 8)
 
+    -- Wenergy (build.cpp:1044-1045): select_build step 3 sub-step 3
+    -- (IMPLEMENTATION_DETAILS.md 4.10.9/4.10.14, resumed after the
+    -- Consolidation gate).
+    local wenergy = (funcs.has_fac_built(E.FAC_PUNISHMENT_SPHERE, base_id) ~= 0 and 1 or 2)
+        * (base.energy_surplus >= max(funcs.energy_limit(faction_id), 2 * base.energy_inefficiency)
+            and 2 or 1)
+
     local project_limit = funcs.project_limit(faction_id)
     local enemy_mil_factor = funcs.enemy_mil_factor(faction_id)
     local enemy_base_range = funcs.enemy_base_range(faction_id)
@@ -824,7 +836,7 @@ local function select_build_prologue(base_id)
         reserve = reserve, project_limit = project_limit,
         enemy_mil_factor = enemy_mil_factor, wthreat = Wthreat,
         sea_base = sea_base, retool = retool, allow_ships = allow_ships,
-        gov = gov,
+        gov = gov, wgov = wgov, wenergy = wenergy,
     }
 end
 
@@ -918,6 +930,110 @@ local function combat_unit_early_return(base_id)
     return -1
 end
 
+-- select_build itself, step 3 sub-step 3 (IMPLEMENTATION_DETAILS.md
+-- 4.10.9/4.10.14, resumed after the Consolidation gate): the
+-- build_order loop's per-item base score. 1:1 transcription of
+-- build.cpp:983-1041's build_order[] table -- all 45 entries (the 9 unit
+-- sentinels too, as plain negative literals matching those local consts
+-- exactly: SecretProject=-1, Satellites=-2, DefendUnit=-3, CombatUnit=-4,
+-- ColonyUnit=-5, FormerUnit=-6, FerryUnit=-7, CrawlerUnit=-8,
+-- SeaProbeUnit=-9), not just the 14 facilities this slice's scoring
+-- function can fully evaluate -- this is the actual data step 4 will
+-- need regardless, one mechanical low-risk pass. Keyed by item_id:
+-- {explore, discover, build, conquer, energy}.
+local BUILD_ORDER = {
+    [-3] = {0, 0, 0, 0, 0}, -- DefendUnit
+    [E.FAC_PRESSURE_DOME] = {4, 4, 4, 4, 0},
+    [E.FAC_HEADQUARTERS] = {4, 4, 4, 4, 0},
+    [E.FAC_PUNISHMENT_SPHERE] = {0, 0, 4, 4, 0},
+    [E.FAC_RECREATION_COMMONS] = {0, 4, 4, 0, 0},
+    [-4] = {0, 0, 0, 4, 0}, -- CombatUnit
+    [-6] = {3, 0, 3, 0, 0}, -- FormerUnit
+    [-2] = {2, 2, 2, 2, 0}, -- Satellites
+    [E.FAC_RECYCLING_TANKS] = {4, 4, 4, 0, 0},
+    [-9] = {2, 0, 0, 3, 0}, -- SeaProbeUnit
+    [-8] = {3, 0, 3, 0, 0}, -- CrawlerUnit
+    [-7] = {2, 0, 0, 2, 0}, -- FerryUnit
+    [-5] = {4, 1, 1, 0, 0}, -- ColonyUnit
+    [-1] = {3, 3, 3, 3, 0}, -- SecretProject
+    [E.FAC_CHILDREN_CRECHE] = {2, 2, 2, 0, 0},
+    [E.FAC_HAB_COMPLEX] = {4, 4, 4, 0, 0},
+    [E.FAC_NETWORK_NODE] = {2, 4, 4, 0, 2},
+    [E.FAC_HOLOGRAM_THEATRE] = {2, 4, 4, 0, 1},
+    [E.FAC_PERIMETER_DEFENSE] = {2, 2, 2, 4, 0},
+    [E.FAC_AEROSPACE_COMPLEX] = {0, 0, 3, 3, 0},
+    [E.FAC_TREE_FARM] = {2, 2, 2, 0, 3},
+    [E.FAC_GENEJACK_FACTORY] = {0, 1, 3, 1, 0},
+    [E.FAC_ROBOTIC_ASSEMBLY_PLANT] = {0, 1, 3, 1, 0},
+    [E.FAC_NANOREPLICATOR] = {0, 1, 3, 1, 0},
+    [E.FAC_QUANTUM_CONVERTER] = {0, 1, 3, 1, 0},
+    [E.FAC_HABITATION_DOME] = {4, 4, 4, 0, 0},
+    [E.FAC_TACHYON_FIELD] = {0, 0, 3, 4, 0},
+    [E.FAC_GEOSYNC_SURVEY_POD] = {0, 0, 3, 4, 0},
+    [E.FAC_FLECHETTE_DEFENSE_SYS] = {0, 0, 3, 4, 0},
+    [E.FAC_BIOENHANCEMENT_CENTER] = {0, 0, 0, 3, 0},
+    [E.FAC_COMMAND_CENTER] = {0, 0, 0, 3, 0},
+    [E.FAC_NAVAL_YARD] = {0, 0, 0, 3, 0},
+    [E.FAC_PSI_GATE] = {0, 0, 3, 3, 0},
+    [E.FAC_FUSION_LAB] = {2, 4, 2, 0, 4},
+    [E.FAC_QUANTUM_LAB] = {2, 4, 2, 0, 4},
+    [E.FAC_ENERGY_BANK] = {0, 2, 2, 0, 2},
+    [E.FAC_PARADISE_GARDEN] = {0, 2, 4, 0, 0},
+    [E.FAC_RESEARCH_HOSPITAL] = {0, 4, 2, 0, 3},
+    [E.FAC_NANOHOSPITAL] = {0, 4, 2, 0, 3},
+    [E.FAC_HYBRID_FOREST] = {2, 2, 2, 0, 3},
+    [E.FAC_BIOLOGY_LAB] = {3, 2, 0, 0, 0},
+    [E.FAC_CENTAURI_PRESERVE] = {3, 0, 0, 0, 0},
+    [E.FAC_COVERT_OPS_CENTER] = {0, 0, 0, 3, 0},
+    [E.FAC_EMPTY_FACILITY_42] = {0, 2, 2, 0, 0},
+    [E.FAC_EMPTY_FACILITY_43] = {0, 2, 2, 0, 0},
+    [E.FAC_EMPTY_FACILITY_44] = {0, 2, 2, 0, 0},
+    [E.FAC_EMPTY_FACILITY_45] = {0, 2, 2, 0, 0},
+}
+
+-- Implements build.cpp:1049-1051 (skip)/1055-1058 (base formula)/
+-- 1171-1177 (energy gate) only -- not the GOV_MAY_FORCE_PSYCH gate
+-- (build.cpp:1178-1182, only relevant to FAC_PUNISHMENT_SPHERE/
+-- FAC_GENEJACK_FACTORY, neither in the 14 facilities this covers
+-- completely) and not any of the ~35 per-facility branches. For every
+-- OTHER facility (a real branch exists, not ported yet), this
+-- legitimately returns a different answer than C++ -- expected, not a
+-- bug; the shadow-check comparison is only meaningful for: FAC_PRESSURE_
+-- DOME, FAC_HEADQUARTERS, FAC_HAB_COMPLEX, FAC_AEROSPACE_COMPLEX,
+-- FAC_HABITATION_DOME, FAC_FUSION_LAB, FAC_QUANTUM_LAB, FAC_ENERGY_BANK,
+-- FAC_NANOHOSPITAL, FAC_COVERT_OPS_CENTER, FAC_EMPTY_FACILITY_42-45.
+-- Returns -1 for unit entries (item_id < 0) or unrecognized ids -- never
+-- reached for shadow-check purposes anyway (see src/build.cpp's call
+-- site placement).
+local function build_order_item_score(base_id, item_id)
+    if item_id < 0 then
+        return -1
+    end
+    local w = BUILD_ORDER[item_id]
+    if not w then
+        return -1
+    end
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_MAY_PROD_FACILITIES) == 0 or not funcs.can_build(base_id, item_id) then
+        return -1
+    end
+    if skip_facility(base_id, item_id) then
+        return -1
+    end
+    local score = rand.map(0, 32)
+        + 4 * (r.wgov.AI_growth * w[1] + r.wgov.AI_tech * w[2]
+            + r.wgov.AI_wealth * w[3] + r.wgov.AI_power * w[4])
+    if w[5] > 0 then
+        local base = base_api.get(base_id)
+        if base.energy_surplus < 4 and item_id ~= E.FAC_NETWORK_NODE then
+            return -1
+        end
+        score = score + idiv(r.wenergy * w[5] * base.energy_surplus, 4)
+        score = score - 2 * base.energy_inefficiency
+    end
+    return score
+end
+
 port.need_police = need_police
 port.unit_support_plan = unit_support_plan
 port.check_retool = check_retool
@@ -946,4 +1062,5 @@ port.push_item_check = push_item_check
 port.defend_unit_land_defense = defend_unit_land_defense
 port.defend_unit_explore_veh = defend_unit_explore_veh
 port.combat_unit_early_return = combat_unit_early_return
+port.build_order_item_score = build_order_item_score
 return port

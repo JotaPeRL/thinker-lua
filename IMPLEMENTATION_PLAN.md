@@ -1163,9 +1163,22 @@ before touching `Wbase`/`Wthreat`.
 > **all three hooks clean, 0 mismatches.** Three distinct bug classes
 > found this session (double-application, ordering, shadow-placement) —
 > all caught the same way, by shipping the verification and running it
-> against real data. Next: the `build_order[]` loop skeleton itself
-> (needed for `CombatUnit`'s deferred fallback and every remaining
-> branch), or continue cataloging further special branches.
+> against real data.
+>
+> **Step 3, sub-step 3 done and live-verified** —
+> `IMPLEMENTATION_DETAILS.md` 4.10.14. Cataloged the loop skeleton first:
+> of `build_order[]`'s 36 facility entries, ~14 have no dedicated scoring
+> branch at all, so the shared per-item base formula + energy gate is a
+> *complete* computation for exactly those. Scoped to just that (not
+> `allow_units`/`project_change`, deferred — needs `queue_items[0]`, an
+> array field not yet exposed by anything this session). `port_drift.py`
+> clean at 19. Live run: 587 mismatches, and every one falls on a
+> facility with a real, unported branch — **zero mismatches on any of
+> the 14 no-branch facilities**, confirmed by checking there's no overlap
+> between mismatched item_ids and the 14 expected-clean ones. Next:
+> continue cataloging and porting the ~35 individual facility branches
+> and the other 7 special unit-type branches, or wire the real
+> `select_build` hook (step 4) once enough of the loop is covered.
 
 ---
 

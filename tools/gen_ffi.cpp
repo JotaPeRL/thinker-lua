@@ -382,6 +382,11 @@ int main() {
         // these two.
         FIELD(BASE, pop_size),
         FIELD(BASE, nutrient_surplus),
+        // select_build itself, step 3 sub-step 3 (the build_order loop's
+        // per-item base score, IMPLEMENTATION_DETAILS.md 4.10.9/4.10.14,
+        // resumed after the Consolidation gate): Wenergy + the energy gate.
+        FIELD(BASE, energy_surplus),
+        FIELD(BASE, energy_inefficiency),
     }});
 
     // select_build itself (porting-order item 3, final piece,
@@ -638,6 +643,41 @@ int main() {
     printf("    GOV_ALLOW_COMBAT = %d,\n",
         GOV_MAY_PROD_LAND_COMBAT | GOV_MAY_PROD_NAVAL_COMBAT | GOV_MAY_PROD_AIR_COMBAT);
     printf("    GOV_MAY_PROD_EXPLORE_VEH = %d,\n", GOV_MAY_PROD_EXPLORE_VEH);
+    // select_build itself, step 3 sub-step 3 (the build_order loop's
+    // per-item base score, IMPLEMENTATION_DETAILS.md 4.10.9/4.10.14,
+    // resumed after the Consolidation gate). Batch addition -- every
+    // FAC_* item_id referenced in build_order[] not already exposed;
+    // per 4.10.4's discipline, not hand-verified one by one, the
+    // compiler/generator catches a typo'd or missing name as a build
+    // error.
+    printf("    GOV_MAY_PROD_FACILITIES = %d,\n", GOV_MAY_PROD_FACILITIES);
+    printf("    FAC_PRESSURE_DOME = %d,\n", FAC_PRESSURE_DOME);
+    printf("    FAC_NETWORK_NODE = %d,\n", FAC_NETWORK_NODE);
+    printf("    FAC_HOLOGRAM_THEATRE = %d,\n", FAC_HOLOGRAM_THEATRE);
+    printf("    FAC_PERIMETER_DEFENSE = %d,\n", FAC_PERIMETER_DEFENSE);
+    printf("    FAC_AEROSPACE_COMPLEX = %d,\n", FAC_AEROSPACE_COMPLEX);
+    printf("    FAC_GENEJACK_FACTORY = %d,\n", FAC_GENEJACK_FACTORY);
+    printf("    FAC_ROBOTIC_ASSEMBLY_PLANT = %d,\n", FAC_ROBOTIC_ASSEMBLY_PLANT);
+    printf("    FAC_NANOREPLICATOR = %d,\n", FAC_NANOREPLICATOR);
+    printf("    FAC_QUANTUM_CONVERTER = %d,\n", FAC_QUANTUM_CONVERTER);
+    printf("    FAC_TACHYON_FIELD = %d,\n", FAC_TACHYON_FIELD);
+    printf("    FAC_GEOSYNC_SURVEY_POD = %d,\n", FAC_GEOSYNC_SURVEY_POD);
+    printf("    FAC_FLECHETTE_DEFENSE_SYS = %d,\n", FAC_FLECHETTE_DEFENSE_SYS);
+    printf("    FAC_BIOENHANCEMENT_CENTER = %d,\n", FAC_BIOENHANCEMENT_CENTER);
+    printf("    FAC_COMMAND_CENTER = %d,\n", FAC_COMMAND_CENTER);
+    printf("    FAC_NAVAL_YARD = %d,\n", FAC_NAVAL_YARD);
+    printf("    FAC_PSI_GATE = %d,\n", FAC_PSI_GATE);
+    printf("    FAC_FUSION_LAB = %d,\n", FAC_FUSION_LAB);
+    printf("    FAC_QUANTUM_LAB = %d,\n", FAC_QUANTUM_LAB);
+    printf("    FAC_ENERGY_BANK = %d,\n", FAC_ENERGY_BANK);
+    printf("    FAC_PARADISE_GARDEN = %d,\n", FAC_PARADISE_GARDEN);
+    printf("    FAC_RESEARCH_HOSPITAL = %d,\n", FAC_RESEARCH_HOSPITAL);
+    printf("    FAC_NANOHOSPITAL = %d,\n", FAC_NANOHOSPITAL);
+    printf("    FAC_COVERT_OPS_CENTER = %d,\n", FAC_COVERT_OPS_CENTER);
+    printf("    FAC_EMPTY_FACILITY_42 = %d,\n", FAC_EMPTY_FACILITY_42);
+    printf("    FAC_EMPTY_FACILITY_43 = %d,\n", FAC_EMPTY_FACILITY_43);
+    printf("    FAC_EMPTY_FACILITY_44 = %d,\n", FAC_EMPTY_FACILITY_44);
+    printf("    FAC_EMPTY_FACILITY_45 = %d,\n", FAC_EMPTY_FACILITY_45);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {
