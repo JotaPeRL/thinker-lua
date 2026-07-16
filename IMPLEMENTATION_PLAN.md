@@ -1175,10 +1175,25 @@ before touching `Wbase`/`Wthreat`.
 > clean at 19. Live run: 587 mismatches, and every one falls on a
 > facility with a real, unported branch — **zero mismatches on any of
 > the 14 no-branch facilities**, confirmed by checking there's no overlap
-> between mismatched item_ids and the 14 expected-clean ones. Next:
-> continue cataloging and porting the ~35 individual facility branches
-> and the other 7 special unit-type branches, or wire the real
-> `select_build` hook (step 4) once enough of the loop is covered.
+> between mismatched item_ids and the 14 expected-clean ones.
+>
+> **Facility-branch catalog + first branch done** —
+> `IMPLEMENTATION_DETAILS.md` 4.10.15. Cataloged all ~35 remaining
+> branches (~15 code blocks, ~22 facility IDs) — genuinely heterogeneous,
+> two recurring blockers (`queue_items[0]`, `base.eco_damage`) and
+> several new subsystems (social-engineering fields, a new `ResInfo`
+> global, tile scanning, a two-out-param engine call). Implemented only
+> `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER`
+> (zero new engine surface). Found a fourth distinct bug class: a field
+> (`defend_range`) computed but never included in
+> `select_build_prologue`'s own returned table — invisible until this
+> was the first sub-step to need it externally, caught immediately via
+> the shadow hook (56 errors logged, safely contained — shadow mode
+> never risks real gameplay). Fixed; second run confirmed **0 mismatches
+> on all three facilities** across 2234 total mismatches (all on the
+> other, still-unported facilities). Next: pick another zero-or-low-new-
+> surface branch from the catalog, or tackle one of the two recurring
+> blockers (`queue_items[0]`/`eco_damage`) to unblock several at once.
 
 ---
 

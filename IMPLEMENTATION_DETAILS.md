@@ -1062,7 +1062,7 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-steps 1-3 done, all live-verified
+### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-steps 1-4 done, all live-verified
 
 > **Status (2026-07-16, resuming after the Consolidation gate): step 1
 > now fully verified, not just build-clean.** 4.10.10's own "not yet
@@ -1859,6 +1859,128 @@ bump), `lua/ai/build.lua` (`select_build_prologue` gains `wenergy`/
 `wgov`; `BUILD_ORDER` table; `build_order_item_score`; one new
 `port.source` entry), `lua/ai/init.lua` (registers the real shadow
 hook), `src/build.cpp` (one shadow-call site, one shadow-check site).
+
+### 4.10.15 Facility-branch catalog + `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER` (2026-07-16) — implemented and live-verified
+
+> **Status: done for the one branch implemented; the other ~34 branches
+> cataloged, not yet ported.** `port_drift.py` stays clean at 19 (no new
+> `port.source` entry — this extends `build_order_item_score`'s existing
+> one). Live-verified: 0 mismatches on `FAC_COMMAND_CENTER`/
+> `FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER` (item_ids 27/28/30) across
+> two full autoplay runs (2234 total `build_order_item_score` mismatches
+> in the second run, none on these three) — confirmed by absence, not
+> just a low count. One real bug found and fixed: a third distinct
+> failure class again (see below).
+
+**Full facility-branch catalog** (`build.cpp:1229-1358`, ~15 code blocks
+covering ~22 distinct facility IDs beyond the 14 already handled by
+3.3's base formula) — recorded here since cataloging it was this
+session's first task, not just the one branch implemented:
+
+- **Zero new engine surface, implementable immediately:**
+  `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER`
+  (done, this section) and the `FAC_PERIMETER_DEFENSE`-only half of the
+  `FAC_PERIMETER_DEFENSE`/`FAC_TACHYON_FIELD`/`FAC_GEOSYNC_SURVEY_POD`/
+  `FAC_FLECHETTE_DEFENSE_SYS` shared `MaxEnemyRange` bonus block (the
+  other three need `allow_units`, see below).
+- **Recurring blocker: `queue_items[0]`** (a `BASE` array field, first
+  needed field-array of this port — whether `tools/gen_ffi.cpp`'s
+  `FIELD()` macro already handles a single array slot, or needs a new
+  case, hasn't come up yet). Needed by `FAC_PSI_GATE` (`b->item()`) and
+  by the still-deferred `allow_units`/`project_change` from 3.3 (which
+  also blocks the `TACHYON_FIELD`/`GEOSYNC_SURVEY_POD`/
+  `FLECHETTE_DEFENSE_SYS` half of the block above).
+- **Recurring blocker: `base.eco_damage`** (a plain `int32_t` `BASE`
+  field, no mechanism question — just not added yet). Needed by 3
+  separate blocks: `FAC_TREE_FARM`/`FAC_HYBRID_FOREST`,
+  `FAC_BIOLOGY_LAB`/`FAC_CENTAURI_PRESERVE`, and the
+  `FAC_GENEJACK_FACTORY`/`FAC_ROBOTIC_ASSEMBLY_PLANT`/
+  `FAC_NANOREPLICATOR`/`FAC_QUANTUM_CONVERTER` group.
+- **New opaque wrappers needed** (real engine mechanics, none AI
+  policy): `base_unused_space(base_id)`, `facility_count(item_id,
+  faction_id)`, `mineral_output_modifier(base_id)` (all already flagged
+  in 4.10.5, still unimplemented); `nearby_items(x, y, r1, r2, flags)`
+  (a tile-scan, same category as the still-unwritten `FormerUnit`
+  wrapper from 4.10.2); two `conf.*` accessors
+  (`biology_lab_bonus`, `clean_minerals`, same tier as
+  `ignore_reactor_power` etc.).
+- **`mod_psych_check(faction_id, &content_pop, &base_limit)`** — two
+  `int32_t` out-params, needed by the shared `FAC_RECREATION_COMMONS`/
+  `FAC_HOLOGRAM_THEATRE`/`FAC_RESEARCH_HOSPITAL`/`FAC_PARADISE_GARDEN`
+  block. 4.10.5 flagged the encoding as an open question ("two int32_t
+  halves, or a second `LuaHostApi` entry") — still open.
+- **New `ResInfo` global** (`FAC_RECYCLING_TANKS` only) — a new fixed
+  global struct, not a field addition to an existing one; smallest slice
+  is just its `recycling_tanks.{energy,nutrient,mineral}` sub-struct
+  (144-byte `CResourceInfo` per the existing `static_assert`, almost
+  certainly has unrelated resource-type sub-structs — 4.10.3 already
+  scoped this narrowly).
+- **New `Faction`/`AIPlans` fields, no mechanism question, just
+  unadded:** `SE_growth_pending`, `SE_effic_pending`, `SE_alloc_labs`,
+  `SE_alloc_psych`, `SE_planet_pending`, `clean_minerals_modifier`,
+  `mineral_intake` (distinct from the already-exposed `mineral_intake_2`
+  — verify which is which before use), `naval_start_x`/`naval_start_y`.
+- **New `BASE` fields, same category:** `specialist_total`,
+  `assimilation_turns_left`.
+- **`drone_riots`/`drones`**: prologue locals explicitly skipped in 3.1
+  ("Deliberately skips ... drone_riots/drones") — needed by
+  `FAC_PUNISHMENT_SPHERE` and the shared psych-facility block; adding
+  them to `select_build_prologue` is small (both derive from already-
+  exposed `BASE.drone_total`/`talent_total`/`specialist_adjust` plus
+  `base.drone_riots()`/`drone_riots_active()` inline methods, not yet
+  re-ported to Lua).
+- **`map_range(BASE*, BASE*)` overload**: `FAC_PSI_GATE` calls a
+  two-`BASE*`-pointer form, distinct from the already-exposed
+  `map_range(x1,y1,x2,y2)` — likely just needs `base.x`/`.y` extracted
+  in Lua and passed through the existing wrapper; worth confirming
+  they're equivalent before assuming so.
+- **Enums still needed**: `FAC_VIRTUAL_WORLD`, `BIT_FOREST` (used with
+  `BIT_SIMPLE`/`BIT_ADVANCED` per 4.10.4, likely all three together).
+
+**This session, implemented only `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/
+`FAC_BIOENHANCEMENT_CENTER`** (`build.cpp:1322-1331`), chosen
+specifically because it needed none of the above — every value
+(`sea_base`, `allow_ships`, `minerals`, `reserve`, `project_limit`,
+`defend_range`, `MaxEnemyRange`, `Facility[t].cost`/`.maint`) was already
+in `select_build_prologue` (3.1-3.3) or `tech.facility()`. No RNG, so no
+new shadow-call placement question — this only extends the *body* of
+the existing `build_order_item_score` (3.3) between its energy gate and
+`return score`; the C++ shadow-call/check sites (already correctly
+positioned around the whole per-item computation) needed zero changes.
+
+**Real bug found and fixed — a fourth distinct failure class this
+session, not a repeat of steps 2/3.1/3.2's.** First run: 56 `error in
+'build_order_item_score'` lines, `attempt to compare number with nil`,
+and the run crashed (unrelated — a second run without the bug reproduced
+clean through completion, see below). Root cause:
+`select_build_prologue` computes `defend_range` as a local (used
+internally for `Wbase`/`Wthreat` since 3.1) but **never included it in
+the function's own returned table** — every prior sub-step happened not
+to need it externally, so the gap went unnoticed until this one, the
+first to reference `r.defend_range`. Fixed by adding `defend_range =
+defend_range` to the return table. Since this is a shadow hook (not a
+real decision hook), the Lua error was safely contained the whole time
+— logged and skipped, `lua_strict=0`'s designed behavior, C++ always
+governed regardless — worth noting since a bug here could easily be
+mistaken for something that risked real gameplay; it didn't. The CRASH
+on the first run did not reproduce on the second (clean, 0 errors,
+completed at turn 120) — treated as unrelated flakiness, not
+investigated further (same "not worth chasing" call this project made
+for engine-internal nondeterminism earlier this session, 5.3.6).
+>
+> **Four distinct bug classes found this session, worth the full list
+> now:** step 2 — double-application (already-adjusted value fed back
+> into a function that re-adjusts it); 3.1 — pure ordering (a forward
+> reference to a not-yet-declared Lua local); 3.2 — shadow-call placement
+> relative to an RNG-consuming call the Lua side re-invokes
+> independently; 3.4 — a missing field in a shared return table, invisible
+> until a new caller needed exactly that field. All four were caught the
+> same way: ship the verification, run it against real data, don't
+> assume "builds clean" or "syntax-checks" means "is correct."
+
+**Files touched:** `lua/ai/build.lua` only (`select_build_prologue`
+gains `defend_range` in its return table; `build_order_item_score`
+extended with the new branch). No `port.source`/registration changes.
 
 ### 4.11 Port drift detection (2026-07-16) — Consolidation gate item e, done
 

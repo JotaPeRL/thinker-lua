@@ -836,7 +836,7 @@ local function select_build_prologue(base_id)
         reserve = reserve, project_limit = project_limit,
         enemy_mil_factor = enemy_mil_factor, wthreat = Wthreat,
         sea_base = sea_base, retool = retool, allow_ships = allow_ships,
-        gov = gov, wgov = wgov, wenergy = wenergy,
+        gov = gov, wgov = wgov, wenergy = wenergy, defend_range = defend_range,
     }
 end
 
@@ -1031,6 +1031,27 @@ local function build_order_item_score(base_id, item_id)
         score = score + idiv(r.wenergy * w[5] * base.energy_surplus, 4)
         score = score - 2 * base.energy_inefficiency
     end
+
+    -- select_build step 3 sub-step 4 (IMPLEMENTATION_DETAILS.md
+    -- 4.10.9/4.10.15, resumed after the Consolidation gate):
+    -- FAC_COMMAND_CENTER/FAC_NAVAL_YARD/FAC_BIOENHANCEMENT_CENTER
+    -- (build.cpp:1322-1331). No new engine surface -- everything here
+    -- was already in select_build_prologue or tech.facility().
+    if (item_id == E.FAC_COMMAND_CENTER and r.sea_base)
+        or (item_id == E.FAC_NAVAL_YARD and not r.allow_ships) then
+        return -1
+    end
+    if item_id == E.FAC_COMMAND_CENTER or item_id == E.FAC_NAVAL_YARD
+        or item_id == E.FAC_BIOENHANCEMENT_CENTER then
+        local facility = tech.facility(item_id)
+        if r.minerals < max(r.reserve, r.project_limit)
+            or (r.defend_range > idiv(C.MaxEnemyRange, 2) and facility.maint > 0) then
+            return -1
+        end
+        score = score - 4 * (facility.cost + facility.maint)
+        score = score - r.defend_range
+    end
+
     return score
 end
 
