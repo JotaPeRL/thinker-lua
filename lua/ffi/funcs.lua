@@ -84,10 +84,13 @@ typedef struct {
     int32_t (*enemy_bases)(int32_t faction_id);
     float (*enemy_mil_factor)(int32_t faction_id);
     float (*enemy_base_range)(int32_t faction_id);
+    int32_t (*need_scouts)(int32_t base_id, int32_t triad);
+    int32_t (*has_ships)(int32_t faction_id);
+    int32_t (*adjacent_region)(int32_t x, int32_t y, int32_t owner, int32_t threshold, int32_t ocean);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 11
+local HOST_API_VERSION = 12
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -168,4 +171,9 @@ return {
     enemy_bases = function(faction_id) return api.enemy_bases(faction_id) end,
     enemy_mil_factor = function(faction_id) return api.enemy_mil_factor(faction_id) end,
     enemy_base_range = function(faction_id) return api.enemy_base_range(faction_id) end,
+    need_scouts = function(base_id, triad) return api.need_scouts(base_id, triad) ~= 0 end,
+    has_ships = function(faction_id) return api.has_ships(faction_id) ~= 0 end,
+    adjacent_region = function(x, y, owner, threshold, ocean)
+        return api.adjacent_region(x, y, owner, threshold, ocean) ~= 0
+    end,
 }

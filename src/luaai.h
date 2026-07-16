@@ -146,6 +146,12 @@ struct LuaHostApi {
     int32_t (*enemy_bases)(int32_t faction_id);
     float (*enemy_mil_factor)(int32_t faction_id);
     float (*enemy_base_range)(int32_t faction_id);
+    // select_build step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md 4.10.9/
+    // 4.10.13, resumed after the Consolidation gate): DefendUnit/
+    // CombatUnit's early-return decision.
+    int32_t (*need_scouts)(int32_t base_id, int32_t triad);
+    int32_t (*has_ships)(int32_t faction_id);
+    int32_t (*adjacent_region)(int32_t x, int32_t y, int32_t owner, int32_t threshold, int32_t ocean);
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

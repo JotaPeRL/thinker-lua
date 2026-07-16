@@ -226,6 +226,26 @@ static float host_enemy_base_range(int32_t faction_id) {
     return plans[faction_id].enemy_base_range;
 }
 
+// select_build step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md 4.10.9/
+// 4.10.13, resumed after the Consolidation gate): DefendUnit/CombatUnit.
+// All three are real engine mechanics, not AI policy.
+static int32_t host_need_scouts(int32_t base_id, int32_t triad) {
+    return need_scouts(base_id, (Triad)triad);
+}
+
+static int32_t host_has_ships(int32_t faction_id) {
+    return has_ships(faction_id);
+}
+
+// C++'s own signature takes `bool ocean`, not a Triad -- call sites pass
+// TRIAD_SEA/TRIAD_LAND relying on their exact values (1/0) implicitly
+// converting. Kept as a plain int here; Lua callers pass 1/0 (or
+// E.TRIAD_SEA/E.TRIAD_LAND directly, same values) -- passing TRIAD_AIR
+// here would silently mean `true`, same trap the original C++ has.
+static int32_t host_adjacent_region(int32_t x, int32_t y, int32_t owner, int32_t threshold, int32_t ocean) {
+    return adjacent_region(x, y, owner, threshold, ocean != 0);
+}
+
 static int32_t host_ignore_reactor_power() {
     return conf.ignore_reactor_power;
 }
@@ -341,7 +361,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 11,
+    /* api_version          */ 12,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -415,6 +435,9 @@ static LuaHostApi g_host_api = {
     /* enemy_bases          */ host_enemy_bases,
     /* enemy_mil_factor     */ host_enemy_mil_factor,
     /* enemy_base_range     */ host_enemy_base_range,
+    /* need_scouts          */ host_need_scouts,
+    /* has_ships            */ host_has_ships,
+    /* adjacent_region      */ host_adjacent_region,
 };
 
 static lua_State* L = NULL;

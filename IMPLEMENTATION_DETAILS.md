@@ -1062,7 +1062,7 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-step 1 done, all live-verified
+### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-steps 1-2 done, all live-verified
 
 > **Status (2026-07-16, resuming after the Consolidation gate): step 1
 > now fully verified, not just build-clean.** 4.10.10's own "not yet
@@ -1677,6 +1677,101 @@ entry), `src/luaai.h`/`.cpp` (8 new `LuaHostApi` entries + wrappers,
 `select_build_prologue`, `select_build_prologue_check`, one new
 `port.source` entry), `lua/ai/init.lua` (registers
 `select_build_prologue_check`), `src/build.cpp` (one hook call).
+
+### 4.10.13 Step 3 sub-step 2 session record (2026-07-16) — `DefendUnit`/`CombatUnit`'s early-return decision, implemented and live-verified
+
+> **Status: done.** Both presets build clean, `port_drift.py` clean (18
+> tracked functions, up from 15), live-verified: all three hooks
+> (`defend_unit_land_defense`/`defend_unit_explore_veh`/
+> `combat_unit_early_return`) at zero `lua/cpp ... mismatch` lines. One
+> real bug found and fixed along the way — a shadow-hook placement error,
+> not a logic error, and a different failure mode than steps 2/3.1's
+> bugs (worth distinguishing all three, see below).
+
+**Cataloged `DefendUnit`/`CombatUnit` before planning**, not trusting the
+2026-07-14 pass. Both reuse `find_proto`/`select_combat` — already ported
+and shadow-verified with zero divergences over 3 real games — so the new
+logic is genuinely just the gating conditions around calls to
+already-proven building blocks. **Scope cut, deliberate:** only the
+early-return decision sites — `DefendUnit`'s two `return choice`
+branches, `CombatUnit`'s `random(256) < ...` check. `CombatUnit`'s
+fallback (`push_item` with the loop's own per-item `score`) needs the
+`build_order[]` skeleton, not ported yet — deferred to whenever that
+skeleton gets built, not bundled in here. The other 7 special branches
+and all ~35 facility branches remain untouched.
+
+**Design departure from steps 1-3.1: real shadow hooks, not another
+throwaway diagnostic one.** Every prior step used a temporary
+`lua_ai_hook` call piggybacking on a debug line that already existed.
+That doesn't fit here — `DefendUnit`'s second branch and `CombatUnit`'s
+check both consume RNG (`random(8)`, `random(256)`), and neither has an
+existing debug line to diff against (early returns — `select_build`
+exits immediately, no per-item logging is ever reached). A plain
+`lua_ai_hook` call has no RNG snapshot/restore, so a Lua-side call
+drawing from `rand.map` would permanently desync the real RNG stream for
+the rest of the turn. `lua_ai_shadow_call`/`_check` (Consolidation gate
+item b) already exists to prevent exactly this, and gives comparison
+logging for free — so these are 3 real Class 1/2 shadow hooks, same
+mechanism as `find_proto`/`mod_tech_ai`, not a new one-off. Granularity:
+one hook per literal `return choice` site (not one per branch), so
+neither `DefendUnit`'s nor `CombatUnit`'s existing early-return control
+flow needed restructuring into the `report_and_return` pattern — at the
+cost of not verifying the "neither condition holds" case (accepted,
+narrower-but-simpler trade-off).
+
+**New engine surface**, checked against current source: `GOV_ALLOW_COMBAT`
+(computed constant — `GOV_MAY_PROD_LAND_COMBAT | GOV_MAY_PROD_NAVAL_COMBAT
+| GOV_MAY_PROD_AIR_COMBAT`, mirrored from `base.h:5-6` rather than
+hardcoded) and `GOV_MAY_PROD_EXPLORE_VEH` (already in `engine_base.h`,
+just an emit line); 3 new opaque `LuaHostApi` wrappers (`api_version`
+11 → 12): `need_scouts`, `has_ships`, `adjacent_region`. **Real trap
+found while cataloging:** `adjacent_region`'s C++ signature takes `bool
+ocean`, not a `Triad` — call sites pass `TRIAD_SEA`/`TRIAD_LAND` relying
+on their exact values (`1`/`0`, confirmed in `types.enums`) implicitly
+converting to `true`/`false`. The wrapper takes a plain `int32_t`; Lua
+callers pass `1`/`0` (or `E.TRIAD_SEA`/`E.TRIAD_LAND` directly, same
+effect) — documented explicitly so a future port doesn't pass
+`TRIAD_AIR` here and get a silently-wrong `true`. `select_build_prologue`
+(3.1) extended with `retool` (1:1 port of `build.cpp:852-861`, skipping
+`plans_upkeep`'s mutating side effect — already runs for real regardless)
+and `allow_ships` (`has_ships` + `adjacent_region`).
+
+**Real bug found and fixed: a shadow-hook placement error, a third
+distinct failure class this session.** First run: `defend_unit_*` both
+clean (0 mismatches), but `combat_unit_early_return` showed **147
+mismatches**, always `lua=[-1] cpp=[<real choice>]` — Lua never found a
+decision C++ actually made. `select_combat`'s own pre-existing hook (from
+4.8) stayed at 0 mismatches in the same run, isolating the bug to the new
+code, not to `select_combat` itself. Root cause: `lua_ai_shadow_call` was
+placed *after* C++'s own `select_combat(...)` call already ran and
+consumed its RNG draws, instead of before it. Since Lua's
+`combat_unit_early_return` independently calls `select_combat` itself,
+it started from an already-advanced RNG position instead of the same
+starting point C++'s real call used — the two `select_combat` calls were
+never operating on aligned RNG state, so nothing downstream could match
+even though `select_combat`'s logic itself was fine. Fixed by moving the
+`lua_ai_shadow_call` line to the top of the `if (t == CombatUnit ...)`
+block, before C++'s own `select_combat` call — the standard placement
+every other Class 1/2 hook already uses. Second run: all three hooks
+clean.
+>
+> **Three distinct bug classes this session, worth keeping straight:**
+> step 2's bug was a *double-application* (an already-adjusted value fed
+> back into a function that re-adjusts it); 3.1's bug was a pure
+> *ordering* error (a forward reference to a not-yet-declared Lua local,
+> a language-level mistake with no semantic content); this one is a
+> *shadow-call placement* error relative to an RNG-consuming call the
+> Lua side re-invokes independently. All three were caught by the same
+> discipline — ship the diagnostic/shadow hook, run it against real
+> data, don't assume "builds clean" means "is correct."
+
+**Files touched:** `tools/gen_ffi.cpp` (2 enum emit lines), `src/luaai.h`/
+`.cpp` (3 new `LuaHostApi` wrappers, `api_version` bump), `lua/ffi/funcs.lua`
+(matching cdef + wrappers, `HOST_API_VERSION` bump), `lua/ai/build.lua`
+(extended `select_build_prologue`; `defend_unit_land_defense`,
+`defend_unit_explore_veh`, `combat_unit_early_return`, three new
+`port.source` entries), `lua/ai/init.lua` (registers the three real
+hooks), `src/build.cpp` (3 shadow call-site pairs).
 
 ### 4.11 Port drift detection (2026-07-16) — Consolidation gate item e, done
 

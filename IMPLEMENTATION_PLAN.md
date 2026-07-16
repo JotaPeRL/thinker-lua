@@ -1143,10 +1143,29 @@ before touching `Wbase`/`Wthreat`.
 > ordering error (`select_build_prologue` referenced `governor_priorities`
 > before its `local function` declaration; Lua doesn't hoist locals),
 > not a math bug — every call errored out, zero comparable lines logged.
-> Fixed, second run confirmed **556/556 clean**. Next: catalog the exact
-> new engine surface each remaining branch needs (not trusting the
-> 2026-07-14 pass) — likely starting with `DefendUnit`/`CombatUnit`,
-> which reuse the most already-ported infrastructure.
+> Fixed, second run confirmed **556/556 clean**.
+>
+> **Step 3, sub-step 2 done and live-verified** —
+> `IMPLEMENTATION_DETAILS.md` 4.10.13. Cataloged `DefendUnit`/
+> `CombatUnit` against current source first; ported only their
+> early-return decision (not `CombatUnit`'s `push_item` fallback, which
+> needs the still-unported `build_order[]` loop skeleton). These are the
+> first RNG-consuming shadow hooks with no existing debug line to diff
+> against, so — a design departure from steps 1-3.1 — used 3 real
+> `lua_ai_shadow_call`/`_check` hooks (same mechanism as `find_proto`/
+> `mod_tech_ai`) instead of another temporary diagnostic one, since a
+> plain hook has no RNG snapshot/restore and would desync the real RNG
+> stream. `port_drift.py` clean at 18. First run: `defend_unit_*` clean,
+> but `combat_unit_early_return` showed 147 mismatches — root-caused to
+> the shadow-call snapshot being taken *after* C++'s own `select_combat`
+> call instead of before it, so Lua's own independent `select_combat`
+> call started from an already-advanced RNG position. Fixed, second run:
+> **all three hooks clean, 0 mismatches.** Three distinct bug classes
+> found this session (double-application, ordering, shadow-placement) —
+> all caught the same way, by shipping the verification and running it
+> against real data. Next: the `build_order[]` loop skeleton itself
+> (needed for `CombatUnit`'s deferred fallback and every remaining
+> branch), or continue cataloging further special branches.
 
 ---
 

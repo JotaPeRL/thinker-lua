@@ -1075,10 +1075,23 @@ int select_build(int base_id) {
             }
         }
         if (t == DefendUnit && gov & GOV_ALLOW_COMBAT) {
+            // select_build step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md
+            // 4.10.9/4.10.13, resumed after the Consolidation gate): real
+            // shadow hooks, not temporary diagnostic ones -- both this
+            // and the next block consume RNG (find_proto internally,
+            // plus the explicit random(8) below), with no existing debug
+            // line to diff against (early returns), so this needs
+            // lua_ai_shadow_call's snapshot/restore. Only checked on the
+            // path that actually returns -- the "neither condition
+            // holds" case isn't compared (accepted trade-off, avoids
+            // restructuring these early returns into report_and_return).
+            LuaShadowCall shadow1 = lua_ai_shadow_call("defend_unit_land_defense", 1, {base_id});
             if (gov & GOV_MAY_PROD_LAND_DEFENSE && minerals > 0 && defenders < 1
             && (choice = find_proto(base_id, TRFLAG_LAND, WMODE_COMBAT, DEF)) >= 0) {
+                lua_ai_shadow_check("defend_unit_land_defense", shadow1, &choice, 1);
                 return choice;
             }
+            LuaShadowCall shadow2 = lua_ai_shadow_call("defend_unit_explore_veh", 1, {base_id});
             if (gov & GOV_MAY_PROD_EXPLORE_VEH
             && (pods || formers || minerals >= reserve + 2)
             && minerals >= reserve && scouts < 4 && !random(8)
@@ -1086,12 +1099,26 @@ int select_build(int base_id) {
             && (choice = find_proto(base_id,
             sea_base ? TRFLAG_SEA : TRFLAG_LAND, WMODE_COMBAT, sea_base ? ATT : DEF)) >= 0
             && !has_retool(base_id, choice, retool)) {
+                lua_ai_shadow_check("defend_unit_explore_veh", shadow2, &choice, 1);
                 return choice;
             }
         }
         if (t == CombatUnit && gov & GOV_ALLOW_COMBAT && minerals >= reserve) {
+            // Snapshot BEFORE select_combat's own call, not after -- Lua's
+            // combat_unit_early_return independently calls select_combat
+            // itself, so the shadow snapshot must give it the same
+            // pre-select_combat RNG state C++ is about to consume, not an
+            // already-advanced one. Placing this after select_combat (as
+            // first written) meant Lua's own internal select_combat call
+            // started from a different RNG position than C++'s real one
+            // -- found live: combat_unit_early_return alone showed 147
+            // mismatches while select_combat's own (correctly-positioned)
+            // hook stayed at 0, isolating the bug to this call site's
+            // placement, not select_combat's logic.
+            LuaShadowCall shadow3 = lua_ai_shadow_call("combat_unit_early_return", 1, {base_id});
             if ((choice = select_combat(base_id, sea_base, allow_ships)) >= 0) {
                 if (random(256) < (int)(256 * Wthreat) && !has_retool(base_id, choice, retool)) {
+                    lua_ai_shadow_check("combat_unit_early_return", shadow3, &choice, 1);
                     return choice;
                 }
                 if (proto_extra_cost(choice) > 0) {

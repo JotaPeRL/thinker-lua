@@ -36,4 +36,13 @@ return {
     -- 4.10.9/4.10.12, resumed after the Consolidation gate): same
     -- temporary, verification-only precedent.
     select_build_prologue_check = build.select_build_prologue_check,
+    -- select_build step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md
+    -- 4.10.9/4.10.13, resumed after the Consolidation gate): real
+    -- Class 1/2 shadow hooks, not temporary diagnostic ones -- both
+    -- consume RNG (random(8)/random(256)) with no existing debug line to
+    -- diff against, so C++ calls these via lua_ai_shadow_call/_check
+    -- (RNG snapshot/restore), same as find_proto/mod_tech_ai.
+    defend_unit_land_defense = build.defend_unit_land_defense,
+    defend_unit_explore_veh = build.defend_unit_explore_veh,
+    combat_unit_early_return = build.combat_unit_early_return,
 }

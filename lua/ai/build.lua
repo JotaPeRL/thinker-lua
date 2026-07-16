@@ -48,6 +48,16 @@ local port = {
         -- named C++ function -- same convention choice as push_item).
         select_build_prologue = { file = "src/build.cpp", func = "select_build",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- select_build step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md
+        -- 4.10.9/4.10.13, resumed after the Consolidation gate):
+        -- DefendUnit/CombatUnit's early-return decision, part of
+        -- select_build itself (same convention as select_build_prologue).
+        defend_unit_land_defense = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        defend_unit_explore_veh = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        combat_unit_early_return = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -763,6 +773,25 @@ local function select_build_prologue(base_id)
     local allow_pods = funcs.allow_expand(faction_id)
         and (base.pop_size > 1 or base.nutrient_surplus > 0)
 
+    -- retool (build.cpp:852-861): plans_upkeep(faction_id) is skipped --
+    -- a mutating orchestration call that already runs for real in C++
+    -- regardless of this comparison (4.10.8: no pure-query shape, out of
+    -- scope). check_retool is already ported; mod_base_making already
+    -- wrapped (step 2).
+    local prev_id = base.production_id_last
+    local retool = 0
+    if base_api.plr_owner(base) then
+        if check_retool(base) and (prev_id >= 0
+            or (prev_id >= -E.Fac_ID_Last and funcs.has_fac_built(-prev_id, base_id) == 0)
+            or (prev_id < -E.Fac_ID_Last and prev_id ~= -E.FAC_STOCKPILE_ENERGY)) then
+            retool = funcs.mod_base_making(prev_id, base_id)
+        end
+    end
+
+    -- allow_ships (build.cpp:874-875).
+    local allow_ships = funcs.has_ships(faction_id)
+        and funcs.adjacent_region(base.x, base.y, -1, game.map_area_sq_root(), E.TRIAD_SEA)
+
     local c = count_vehicles(base_id, sea_base)
     local wgov = governor_priorities(base_id)
     local defenders = idiv(c.defenders + 2, 8)
@@ -794,6 +823,8 @@ local function select_build_prologue(base_id)
         scouts = c.scouts, allow_pods = allow_pods, minerals = minerals,
         reserve = reserve, project_limit = project_limit,
         enemy_mil_factor = enemy_mil_factor, wthreat = Wthreat,
+        sea_base = sea_base, retool = retool, allow_ships = allow_ships,
+        gov = gov,
     }
 end
 
@@ -810,6 +841,81 @@ local function select_build_prologue_check(base_id)
         r.pods, r.allow_pods and 1 or 0, r.scouts, r.minerals, r.reserve,
         r.project_limit, r.enemy_mil_factor, r.wthreat)
     return 1
+end
+
+-- select_build itself, step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md
+-- 4.10.9/4.10.13, resumed after the Consolidation gate): DefendUnit's
+-- two return sites and CombatUnit's early-return check (build.cpp,
+-- inside the build_order loop). Each is a real Class 1/2 shadow hook
+-- (not a temporary diagnostic one, unlike vehicle_counts_check/
+-- push_item_check/select_build_prologue_check above) -- both consume
+-- RNG (random(8)/random(256)) with no existing debug line to diff
+-- against (they're early returns, select_build exits immediately), so
+-- this needs lua_ai_shadow_call's snapshot/restore, same as
+-- find_proto/mod_tech_ai. Returns the chosen unit_id, or -1 for "no
+-- decision" (matching find_proto's own negative-sentinel convention).
+-- reuses find_proto/select_combat/has_retool -- already ported and
+-- shadow-verified with zero divergences over 3 real games -- so this is
+-- genuinely just the gating conditions around them. The outer `t ==
+-- DefendUnit/CombatUnit && gov & GOV_ALLOW_COMBAT` gate is guaranteed by
+-- the C++ call site's own placement, but re-checked here too so each
+-- function is correct standalone, not just in context.
+local function defend_unit_land_defense(base_id)
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_ALLOW_COMBAT) == 0 then
+        return -1
+    end
+    if bit.band(r.gov, E.GOV_MAY_PROD_LAND_DEFENSE) ~= 0
+        and r.minerals > 0 and r.defenders < 1 then
+        local choice = find_proto(base_id, E.TRFLAG_LAND, E.WMODE_COMBAT, true)
+        if choice >= 0 then
+            return choice
+        end
+    end
+    return -1
+end
+
+-- Evaluation order matters here, not just the final boolean: C++'s
+-- short-circuit `&&` draws random(8) only after the first three
+-- conditions hold, before need_scouts/find_proto -- Lua's `and` short-
+-- circuits identically, so writing the terms in the same left-to-right
+-- order (not pre-computing booleans) reproduces the same RNG draw
+-- sequence find_proto's own internal draws then continue from.
+local function defend_unit_explore_veh(base_id)
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_ALLOW_COMBAT) == 0 then
+        return -1
+    end
+    if bit.band(r.gov, E.GOV_MAY_PROD_EXPLORE_VEH) ~= 0
+        and (r.pods > 0 or r.formers > 0 or r.minerals >= r.reserve + 2)
+        and r.minerals >= r.reserve and r.scouts < 4 and rand.map(0, 8) == 0
+        and funcs.need_scouts(base_id, r.sea_base and E.TRIAD_SEA or E.TRIAD_LAND) then
+        local choice = find_proto(base_id,
+            r.sea_base and E.TRFLAG_SEA or E.TRFLAG_LAND, E.WMODE_COMBAT, not r.sea_base)
+        if choice >= 0 and not has_retool(base_id, choice, r.retool) then
+            return choice
+        end
+    end
+    return -1
+end
+
+-- (int)(256 * Wthreat) is a float-to-int cast, not C integer division --
+-- math.floor, not idiv (idiv is specifically the int/int-truncation
+-- case). Wthreat is provably non-negative given Wbase's clamps (3.1), so
+-- floor matches C's truncation here.
+local function combat_unit_early_return(base_id)
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_ALLOW_COMBAT) == 0 or r.minerals < r.reserve then
+        return -1
+    end
+    local choice = select_combat(base_id, r.sea_base, r.allow_ships)
+    if choice >= 0 then
+        if rand.map(0, 256) < math.floor(256 * r.wthreat)
+            and not has_retool(base_id, choice, r.retool) then
+            return choice
+        end
+    end
+    return -1
 end
 
 port.need_police = need_police
@@ -837,4 +943,7 @@ port.push_item_score = push_item_score
 port.new_build_tracker = new_build_tracker
 port.push_item = push_item
 port.push_item_check = push_item_check
+port.defend_unit_land_defense = defend_unit_land_defense
+port.defend_unit_explore_veh = defend_unit_explore_veh
+port.combat_unit_early_return = combat_unit_early_return
 return port

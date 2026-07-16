@@ -630,6 +630,14 @@ int main() {
     printf("    SP_ID_First = %d,\n", SP_ID_First);
     printf("    SP_ID_Last = %d,\n", SP_ID_Last);
     printf("    Fac_ID_Last = %d,\n", Fac_ID_Last);
+    // select_build itself, step 3 sub-step 2 (DefendUnit/CombatUnit,
+    // IMPLEMENTATION_DETAILS.md 4.10.9/4.10.13, resumed after the
+    // Consolidation gate). GOV_ALLOW_COMBAT is a computed constant in
+    // base.h, not a raw bitfield -- mirrored here from its three
+    // constituent flags rather than hardcoded, matching base.h:5-6 exactly.
+    printf("    GOV_ALLOW_COMBAT = %d,\n",
+        GOV_MAY_PROD_LAND_COMBAT | GOV_MAY_PROD_NAVAL_COMBAT | GOV_MAY_PROD_AIR_COMBAT);
+    printf("    GOV_MAY_PROD_EXPLORE_VEH = %d,\n", GOV_MAY_PROD_EXPLORE_VEH);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {
