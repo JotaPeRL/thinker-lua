@@ -1607,8 +1607,10 @@ prologue, the `build_order[]` loop has **9 special unit-type branches**
 (`Satellites`/`SecretProject`/`DefendUnit`/`CombatUnit`/`FormerUnit`/
 `SeaProbeUnit`/`CrawlerUnit`/`FerryUnit`/`ColonyUnit`) followed by **~35
 individual `t == FAC_X` facility branches**, each with its own bespoke
-formula — genuinely as large as 4.10.9 warned, confirmed by actually
-counting rather than estimating. This session ported only the shared
+formula — genuinely as large as 4.10.9 warned; the "~35"/"confirmed by
+counting" here still overclaimed precision — the actual count (4.10.15,
+done programmatically) is 15 code blocks covering 24 facility IDs, not
+~35 of either. This session ported only the shared
 **prologue through `Wbase`/`Wthreat`** (`build.cpp:847-965`) — nothing
 that depends on it (no unit branches, no facility branches) is touched.
 This unblocks everything downstream and was independently verifiable the
@@ -1790,8 +1792,9 @@ hooks), `src/build.cpp` (3 shadow call-site pairs).
 > real autoplay run, and **every single one** falls on a facility with a
 > real, not-yet-ported branch (`FAC_RECYCLING_TANKS`/`FAC_CHILDREN_CRECHE`/
 > `FAC_RECREATION_COMMONS`/`FAC_NETWORK_NODE`/`FAC_PERIMETER_DEFENSE`/
-> `FAC_RESEARCH_HOSPITAL`/`FAC_COMMAND_CENTER` — 7 of the ~22 branch-
-> having facilities the run happened to exercise). **Zero mismatches on
+> `FAC_RESEARCH_HOSPITAL`/`FAC_COMMAND_CENTER` — 7 of the 24 branch-
+> having facilities the run happened to exercise; corrected from an
+> earlier "~22" estimate, see 4.10.15's note). **Zero mismatches on
 > any of the 14 no-branch facilities** — confirmed by checking there is
 > no overlap between the mismatched item_ids and the 14 expected-clean
 > ones, not just eyeballing a low count.
@@ -1824,8 +1827,9 @@ the facility path, immediately before the pre-existing
 reached for unit entries (`continue`d earlier) or energy-gated
 facilities (`continue`d before push_item), no special-casing needed on
 either side. Re-verified by hand before requesting a run (this session's
-now-standard discipline after 3.2's bug): confirmed none of the ~35
-per-facility branches themselves call `random()` — the only RNG draw
+now-standard discipline after 3.2's bug): confirmed none of the 24
+branch-having facilities' `if (t == FAC_X)` blocks themselves call
+`random()` — the only RNG draw
 between snapshot and check is the one `random(32)`, so mismatches on
 branch-having facilities are purely missing score components, not a
 second RNG-alignment bug in disguise.
@@ -1834,28 +1838,32 @@ second RNG-alignment bug in disguise.
 `wenergy` (`build.cpp:1044-1045`) and now also returns `wgov` (previously
 computed internally but not exposed — needed here for the base formula's
 `AI_growth`/`AI_tech`/`AI_wealth`/`AI_power` weights). `BUILD_ORDER`: a
-1:1 transcription of `build.cpp:983-1041`'s `build_order[]`, **all 45
-entries** (the 9 unit sentinels too, as plain negative literals matching
-those local consts exactly — not FFI enums, `select_build`'s own locals)
-keyed by `item_id`, not just the 14 this slice can fully evaluate — the
-actual data step 4 will need regardless, one mechanical low-risk pass
-(same precedent as batch enum additions: let the shadow-check comparison
-catch a transcription error, don't hand-verify 45 rows). Verified this
-approach doesn't paper over the transcription risk it introduces: since
-the *result* of the mistranscription would show up as a mismatch, it's
-still checked, just at read-run time rather than build time — accepted
-because the alternative (hand-checking 45 rows against a source listing)
-is exactly the kind of manual verification this project's own discipline
-(4.10.4) says to skip in favor of letting real execution catch it.
+1:1 transcription of `build.cpp:983-1041`'s `build_order[]`, **all 47
+entries** (9 unit sentinels as plain negative literals matching those
+local consts exactly — not FFI enums, `select_build`'s own locals —
+plus 38 facilities; recounted programmatically later, 4.10.15's note —
+the "build_order[] has ~45 entries, 36 facilities" figure quoted around
+this session was a rough estimate from 2026-07-14's original scoping
+pass, never recounted precisely until 4.10.15) keyed by `item_id`, not
+just the 14 this slice can fully evaluate — the actual data step 4 will
+need regardless, one mechanical low-risk pass (same precedent as batch
+enum additions: let the shadow-check comparison catch a transcription
+error, don't hand-verify every row). Verified this approach doesn't
+paper over the transcription risk it introduces: since the *result* of
+a mistranscription would show up as a mismatch, it's still checked, just
+at read-run time rather than build time — accepted because the
+alternative (hand-checking 47 rows against a source listing) is exactly
+the kind of manual verification this project's own discipline (4.10.4)
+says to skip in favor of letting real execution catch it.
 `build_order_item_score(base_id, item_id)`: returns `-1` immediately for
 unit entries or unknown ids (never reached for comparison purposes
 anyway); otherwise replicates the `can_build`/`GOV_MAY_PROD_FACILITIES`
 skip, `skip_facility` (already ported, step 2), the base formula, and
 the energy gate only — explicitly not the `GOV_MAY_FORCE_PSYCH` gate
 (irrelevant to the 14; only gates `FAC_PUNISHMENT_SPHERE`/
-`FAC_GENEJACK_FACTORY`) or any of the ~35 branches.
+`FAC_GENEJACK_FACTORY`) or any of the real per-facility branches.
 
-**New engine surface**: `GOV_MAY_PROD_FACILITIES` enum + 26 `FAC_*` item
+**New engine surface**: `GOV_MAY_PROD_FACILITIES` enum + 27 `FAC_*` item
 IDs referenced in `build_order[]` not yet exposed (batch, all resolved
 clean via `gen_ffi`'s own compile step — no typos); 2 new opaque
 `LuaHostApi` wrappers (`api_version` 12 → 13): `can_build`, `energy_limit`
@@ -1872,8 +1880,11 @@ hook), `src/build.cpp` (one shadow-call site, one shadow-check site).
 
 ### 4.10.15 Facility-branch catalog + `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER` (2026-07-16) — implemented and live-verified
 
-> **Status: done for the one branch implemented; the other ~34 branches
-> cataloged, not yet ported.** `port_drift.py` stays clean at 19 (no new
+> **Status: done for 1 of 15 code blocks (3 of 24 branch-having
+> facilities); the other 13 blocks (21 facilities) cataloged, not yet
+> ported** (counts corrected below — programmatic, not the "~35"
+> estimate quoted earlier this session). `port_drift.py` stays clean at
+> 19 (no new
 > `port.source` entry — this extends `build_order_item_score`'s existing
 > one). Live-verified: 0 mismatches on `FAC_COMMAND_CENTER`/
 > `FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER` (item_ids 27/28/30) across
@@ -1882,10 +1893,18 @@ hook), `src/build.cpp` (one shadow-call site, one shadow-check site).
 > just a low count. One real bug found and fixed: a third distinct
 > failure class again (see below).
 
-**Full facility-branch catalog** (`build.cpp:1229-1358`, ~15 code blocks
-covering ~22 distinct facility IDs beyond the 14 already handled by
+**Full facility-branch catalog** (`build.cpp:1229-1358`, 15 code blocks
+covering 24 distinct facility IDs beyond the 14 already handled by
 3.3's base formula) — recorded here since cataloging it was this
-session's first task, not just the one branch implemented:
+session's first task, not just the one branch implemented. **Corrected
+count, verified programmatically, not by eye:** `build_order[]` has 47
+entries (9 unit sentinels + **38** facilities, not the "~45 entries,
+36 facilities" quoted around this session — a rough estimate from the
+2026-07-14 original scoping pass that was never recounted precisely
+until now), of which 14 have no branch (3.3) and 24 do (this section) —
+14 + 24 = 38, confirmed. This section implements 1 of the 15 blocks (3
+of the 24 branch-having facilities), leaving **13 blocks / 21 facilities
+still open.**
 
 - **Zero new engine surface, implementable immediately:**
   `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER`

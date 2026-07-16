@@ -742,10 +742,11 @@ enable Lua by default on the branch → next.
    > `skip_facility`) are done and live-verified; step 3 (the `build_order`
    > loop) has 4 sub-steps done and live-verified (the shared prologue;
    > `DefendUnit`/`CombatUnit`'s early-return decision; the per-item base
-   > formula, complete for 14 of 36 facilities; 3 more facilities with a
-   > real branch). Step 4 (wiring the real hook) is still open, along with
-   > the rest of the facility branches and 7 more special unit-type
-   > branches. **Full detail and the actual resume point: the
+   > formula, complete for 14 of 38 facilities; 3 more of the remaining 24
+   > with a real branch, done). 17 of 38 facilities fully correct; step 4
+   > (wiring the real hook) is still open, along with 13 more
+   > facility-branch code blocks (21 facilities) and 7 more special
+   > unit-type branches. **Full detail and the actual resume point: the
    > Consolidation gate's "Resuming after the gate" progress log, below —
    > and `IMPLEMENTATION_DETAILS.md` 4.10.10 through 4.10.15.**
    > `find_project`/`mod_base_hurry`/`plans_upkeep`/`design_units`/
@@ -1133,7 +1134,10 @@ the actual resume point, with the full catalog of what's left. Re-read
 > `IMPLEMENTATION_DETAILS.md` 4.10.12. Read the full `select_build` body
 > before planning: after the prologue, the scoring loop really does have
 > 9 special unit-type branches plus ~35 individual facility branches, each
-> bespoke — confirmed by counting, not estimating. Ported only the shared
+> bespoke — real, not overstated, though "confirmed by counting" here
+> overclaimed precision it didn't have yet: the actual count (4.10.15,
+> programmatic) is 15 code blocks / 24 facility IDs, not "~35" of
+> either. Ported only the shared
 > prologue through `Wbase`/`Wthreat` (nothing that depends on it yet).
 > `port_drift.py` clean at 15. First autoplay run found a real bug — an
 > ordering error (`select_build_prologue` referenced `governor_priorities`
@@ -1163,7 +1167,8 @@ the actual resume point, with the full catalog of what's left. Re-read
 >
 > **Step 3, sub-step 3 done and live-verified** —
 > `IMPLEMENTATION_DETAILS.md` 4.10.14. Cataloged the loop skeleton first:
-> of `build_order[]`'s 36 facility entries, ~14 have no dedicated scoring
+> of `build_order[]`'s 38 facility entries (recounted precisely in
+> 4.10.15 — corrected from an earlier "~36" estimate), 14 have no dedicated scoring
 > branch at all, so the shared per-item base formula + energy gate is a
 > *complete* computation for exactly those. Scoped to just that (not
 > `allow_units`/`project_change`, deferred — needs `queue_items[0]`, an
@@ -1174,13 +1179,16 @@ the actual resume point, with the full catalog of what's left. Re-read
 > between mismatched item_ids and the 14 expected-clean ones.
 >
 > **Facility-branch catalog + first branch done** —
-> `IMPLEMENTATION_DETAILS.md` 4.10.15. Cataloged all ~35 remaining
-> branches (~15 code blocks, ~22 facility IDs) — genuinely heterogeneous,
-> two recurring blockers (`queue_items[0]`, `base.eco_damage`) and
-> several new subsystems (social-engineering fields, a new `ResInfo`
-> global, tile scanning, a two-out-param engine call). Implemented only
-> `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER`
-> (zero new engine surface). Found a fourth distinct bug class: a field
+> `IMPLEMENTATION_DETAILS.md` 4.10.15. Cataloged all remaining
+> branches (15 code blocks, 24 facility IDs — counted programmatically,
+> not by eye) — genuinely heterogeneous, two recurring blockers
+> (`queue_items[0]`, `base.eco_damage`) and several new subsystems
+> (social-engineering fields, a new `ResInfo` global, tile scanning, a
+> two-out-param engine call). Implemented only
+> `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER` (zero
+> new engine surface) — 1 of 15 blocks, 3 of 24 facilities, leaving
+> **13 blocks / 21 facilities open** (17 of 38 facilities now fully
+> correct, counting 3.3's 14). Found a fourth distinct bug class: a field
 > (`defend_range`) computed but never included in
 > `select_build_prologue`'s own returned table — invisible until this
 > was the first sub-step to need it externally, caught immediately via
