@@ -998,7 +998,15 @@ faction.lua` or `base.lua` (wrapper accessors), `lua/ai/build.lua`
 
 ---
 
-### 4.9 Production/plans port, third slice: `governor_priorities`/`facility_score` — implemented (not dual-run verifiable, by design)
+### 4.9 Production/plans port, third slice: `governor_priorities`/`facility_score` — implemented (not dual-run verifiable at the time; superseded, see below)
+
+> **Update (2026-07-16):** the "not dual-run verifiable, by design"
+> framing below is stale. The Consolidation gate's typed hook-descriptor
+> refactor (5.1.1) generalized `lua_ai_hook`'s contract precisely to fix
+> this gap — both functions are shadow-hooked in `src/plan.cpp` today,
+> confirmed live with zero divergences (gate item d), and also have
+> golden-trace fixtures now (5.2.1). Left as-is below for the historical
+> record of why they originally shipped unhookable.
 
 > **Status (2026-07-14): implemented, building clean on both presets,
 > syntax-checked.** Both fields/enums landed in `tools/gen_ffi.cpp`
@@ -1667,6 +1675,145 @@ Consolidation gate for the formal close-out.
   corner cases traces don't reach.
 - Runner: plain `luajit lua/test/run.lua` looping over `test_*.lua`; no
   framework dependency needed initially.
+
+### 5.2.1 Golden traces implemented, first slice (2026-07-16) — Consolidation gate item c, `facility_score`/`governor_priorities`
+
+> **Status: done, verified genuinely end-to-end** with both hand-built
+> fixtures (including a deliberately-wrong case, to prove the checker
+> isn't vacuous) and a real capture from a live `--golden-trace` autoplay
+> session — 1265/1265 passed against the real corpus, zero failures.
+
+**Why now, despite 4.9's original "no dual-run seam" rationale being
+stale.** Both functions are shadow-hooked now (5.1.1/5.1.2, Consolidation
+gate item b) and confirmed live with zero divergences (gate item d) — no
+longer the least-validated code in the port. But shadow mode only ever
+runs *inside* a live game process. Golden traces are a different,
+complementary layer: capture (args, engine state, result) once, then
+replay through the Lua port under Arch's *native* `luajit` — no Wine, no
+Xvfb, no save file, in principle CI-runnable. That's the actual
+motivation to still build this, not the original "unvalidated" framing.
+
+**Capture side is pure C++ instrumentation, independent of
+`lua_shadow`.** `src/golden_trace.h`/`.cpp` (new): two purpose-built
+functions (not a generic JSON-value abstraction — only two call sites
+exist), each taking flattened ints only, same precedent as
+`lua_ai_shadow_call` flattening `WItem` rather than passing the struct.
+Gated on a new `conf.golden_trace` flag (`src/main.h`/`main.cpp`, same
+"unlisted debug option" pattern as `minimal_popups` — not in the shipped
+`docs/thinker.ini` template), zero-overhead early return when unset, same
+convention as `lua_shadow`. Doesn't invoke the Lua side at all — just
+records what the C++ implementation already computed — so it works
+whether or not `lua_ai`/`lua_shadow` are even on. Appends one JSON-Lines
+object per call to `golden_traces.jsonl` in the game dir, opened in
+**append mode** (unlike `lua_log`'s per-VM-init truncate), so a fixture
+corpus can accumulate across multiple sessions/games instead of only
+capturing one run — `tools/autoplay_run.sh`'s stale-log cleanup step
+deliberately excludes it for the same reason. One call site each added
+in `src/plan.cpp`'s `facility_score`/`governor_priorities`, right next to
+the existing shadow-mode calls — all the values needed (`Wgov`, `p`,
+`value`, `base`, `f`, `is_human(...)`, `cpp_out`) were already in scope,
+so this is a true 1-3 line addition per function.
+
+**Fixture format** (JSON Lines, nested `args`/`observed_state`/`result`
+objects, matching Plan 5.2's schema exactly):
+```json
+{"function":"governor_priorities","args":{"base_id":5},"observed_state":{"base":{"governor_flags":0,"defend_goal":2,"faction_id":1,"is_human":1},"faction":{"AI_growth":0,"AI_tech":0,"AI_wealth":0,"AI_power":0,"AI_fight":0}},"result":{"AI_growth":4,"AI_tech":1,"AI_wealth":1,"AI_power":1,"AI_fight":0},"rng_before":1234,"rng_after":1234}
+```
+`rng_before`/`rng_after` are captured for schema uniformity with future
+hooks even though these two are RNG-free by construction (no `random()`
+calls in either) — always equal here, read once via the existing
+`game_rand_state()` accessor (Phase 5.3.5).
+
+**Replay runner is the hard part, and the actual reason this needed real
+design work.** `tools/golden_trace_replay.lua` (new) runs under Arch's
+*native* `luajit` — a different process, architecture, and (typically)
+pointer width than the embedded 32-bit-Windows LuaJIT inside
+`thinker.dll`. `lua/api/base.lua`/`faction.lua`/`tech.lua` read live
+engine memory via `ffi.cast` on pointers obtained from the real
+`LuaHostApi`, and `lua/ffi/validate.lua`'s sizeof/alignof/offsetof checks
+validate against the real mingw-compiled struct layout — none of that
+exists, or would even validate correctly, outside the actual running
+game process. So the replay runner can't load the real `lua/api/*.lua`
+modules unmodified; it needs fixture-backed substitutes, exactly Plan
+5.2's "fixture-backed `api/` implementation" step.
+
+This turned out tractable because `lua/ai/build.lua` loads its
+dependencies via plain `dofile(path)` at file scope — this project never
+uses `require` (`lua/init.lua`: `package` stays disabled outside debug
+builds) — and `dofile_once` (`lua/init.lua:28`) is just a 6-line
+memoizing wrapper the replay runner can reimplement itself. The runner
+**overrides the global `dofile`** before loading `lua/ai/build.lua`,
+intercepting exactly the three module paths `facility_score`/
+`governor_priorities` call into (`lua/api/base.lua`, `faction.lua`,
+`tech.lua`) with fixture-backed plain-Lua-table stand-ins, and returning
+trivial empty stubs for the other modules `build.lua` also `dofile`s at
+load time for *unrelated* functions (`game.lua`, `rand.lua`, `veh.lua`,
+`lua/ffi/funcs.lua`) — none of those are called by the two functions
+under test, they just need to not error at module-load.
+`lua/api/cmath.lua` is the one exception loaded **for real** (delegated
+to the real `dofile`): it's pure Lua using only LuaJIT's built-in `bit`
+library (available under native `luajit` too), no `ffi`/host dependency
+at all, so faking it would be pure risk for no benefit.
+
+**One stub can't be trivially empty, found before running anything (not
+by trial and error):** `lua/ffi/validate.lua`, because `local E =
+types.enums` (`lua/ai/build.lua:47`) evaluates unconditionally at module
+load, and `governor_priorities`'s `is_human` branch indexes
+`E.GOV_PRIORITY_EXPLORE`/`DISCOVER`/`BUILD`/`CONQUER` unconditionally —
+an empty-table stub makes `E` non-nil at load time but crashes on first
+use ("attempt to index a nil value") once one of those keys is read from
+an empty table used as a bitmask operand... actually crashes earlier:
+`types.enums` itself is `nil` on an empty `{}` stub, so `local E = nil`,
+and *any* `E.FOO` lookup inside `governor_priorities` errors immediately.
+Fixed by hand-copying the four real values from `engine_base.h`
+(`GOV_PRIORITY_EXPLORE = 0x1000000`, `DISCOVER = 0x2000000`, `BUILD =
+0x4000000`, `CONQUER = 0x8000000`, matching `lua/ffi/types.lua`'s
+generated constants) into the replay script's stub — these are stable
+engine constants, not expected to change, and the correctness of the
+replay depends on using the *real* bit values so branch decisions on a
+captured `governor_flags` bitmask reproduce correctly.
+
+No production Lua file changes at all — every bit of fixture
+substitution lives in the new replay-runner file. `lua/ai/build.lua`
+itself loads through the real, unpatched `dofile`.
+
+**Verified genuinely end-to-end**, not just a syntax check: hand-built a
+`.jsonl` file with fixture lines computed by hand from the real
+`facility_score`/`governor_priorities` formulas (`src/plan.cpp`/
+`lua/ai/build.lua`), covering: a correct `facility_score` case, a
+**deliberately wrong** `facility_score` case (to prove the checker isn't
+vacuous — confirmed it reports `FAIL` with expected/actual values and a
+nonzero exit code), `governor_priorities`'s `is_human=1` branch, and its
+`is_human=0` branch. All four behaved exactly as hand-computed
+(`PASS`/`FAIL`/`PASS`/`PASS`, exit code 1 due to the intentional
+failure). Also checked the empty-file edge case (`0/0 passed`, exit 0 —
+a no-op pass, not a failure). Both presets (`ninja-develop`,
+`ninja-debug`) rebuild clean, zero warnings on the new
+`golden_trace.cpp` under this project's `-Wall -Wextra -Wshadow`
+flags — note the glob-based `file(GLOB ... "src/*.cpp")` in
+`CMakeLists.txt` needs a fresh `cmake --preset ...` configure to pick up
+a newly-added `.cpp` file; a build-only `cmake --build` after adding
+`src/golden_trace.cpp` fails to link with "undefined reference" until
+reconfigured.
+
+**Real fixture capture + replay, done (2026-07-16), same session.** User
+ran `tools/autoplay_run.sh --no-xvfb --golden-trace` (Wine, real game), then
+`luajit tools/golden_trace_replay.lua <captured golden_traces.jsonl>`
+against the real corpus: **1265/1265 passed**, zero failures, covering
+both `facility_score` (many distinct `item_id`s, including negative
+results — confirms the replay handles negative ints correctly, not just
+the positive cases the hand-built test above happened to use) and both
+`governor_priorities` branches across over a hundred distinct `base_id`s.
+This is the first slice's actual proof: the fixture-backed `dofile`
+substitution, the hand-copied `GOV_PRIORITY_*` enum values, and the JSON
+parser all hold up against real captured engine state, not just the
+hand-computed smoke test.
+
+**Files touched:** `src/golden_trace.h`/`.cpp` (new), `src/main.h` (add
+`#include "golden_trace.h"`, `golden_trace` config field), `src/main.cpp`
+(`option_handler` branch), `src/plan.cpp` (two call sites),
+`tools/golden_trace_replay.lua` (new), `tools/autoplay_run.sh`
+(`--golden-trace` flag, artifact collection, cleanup exclusion).
 
 ### 5.3 Autoplay harness and graduated equivalence
 

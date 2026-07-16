@@ -237,6 +237,15 @@ struct Config {
         // lua_ai_shadow_call/lua_ai_shadow_check). 0 = zero overhead
         // beyond this flag check -- no Lua call, no RNG state touched.
     int lua_strict = 0;
+    int golden_trace = 0; // Phase 5.2 golden traces, unlisted option (same
+        // class as minimal_popups below): appends one JSON-Lines fixture
+        // per instrumented call (args/observed_state/result) to
+        // golden_traces.jsonl (src/golden_trace.h), for offline replay
+        // under native luajit (tools/golden_trace_replay.lua) -- no Wine,
+        // no save file, no live game needed to re-check. Independent of
+        // lua_shadow: doesn't invoke the Lua side at all, just records
+        // what C++ already computed. 0 = zero overhead beyond this flag
+        // check.
     int autoplay = 0; // Phase 5.3 spike: bypass modal popups, log to autoplay.log
     // Phase 5.3 determinism harness: 0 (default) = seed the mod's own RNG
     // (random_reseed/map_rand, distinct from the engine's own game_rand)
@@ -455,6 +464,7 @@ struct AIPlans {
 #include "test.h"
 #include "debug.h"
 #include "luaai.h"
+#include "golden_trace.h"
 
 extern FILE* debug_log;
 extern Config conf;

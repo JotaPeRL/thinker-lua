@@ -73,6 +73,8 @@ int option_handler(void* user, const char* section, const char* name, const char
         cf->lua_shadow = atoi(value);
     } else if (MATCH("lua_strict")) {
         cf->lua_strict = clamp(atoi(value), 0, 2);
+    } else if (MATCH("golden_trace")) {
+        cf->golden_trace = atoi(value);
     } else if (MATCH("autoplay")) {
         cf->autoplay = atoi(value);
     } else if (MATCH("fixed_rng_seed")) {

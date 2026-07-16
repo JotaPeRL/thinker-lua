@@ -995,11 +995,52 @@ b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
    > fact (fixed with a `config: lua_ai=.. lua_shadow=.. lua_strict=..
    > autoplay=..` line at Lua runtime init). See 5.1.2 for detail.
 
-c. **Golden traces (Phase 5.2), starting with the two functions currently
+c. ~~**Golden traces (Phase 5.2), starting with the two functions currently
    "validated by inspection" only** — `governor_priorities` and
    `facility_score` (`IMPLEMENTATION_DETAILS.md` 4.9) — since they have no
    dual-run seam at all today and are therefore the least-validated code
-   in the port so far, not the most.
+   in the port so far, not the most.~~ **Done (2026-07-16), first slice —
+   see `IMPLEMENTATION_DETAILS.md` 5.2.1.**
+   >
+   > **Framing correction:** the "no dual-run seam" rationale is now
+   > stale — item (b)'s shadow-mode work (done, same session) generalized
+   > the hook contract and both functions are shadow-hooked in
+   > `src/plan.cpp` today, confirmed live with zero divergences (item d).
+   > Golden traces are still worth building on top of that: a
+   > *complementary* validation layer that runs the Lua port offline,
+   > under Arch's native `luajit`, against captured (args, engine state,
+   > result) fixtures — no Wine, no Xvfb, no live game, in principle
+   > CI-runnable, unlike shadow mode which only ever exercises anything
+   > inside an actual running game process.
+   >
+   > **What landed:** `src/golden_trace.h`/`.cpp` (new) — two
+   > purpose-built functions, gated on a new `conf.golden_trace` flag
+   > (same "unlisted debug option" pattern as `minimal_popups`, not in
+   > the shipped `docs/thinker.ini`), appending one JSON-Lines fixture
+   > per call to `golden_traces.jsonl` in the game dir (append mode, not
+   > cleared between runs — meant to accumulate into a corpus, unlike
+   > `lua.log`/`debug.txt`). One call each added in `src/plan.cpp`'s
+   > `facility_score`/`governor_priorities`, next to the existing
+   > shadow-mode calls. `tools/golden_trace_replay.lua` (new): a
+   > native-`luajit`-only replay runner with its own minimal JSON parser
+   > and a `dofile` override that substitutes fixture-backed stand-ins
+   > for `lua/api/base.lua`/`faction.lua`/`tech.lua` (the only three
+   > modules the two functions actually call into) while loading
+   > `lua/ai/build.lua` itself for real — no production Lua file changes.
+   > `tools/autoplay_run.sh` gained a `--golden-trace` flag (same shape as
+   > `--lua-shadow`). Verified genuinely end-to-end (not just syntax
+   > checked): hand-built fixture lines exercising both
+   > `governor_priorities` branches (`is_human` true/false) and a
+   > deliberately-wrong `facility_score` case, replayed correctly
+   > (PASS/PASS/FAIL, correct exit code) — proves the checker isn't
+   > vacuous. Both presets rebuild clean. **Then confirmed against a real
+   > capture, same session:** `--no-xvfb --golden-trace` autoplay run,
+   > replayed with `tools/golden_trace_replay.lua` — **1265/1265 passed**,
+   > zero failures, across many distinct `facility_score` item IDs
+   > (including negative results) and both `governor_priorities` branches
+   > over 100+ distinct base IDs. First slice fully done, item (c) closed
+   > for these two functions — extending to more hooks is future work,
+   > not scoped here.
 
 d. ~~**All five ported domains re-validated on the harness, by REAL shadow
    mode (item b), not by trajectory comparison.**~~ **Done (2026-07-16).**

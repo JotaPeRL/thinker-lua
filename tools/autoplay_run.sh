@@ -127,6 +127,22 @@
 #                             second AI call per hook and is only useful
 #                             when you intend to inspect the log for
 #                             mismatches afterward.
+#   --golden-trace              Force golden_trace=1 (Plan 5.2 golden
+#                             traces, Consolidation gate item c): appends
+#                             one JSON-Lines fixture per facility_score/
+#                             governor_priorities call to
+#                             golden_traces.jsonl in the game dir --
+#                             independent of --lua-shadow, doesn't invoke
+#                             Lua at all, just records what C++ computed.
+#                             Same "unlisted debug option" append pattern
+#                             as minimal_popups below (not in docs/
+#                             thinker.ini's shipped template). Unlike
+#                             lua.log/debug.txt, golden_traces.jsonl is
+#                             NOT cleared between runs -- it's meant to
+#                             accumulate into a fixture corpus across
+#                             sessions/games, not capture just one run.
+#                             Replay offline afterward with native luajit:
+#                             luajit tools/golden_trace_replay.lua <path>.
 #
 # Artifacts land under runs/<UTC timestamp>-<preset>/ (repo root): lua.log,
 # autoplay.log, debug.txt (debug preset only), state_hashes.log (just the
@@ -149,6 +165,7 @@ SAVE_FILE=""
 USE_XVFB=1
 RNG_SEED=""
 LUA_SHADOW=0
+GOLDEN_TRACE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -162,6 +179,7 @@ while [ $# -gt 0 ]; do
         --save) SAVE_FILE="$2"; shift 2 ;;
         --rng-seed) RNG_SEED="$2"; shift 2 ;;
         --lua-shadow) LUA_SHADOW=1; shift ;;
+        --golden-trace) GOLDEN_TRACE=1; shift ;;
         --no-xvfb) USE_XVFB=0; shift ;;
         -h|--help) awk 'NR==1{next} /^#/{sub(/^#/,""); print; next} {exit}' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
@@ -246,11 +264,16 @@ fi
 if [ "$LUA_SHADOW" = "1" ]; then
     sed -i -e 's/^lua_shadow=.*/lua_shadow=1\r/' "$INI_PATH"
 fi
+if [ "$GOLDEN_TRACE" = "1" ]; then
+    printf 'golden_trace=1\r\n' >> "$INI_PATH"
+fi
 
 # --- Clean stale logs from any prior session -----------------------------
 # lua.log/autoplay.log are opened in append mode; without this a stale log
 # from a previous manual session would make the very first poll below see
 # an already-advanced turn number and mis-time the stall window.
+# golden_traces.jsonl is deliberately NOT included here -- see --golden-trace
+# above, it's meant to accumulate across runs, not reset per run.
 rm -f "$GAME_DIR/lua.log" "$GAME_DIR/autoplay.log" "$GAME_DIR/debug.txt"
 
 # --- Launch -------------------------------------------------------------
@@ -457,6 +480,10 @@ WINEPREFIX="$WINEPREFIX_DIR" wineserver -k 2>/dev/null
 [ -f "$LUA_LOG" ] && cp "$LUA_LOG" "$RUN_DIR/lua.log"
 [ -f "$GAME_DIR/autoplay.log" ] && cp "$GAME_DIR/autoplay.log" "$RUN_DIR/autoplay.log"
 [ -f "$GAME_DIR/debug.txt" ] && cp "$GAME_DIR/debug.txt" "$RUN_DIR/debug.txt"
+# golden_traces.jsonl accumulates in $GAME_DIR across runs (never cleared,
+# see --golden-trace above) -- this is a snapshot copy of the corpus as it
+# stood at the end of *this* run, not a per-run-only file.
+[ -f "$GAME_DIR/golden_traces.jsonl" ] && cp "$GAME_DIR/golden_traces.jsonl" "$RUN_DIR/golden_traces.jsonl"
 [ -d "$GAME_DIR/saves" ] && cp -r "$GAME_DIR/saves" "$RUN_DIR/saves"
 if [ -f "$RUN_DIR/lua.log" ]; then
     grep 'state_hash turn=' "$RUN_DIR/lua.log" > "$RUN_DIR/state_hashes.log" || true

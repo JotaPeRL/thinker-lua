@@ -19,6 +19,13 @@ int facility_score(FacilityId item_id, WItem& Wgov) {
         + Wgov.AI_growth * p.AI_growth + Wgov.AI_power * p.AI_power
         + Wgov.AI_tech * p.AI_tech + Wgov.AI_wealth * p.AI_wealth;
     lua_ai_shadow_check("facility_score", shadow, &value, 1);
+    // Phase 5.2 golden traces (Consolidation gate item c). No-op unless
+    // conf.golden_trace -- independent of shadow mode above, doesn't need
+    // the Lua side at all.
+    golden_trace_facility_score((int)item_id,
+        Wgov.AI_growth, Wgov.AI_tech, Wgov.AI_wealth, Wgov.AI_power, Wgov.AI_fight,
+        p.AI_growth, p.AI_tech, p.AI_wealth, p.AI_power, p.AI_fight,
+        value);
     return value;
 }
 
@@ -52,6 +59,12 @@ void governor_priorities(BASE& base, WItem& Wgov) {
     }
     int cpp_out[5] = {Wgov.AI_growth, Wgov.AI_tech, Wgov.AI_wealth, Wgov.AI_power, Wgov.AI_fight};
     lua_ai_shadow_check("governor_priorities", shadow, cpp_out, 5);
+    // Phase 5.2 golden traces (Consolidation gate item c). No-op unless
+    // conf.golden_trace.
+    golden_trace_governor_priorities(base_id,
+        (int)gov, base.defend_goal, base.faction_id, is_human(base.faction_id) ? 1 : 0,
+        f.AI_growth, f.AI_tech, f.AI_wealth, f.AI_power, f.AI_fight,
+        cpp_out[0], cpp_out[1], cpp_out[2], cpp_out[3], cpp_out[4]);
 }
 
 void reset_state() {
