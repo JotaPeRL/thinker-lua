@@ -108,6 +108,25 @@
 #                             this makes every AI faction's dice rolls
 #                             identical across runs, which you want for
 #                             comparison, not for varied gameplay.
+#   --lua-shadow                Force lua_shadow=1 (Plan 5.1 shadow mode:
+#                             every hooked AI decision runs both Lua and
+#                             C++ side by side, C++ always governs,
+#                             mismatches logged to lua.log/debug.txt as
+#                             "lua/cpp <hook> mismatch: ..."). Needed
+#                             because the ini overwrite below (docs/
+#                             thinker.ini's shipped default) is
+#                             lua_shadow=0 and nothing else forces it --
+#                             a plain autoplay run does NOT exercise
+#                             shadow mode even if the deployed thinker.ini
+#                             had lua_shadow=1 before this script ran
+#                             (found live, 2026-07-16: the ini get
+#                             overwritten for the run's duration and only
+#                             restored on exit, so the pre-run value never
+#                             takes effect while the game is up). Omit for
+#                             normal autoplay runs -- shadow mode adds a
+#                             second AI call per hook and is only useful
+#                             when you intend to inspect the log for
+#                             mismatches afterward.
 #
 # Artifacts land under runs/<UTC timestamp>-<preset>/ (repo root): lua.log,
 # autoplay.log, debug.txt (debug preset only), state_hashes.log (just the
@@ -129,6 +148,7 @@ WINEPREFIX_DIR="$HOME/.wine-smac"
 SAVE_FILE=""
 USE_XVFB=1
 RNG_SEED=""
+LUA_SHADOW=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -141,6 +161,7 @@ while [ $# -gt 0 ]; do
         --wineprefix) WINEPREFIX_DIR="$2"; shift 2 ;;
         --save) SAVE_FILE="$2"; shift 2 ;;
         --rng-seed) RNG_SEED="$2"; shift 2 ;;
+        --lua-shadow) LUA_SHADOW=1; shift ;;
         --no-xvfb) USE_XVFB=0; shift ;;
         -h|--help) awk 'NR==1{next} /^#/{sub(/^#/,""); print; next} {exit}' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 1 ;;
@@ -221,6 +242,9 @@ sed -i \
 printf 'minimal_popups=1\r\n' >> "$INI_PATH"
 if [ -n "$RNG_SEED" ]; then
     printf 'fixed_rng_seed=%s\r\n' "$RNG_SEED" >> "$INI_PATH"
+fi
+if [ "$LUA_SHADOW" = "1" ]; then
+    sed -i -e 's/^lua_shadow=.*/lua_shadow=1\r/' "$INI_PATH"
 fi
 
 # --- Clean stale logs from any prior session -----------------------------

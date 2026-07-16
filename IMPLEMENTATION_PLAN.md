@@ -984,9 +984,16 @@ b. **Dual-run instrumentation promoted to real shadow mode.** Replace the
    > its declared order, since the underlying Lua implementations keep
    > their natural named-table interface for any future internal caller.
    > Both presets rebuild clean; Lua files pass `luajit loadfile`
-   > syntax checks. **Not yet exercised in an actual `lua_shadow=1`
-   > session** — that's manual follow-up, same as every prior C++ change
-   > this project has landed without immediate in-game verification.
+   > syntax checks. **Exercised live the same day
+   > (`IMPLEMENTATION_DETAILS.md` 5.1.2):** `register_hooks: 11 hook(s)
+   > registered`, zero `lua/cpp ... mismatch` lines over a full
+   > `--lua-shadow` autoplay run. Found and fixed two real gaps along the
+   > way — the harness was silently discarding `lua_shadow=1` (overwrote
+   > `thinker.ini` with the shipped `lua_shadow=0` default and never
+   > re-forced it, fixed with a new `--lua-shadow` flag), and there was no
+   > way to confirm which config flags were actually in effect after the
+   > fact (fixed with a `config: lua_ai=.. lua_shadow=.. lua_strict=..
+   > autoplay=..` line at Lua runtime init). See 5.1.2 for detail.
 
 c. **Golden traces (Phase 5.2), starting with the two functions currently
    "validated by inspection" only** — `governor_priorities` and
@@ -1023,6 +1030,13 @@ d. **All five ported domains re-validated on the harness, by REAL shadow
    > is preserved in `IMPLEMENTATION_DETAILS.md` 5.3.4-5.3.6 — closed by
    > decision, not resolved; see there for what to do if it ever matters
    > again (M6).
+   >
+   > **Progress (2026-07-16):** first data point landed —
+   > `IMPLEMENTATION_DETAILS.md` 5.1.2, one full autoplay run (manually
+   > started new game, 71 turns, all 9 hooked functions exercised), zero
+   > `lua_shadow=1` divergences. **1 of the required 3+ saves/maps**; still
+   > need at least one more, plus one with `rule_psi` factions present,
+   > before this item can formally close.
 
 e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
    (Phase 4.4/6) — needed before any upstream merge is even attempted, and

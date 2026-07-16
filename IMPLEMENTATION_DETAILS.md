@@ -1486,7 +1486,7 @@ see plan 5.1 (decision traces in separate runs + determinism harness). Log
 format: one line per divergence with function, args, both results and RNG
 draws consumed — greppable, diffable.
 
-### 5.1.1 Shadow mode implemented (2026-07-16) — Consolidation gate item b, done; not yet exercised live
+### 5.1.1 Shadow mode implemented (2026-07-16) — Consolidation gate item b, done; exercised live in 5.1.2
 
 Replaced the sketch above (and every hand-rolled per-hook dual-run block
 it was standing in for) with the real thing: two functions in
@@ -1567,18 +1567,15 @@ to compare against.
 as a config option since Phase 2B but documented as "reserved... no-op
 for now" — it does something now; comments updated in both places.
 
-**Sanity-checked, not exercised live.** Both presets (`ninja-debug`,
-`ninja-develop`) rebuild clean throughout (checked after every file, not
-just at the end); every touched/new Lua file
-(`lua/ai/build.lua`, `lua/ai/init.lua`) passes a native-`luajit`
-`loadfile` syntax check. **Not yet done:** an actual `lua_shadow=1`
-session — confirm `register_hooks: 11 hook(s) registered` (up from 9:
-the seven original hooks + `vehicle_counts_check`/`turn_state_hash`,
-plus `facility_score`/`governor_priorities` now), confirm mismatch lines
-(if any) look sane, confirm `lua_shadow=0` really does add no measurable
-overhead. This is the Consolidation gate item (a)-style split: mechanism
-built and statically verified this session, in-game exercise is the next
-session's manual follow-up.
+**Sanity-checked at build time, then exercised live the same day — see
+5.1.2.** Both presets (`ninja-debug`, `ninja-develop`) rebuild clean
+throughout (checked after every file, not just at the end); every
+touched/new Lua file (`lua/ai/build.lua`, `lua/ai/init.lua`) passes a
+native-`luajit` `loadfile` syntax check. `register_hooks: 11 hook(s)
+registered` (up from 9: the seven original hooks +
+`vehicle_counts_check`/`turn_state_hash`, plus
+`facility_score`/`governor_priorities` now) confirmed in 5.1.2's actual
+run.
 
 **Files touched:** `src/luaai.h`/`.cpp` (`out_count` param, `LuaShadowCall`,
 `lua_ai_shadow_call`/`lua_ai_shadow_check`), `src/tech.cpp`,
@@ -1587,6 +1584,53 @@ the two non-shadow hook calls), `src/plan.cpp` (two new hook seams),
 `lua/ai/build.lua` (two new adapters), `lua/ai/init.lua` (two new
 registrations), `src/main.h`/`docs/thinker.ini` (`lua_shadow` comment
 update).
+
+### 5.1.2 Shadow mode exercised live (2026-07-16) — harness ini-overwrite bug found & fixed, first real run clean
+
+First actual `lua_shadow=1` session, via `tools/autoplay_run.sh
+--no-xvfb`. Two real gaps found and fixed before any comparison data
+could be trusted:
+
+- **The harness silently discarded `lua_shadow=1`.** The "thinker.ini:
+  force the settings this harness needs" block (`tools/autoplay_run.sh`)
+  does `cp docs/thinker.ini "$INI_PATH"` — replacing whatever
+  `thinker.ini` was deployed, including any manually-set `lua_shadow=1`,
+  with the shipped template's default (`lua_shadow=0`) — then only
+  force-sets `autoplay`/`lua_ai`/`lua_strict`/`minimal_popups`, never
+  `lua_shadow`. `trap restore_ini EXIT` returns the original file only
+  after the game process has already exited, too late to matter. A run
+  launched this way never invokes the Lua side for comparison at all,
+  regardless of what the deployed file said before the script ran — found
+  live when asked to confirm a completed run's results. Fixed with a new
+  `--lua-shadow` flag (same pattern as `--rng-seed`): forces
+  `lua_shadow=1` via `sed` right after the existing forced-settings block.
+- **No way to confirm which flags were actually in effect after the
+  fact.** Zero `mismatch` lines in `lua.log` is the expected output both
+  when shadow ran and matched perfectly, and when shadow was never active
+  (nothing compared, nothing logged) — indistinguishable from the log
+  alone. Shadow mode's own RNG-restore-after-every-call design (5.1.1)
+  means `state_hashes.log`'s `rng=` field can't disambiguate the two
+  cases either, by construction — shadow must not perturb determinism, so
+  it leaves no trace there. Fixed with one `lua_logf` line at the end of
+  `lua_ai_init` (`src/luaai.cpp`): `config: lua_ai=%d lua_shadow=%d
+  lua_strict=%d autoplay=%d` — every future run's own `lua.log` now
+  proves what was active without depending on memory of the launch
+  command.
+
+With both fixes in place, one full `--no-xvfb --lua-shadow` run (manually
+started new game, all-AI after `autoplay_demote_human`, no fixed seed):
+`register_hooks: 11 hook(s) registered`, `config: lua_ai=1 lua_shadow=1
+lua_strict=0 autoplay=1`, `outcome: COMPLETED` at turn 71 (target 70),
+**zero `lua/cpp ... mismatch` lines** in `lua.log` or `debug.txt` across
+all 9 hooked decision functions (`mod_tech_val`, `mod_tech_ai`,
+`mod_social_ai`, `mod_wants_to_attack`, `find_proto`, `select_colony`,
+`select_combat`, `facility_score`, `governor_priorities`). First real
+data point for gate item (d) — one save/map of the 3+ its acceptance
+criterion requires (still need at least one more, plus one with
+`rule_psi` factions present, before the item can close).
+
+**Files touched:** `tools/autoplay_run.sh` (`--lua-shadow` flag, header
+doc), `src/luaai.cpp` (startup `config:` echo line).
 
 ### 5.2 Golden traces and out-of-game tests
 

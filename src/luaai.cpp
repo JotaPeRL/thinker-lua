@@ -566,6 +566,14 @@ static void create_lua_state() {
     lua_settop(L, 0);
     register_hooks();
     lua_logf("Lua AI runtime initialized (gen %d)\n", generation);
+    // Echo the flags that change AI behavior/observability but produce no
+    // other startup evidence in lua.log -- found live, 2026-07-16: a run's
+    // own logs can't otherwise distinguish "lua_shadow=1 and zero
+    // mismatches" from "lua_shadow=0 the whole time" (shadow mode restores
+    // RNG state after every comparison by design, so it's not visible in
+    // state_hashes.log either). One line at init removes the ambiguity.
+    lua_logf("config: lua_ai=%d lua_shadow=%d lua_strict=%d autoplay=%d\n",
+        conf.lua_ai, conf.lua_shadow, conf.lua_strict, conf.autoplay);
 }
 
 static void ensure_log_open() {
