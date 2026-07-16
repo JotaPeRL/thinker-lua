@@ -613,6 +613,13 @@ int main() {
     printf("    BSC_FUNGAL_TOWER = %d,\n", BSC_FUNGAL_TOWER);
     printf("    ORDER_CONVOY = %d,\n", ORDER_CONVOY);
     printf("    GOV_MAY_PROD_TERRAFORMERS = %d,\n", GOV_MAY_PROD_TERRAFORMERS);
+    // select_build itself, step 2 (push_item + has_retool/skip_facility,
+    // IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9 resumed after the
+    // Consolidation gate).
+    printf("    FAC_ORBITAL_DEFENSE_POD = %d,\n", FAC_ORBITAL_DEFENSE_POD);
+    printf("    SP_ID_First = %d,\n", SP_ID_First);
+    printf("    SP_ID_Last = %d,\n", SP_ID_Last);
+    printf("    Fac_ID_Last = %d,\n", Fac_ID_Last);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

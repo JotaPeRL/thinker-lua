@@ -130,6 +130,11 @@ struct LuaHostApi {
     uint32_t (*game_rand_draws)();    // -> g_game_rand_draws
     uint32_t (*mod_rng_draws)();      // -> g_mod_rng_draws
     uint32_t (*map_rng_draws)();      // -> g_map_rand_draws
+    // select_build step 2 (IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9,
+    // resumed after the Consolidation gate): opaque engine-mechanics
+    // wrappers push_item/has_retool/skip_facility need.
+    int32_t (*mod_base_making)(int32_t item_id, int32_t base_id);
+    int32_t (*skip_gov_facility_bit)(int32_t item_id);
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

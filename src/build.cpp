@@ -816,6 +816,15 @@ int select_combat(int base_id, bool sea_base, bool build_ships) {
 static void push_item(score_max_queue_t& builds, int base_id, int item_id, int retool, int score, int modifier) {
     BASE* base = &Bases[base_id];
     assert(item_id < 0 ? can_build(base_id, -item_id) : mod_veh_avail(item_id, base->faction_id, base_id));
+    // TEMPORARY select_build step 2 verification instrumentation
+    // (IMPLEMENTATION_DETAILS.md 4.10.9/4.10.11, resumed after the
+    // Consolidation gate) -- same precedent as vehicle_counts_check
+    // (step 1). Must run on the ORIGINAL incoming score/modifier/retool,
+    // before any of this function's own adjustments below -- Lua's
+    // push_item_score independently reapplies the same adjustments, so
+    // handing it an already-adjusted score would double-apply them.
+    int lua_push_item_dummy;
+    lua_ai_hook("push_item_check", &lua_push_item_dummy, 1, {base_id, item_id, retool, score, modifier});
     if (item_id >= 0) {
         score -= 2*Units[item_id].cost;
     } else if (item_id >= -FAC_ORBITAL_DEFENSE_POD) {

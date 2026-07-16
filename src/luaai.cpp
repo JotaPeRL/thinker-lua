@@ -169,6 +169,23 @@ static int32_t host_has_fac_built(int32_t item_id, int32_t base_id) {
     return has_fac_built((FacilityId)item_id, base_id);
 }
 
+// select_build step 2 (IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9, resumed
+// after the Consolidation gate): mod_base_making is genuine retool-
+// category engine logic (Skunkworks/FREEPROTO exemptions), not AI
+// policy -- opaque wrapper, same bucket as mod_veh_avail/has_fac_built.
+static int32_t host_mod_base_making(int32_t item_id, int32_t base_id) {
+    return mod_base_making(item_id, base_id);
+}
+
+// conf.skip_gov_facility is a uint64_t bitmask -- exposing it through
+// LuaHostApi's int32_t-only convention would need an awkward two-half
+// split for no benefit, so this wraps the single-bit query skip_facility
+// (build.cpp:6-9) actually needs instead of the raw config value.
+static int32_t host_skip_gov_facility_bit(int32_t item_id) {
+    return (item_id >= 1 && item_id <= 64
+        && (conf.skip_gov_facility & (1ULL << (item_id - 1)))) ? 1 : 0;
+}
+
 static int32_t host_ignore_reactor_power() {
     return conf.ignore_reactor_power;
 }
@@ -284,7 +301,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 9,
+    /* api_version          */ 10,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -348,6 +365,8 @@ static LuaHostApi g_host_api = {
     /* game_rand_draws      */ host_game_rand_draws,
     /* mod_rng_draws        */ host_mod_rng_draws,
     /* map_rng_draws        */ host_map_rng_draws,
+    /* mod_base_making      */ host_mod_base_making,
+    /* skip_gov_facility_bit */ host_skip_gov_facility_bit,
 };
 
 static lua_State* L = NULL;

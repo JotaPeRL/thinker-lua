@@ -33,6 +33,15 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         governor_priorities = { file = "src/plan.cpp", func = "governor_priorities",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- select_build step 2 (IMPLEMENTATION_DETAILS.md 4.10.9, resumed
+        -- after the Consolidation gate). push_item_score/push_item
+        -- together reimplement push_item; tracked under that one name.
+        has_retool = { file = "src/build.cpp", func = "has_retool",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        skip_facility = { file = "src/build.cpp", func = "skip_facility",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        push_item = { file = "src/build.cpp", func = "push_item",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -575,6 +584,77 @@ local function vehicle_counts_check(base_id, sea_base)
         near_formers, artifacts, need_ferry, tostring(allow_supply))
 end
 
+-- select_build itself (porting-order item 3, final piece), step 2
+-- (IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9, resumed after the
+-- Consolidation gate): push_item (build.cpp:816-836) + its two small
+-- dependents. Not wiring select_build itself yet (steps 3-4) -- these
+-- are standalone, verifiable building blocks. mod_base_making/
+-- skip_gov_facility_bit stay opaque host wrappers (genuine engine
+-- mechanics, not AI policy, same bucket as mod_veh_avail/has_abil).
+local function has_retool(base_id, item_id, retool)
+    return retool ~= -1 and retool ~= 0
+        and retool ~= funcs.mod_base_making(item_id, base_id)
+end
+
+local function skip_facility(base_id, item_id)
+    local base = base_api.get(base_id)
+    return base_api.plr_owner(base) and item_id >= 1 and item_id <= 64
+        and funcs.skip_gov_facility_bit(item_id) ~= 0
+end
+
+-- Pure scoring math (build.cpp:816-833), split out from push_item so the
+-- temporary diagnostic hook below can reuse it without needing a tracker.
+local function push_item_score(base_id, item_id, retool, score, modifier)
+    local base = base_api.get(base_id)
+    if item_id >= 0 then
+        score = score - 2 * tech.proto(item_id).cost
+    elseif item_id >= -E.FAC_ORBITAL_DEFENSE_POD then
+        local p = tech.facility(-item_id)
+        local turns = idiv(max(0, 10 * p.cost - base.minerals_accumulated),
+            max(2, base.mineral_surplus))
+        score = score - idiv(turns * turns, 4)
+        score = score - 2 * p.cost
+        score = score - 8 * p.maint
+    end
+    if modifier > 0 then
+        score = score + 20 * modifier
+    end
+    if has_retool(base_id, item_id, retool) then
+        score = score - (retool <= -E.SP_ID_First and 800 or 400)
+    end
+    return score
+end
+
+-- Running-best tracker (IMPLEMENTATION_DETAILS.md 4.10.6) -- replaces
+-- C++'s score_max_queue_t entirely: select_build only ever calls
+-- .top()/.size() once, at the very end, never .pop()/iterates, so no
+-- heap data structure needs porting. Tie-break matches SItem::operator<
+-- exactly (plan.h:9-12): higher score wins; equal score, higher item_id
+-- wins.
+local function new_build_tracker()
+    return { item_id = nil, score = nil }
+end
+
+local function push_item(tracker, base_id, item_id, retool, score, modifier)
+    local final_score = push_item_score(base_id, item_id, retool, score, modifier)
+    if tracker.score == nil or final_score > tracker.score
+        or (final_score == tracker.score and item_id > tracker.item_id) then
+        tracker.item_id, tracker.score = item_id, final_score
+    end
+    return final_score
+end
+
+-- Temporary, verification-only (same precedent as vehicle_counts_check,
+-- step 1): select_build's own push_item() already logs the exact
+-- adjusted score for every call (build.cpp:835), so this gives the same
+-- kind of log-diff verification without wiring the real hook yet.
+-- Deleted once step 4 wires select_build for real.
+local function push_item_check(base_id, item_id, retool, score, modifier)
+    log.debug("push_item_check %d %d %d",
+        push_item_score(base_id, item_id, retool, score, modifier), retool, item_id)
+    return 1
+end
+
 -- Production/plans port, third slice (porting-order item 3,
 -- IMPLEMENTATION_DETAILS.md 4.9): plan.cpp:8-13/15-31. WItem is a plain
 -- table here ({AI_growth=.., AI_tech=.., AI_wealth=.., AI_power=..,
@@ -651,4 +731,10 @@ port.governor_priorities = governor_priorities
 port.facility_score_hook = facility_score_hook
 port.governor_priorities_hook = governor_priorities_hook
 port.vehicle_counts_check = vehicle_counts_check
+port.has_retool = has_retool
+port.skip_facility = skip_facility
+port.push_item_score = push_item_score
+port.new_build_tracker = new_build_tracker
+port.push_item = push_item
+port.push_item_check = push_item_check
 return port

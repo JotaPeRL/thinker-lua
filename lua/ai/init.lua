@@ -27,4 +27,9 @@ return {
     -- IMPLEMENTATION_DETAILS.md 4.9 left open.
     facility_score = build.facility_score_hook,
     governor_priorities = build.governor_priorities_hook,
+    -- select_build step 2 (IMPLEMENTATION_DETAILS.md 4.10.9, resumed
+    -- after the Consolidation gate): temporary, verification-only, same
+    -- precedent as vehicle_counts_check -- deleted once step 4 wires the
+    -- real select_build hook.
+    push_item_check = build.push_item_check,
 }

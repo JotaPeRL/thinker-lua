@@ -74,10 +74,12 @@ typedef struct {
     uint32_t (*game_rand_draws)();
     uint32_t (*mod_rng_draws)();
     uint32_t (*map_rng_draws)();
+    int32_t (*mod_base_making)(int32_t item_id, int32_t base_id);
+    int32_t (*skip_gov_facility_bit)(int32_t item_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 9
+local HOST_API_VERSION = 10
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -148,4 +150,6 @@ return {
     game_rand_draws = function() return api.game_rand_draws() end,
     mod_rng_draws = function() return api.mod_rng_draws() end,
     map_rng_draws = function() return api.map_rng_draws() end,
+    mod_base_making = function(item_id, base_id) return api.mod_base_making(item_id, base_id) end,
+    skip_gov_facility_bit = function(item_id) return api.skip_gov_facility_bit(item_id) end,
 }

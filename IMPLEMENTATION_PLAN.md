@@ -1123,6 +1123,17 @@ where `IMPLEMENTATION_DETAILS.md` 4.10.9's 4-stage order left off (step 1
 done, steps 2-4 open); re-read 4.10's float-arithmetic note (3.7, below)
 before touching `Wbase`/`Wthreat`.
 
+> **Progress (2026-07-16):** step 2 done and live-verified —
+> `IMPLEMENTATION_DETAILS.md` 4.10.11. `push_item`/`has_retool`/
+> `skip_facility` ported to Lua as standalone building blocks (not wired
+> into `select_build` yet). Both presets build clean, `port_drift.py`
+> clean at 14 tracked functions. First live autoplay run (via the
+> temporary `push_item_check` diagnostic hook, same precedent as step 1's
+> `vehicle_counts_check`) found a real bug — not in the port, in the
+> hook's own placement, double-applying score adjustments — fixed, second
+> run confirmed **859/859 clean**. Next: step 3 (the `build_order`
+> scoring loop itself, ~45 branches, its own multi-session effort).
+
 ---
 
 ## Phase 5 — Validation, testing and performance

@@ -1062,18 +1062,28 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — step 1 implemented, in-game verification pending
+### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done and live-verified, steps 3-4 pending
 
-> **Status (2026-07-14): step 1 of the 4-stage order in 4.10.9 (`VEH`
-> exposure + the vehicle-count loop, as a standalone correctness check)
-> implemented and building clean on both presets; in-game verification not
-> yet run.** See 4.10.10 for the full session record, exactly what was
-> touched, and what to check when resuming — read that first if you're
-> picking this back up. Steps 2-4 (push_item + running-best tracker, the
+> **Status (2026-07-16, resuming after the Consolidation gate): step 1
+> now fully verified, not just build-clean.** 4.10.10's own "not yet
+> done" checklist (launch the game, diff the counters for a handful of
+> `(turn, base_id)` pairs) turned out to already be answerable from data
+> this session's `--golden-trace` autoplay run happened to also capture
+> (`runs/20260716T013539Z-debug/`, `lua.log` + `debug.txt`) — `select_build`
+> already logs its own `def`/`frm`/`prb`/`crw`/`pods`/`scouts` line
+> (`build.cpp:958-962`) on every call, same turns `vehicle_counts_check`
+> ran on. Paired all 986 `vehicle_counts`/`select_build` line pairs by
+> emission order (both are 1:1, once per `select_build` call — 986 lines
+> each) and diffed all six shared fields: **986/986 match exactly, zero
+> mismatches** — far more thorough than the "handful of pairs" originally
+> scoped, and no new game session was needed. `VEH`'s FFI exposure and
+> the vehicle-count loop port are now genuinely confirmed correct, not
+> just untested code that happens to compile. See 4.10.10 for what was
+> touched. **Steps 2-4 (push_item + running-best tracker, the
 > `build_order` scoring loop, wiring the real hook) are still
-> unimplemented; the rest of this section (4.10.1-4.10.9) is the original
-> scoping pass and remains accurate reference material for the parts not
-> yet done.
+> unimplemented** — the rest of this section (4.10.1-4.10.9) is the
+> original scoping pass and remains accurate reference material for the
+> parts not yet done.
 
 Full read of `select_build` (`src/build.cpp:867-1334`, 467 loc — the
 number quoted when this was first surveyed, 454, was a rough estimate;
@@ -1442,35 +1452,134 @@ verification than every other item in this file (same category as 4.9's
 - Deployed to `~/.wine-smac/drive_c/Games/SMAC` (`tools/deploy.sh
   develop`).
 
-**Not yet done — pick up here next session:**
+**Steps 1-4 tracked here originally; done as of 2026-07-16:**
 
-1. **Launch the game and actually play some turns** (existing saves from
-   prior sessions exist under `saves/`, faction "Lal of the Peacekeepers",
-   or start fresh — `conf.autoplay=1` and `lua_strict=0` are already set
-   in the deployed `thinker.ini`). No automation exists for this: driving
-   the Wine GUI (New Game screen, or loading a save) needs manual clicks,
-   same as every previous "in-game verified" entry in this file.
-2. **Check `lua.log` for errors first** — no `error in 'vehicle_counts_check'`
-   lines, and confirm `register_hooks: N hook(s) registered` includes the
-   new one (N should be 8, one more than the prior session's 7).
-3. **Diff the counters.** For a handful of `(turn, base_id)` pairs, find
-   the matching `vehicle_counts base:N ...` line in `lua.log` and the
-   `select_build ... base_id ...` line in `debug.txt`, and compare `def`,
-   `frm`, `prb`, `crw`, `pods`, `scouts` field by field. A mismatch
-   localizes the bug to the vehicle-count loop or the `VEH`
-   predicates/fields before the harder `build_order` scoring loop (step 3)
-   is even touched — exactly the point of doing this as its own step.
-4. **If clean:** proceed to step 2 of 4.10.9's order (`push_item` + the
-   running-best tracker + `has_retool`/`skip_facility`). If not: the
-   mismatch is somewhere in `lua/api/veh.lua`, the new `tech.lua`
-   predicates, or `vehicle_counts_check` itself — the loop is short enough
-   that bisecting by commenting out branches should localize it quickly.
+1. ~~Launch the game and actually play some turns.~~ **Done** — the
+   `--golden-trace`/`--lua-shadow` autoplay runs earlier this session
+   (Consolidation gate items b/c) already did this; no dedicated session
+   was needed since `vehicle_counts_check` runs on every `select_build`
+   call regardless of which flags are set.
+2. ~~Check `lua.log` for errors first.~~ **Done** — `register_hooks: 11
+   hook(s) registered` confirmed multiple times this session (5.1.2),
+   `vehicle_counts_check` among them; zero `error in 'vehicle_counts_check'`
+   lines in any run's `lua.log`.
+3. ~~Diff the counters.~~ **Done, far more thoroughly than scoped** — not
+   "a handful of pairs" but all 986 `vehicle_counts`/`select_build` pairs
+   from `runs/20260716T013539Z-debug/`, zero mismatches on `def`/`frm`/
+   `prb`/`crw`/`pods`/`scouts`. See 4.10's status block above.
+4. **Next:** step 2 of 4.10.9's order — `push_item` + the running-best
+   tracker (4.10.6) + `has_retool`/`skip_facility`.
 5. Once `select_build` is eventually fully ported and hooked, this
    temporary seam (the `lua_ai_hook("vehicle_counts_check", ...)` call in
    `build.cpp`, the registration in `lua/ai/init.lua`, and arguably
    `vehicle_counts_check` itself) should be removed — it was only ever a
    scaffolding check for this one step, not permanent AI logic, same fate
    as the other temporary dual-run instrumentation elsewhere in this file.
+
+### 4.10.11 Step 2 session record (2026-07-16) — implemented and live-verified, one real bug found and fixed
+
+> **Status: done.** Build-verified on both presets, `port_drift.py` clean
+> (14 tracked functions, up from 11), and live-verified against real
+> autoplay data — see the closing note at the end of this section. First
+> live run found a real bug in the diagnostic hook's placement (not the
+> port itself); fixed, second run confirmed clean (859/859).
+
+Implements exactly step 2 of 4.10.9's order: `push_item`
+(`build.cpp:816-836`) plus its two small dependents `has_retool`
+(`build.cpp:32-34`) and `skip_facility` (`build.cpp:6-9`), ported to Lua
+as standalone building blocks — **`select_build` itself is still
+unported/unhooked**, steps 3-4 untouched.
+
+**What was already exposed held up under direct re-checking, not just
+trusted from the original scoping pass:** `BASE.minerals_accumulated`/
+`mineral_surplus`, `UNIT.cost` (via `tech.proto(unit_id).cost`),
+`CFacility.cost`/`.maint` (via `tech.facility(id).cost`/`.maint` — the
+existing `facility()` accessor already returns the whole `CFacility`
+cdata, not just the `AI_*` fields `facility_score` reads, so this needed
+zero new FFI work) were all already exposed. Only new surface needed:
+
+- **4 enums** (`FAC_ORBITAL_DEFENSE_POD`, `SP_ID_First`, `SP_ID_Last`,
+  `Fac_ID_Last`), already visible via `engine_enums.h` (`gen_ffi.cpp`
+  already includes it) — 4 `printf` emit lines, no new `#include`,
+  confirmed via `git show`/direct header read before writing any code
+  rather than assuming 4.10.4's claim.
+- **2 new opaque `LuaHostApi` wrappers** (`src/luaai.h`/`.cpp`,
+  `api_version` 9 → 10): `mod_base_making(item_id, base_id)` (real
+  retool-category engine logic — Skunkworks/FREEPROTO exemptions — not
+  AI policy, already non-`static` in `base.cpp`); `skip_gov_facility_bit
+  (item_id)`, a **deliberate deviation** from 4.10.5's original "same
+  tier as `conf.ignore_reactor_power`" sketch — `conf.skip_gov_facility`
+  is a `uint64_t` bitmask, and splitting that through `LuaHostApi`'s
+  `int32_t`-only convention into two halves would be awkward for no
+  benefit, so this wraps the single-bit boolean query `skip_facility`
+  actually needs instead of the raw config value.
+
+**`has_retool`/`skip_facility`/`push_item` ported to Lua directly** (per
+4.10.5's own "portable directly, small, already-legible" call) —
+`build.cpp`'s originals are untouched, no reason to un-`static` them
+since nothing calls the C++ versions from `luaai.cpp` (unlike
+`check_probe`'s precedent, which *is* called from both sides).
+`push_item`'s scoring math was split into a pure `push_item_score`
+function so the temporary diagnostic hook (below) can reuse it without
+needing a tracker.
+
+**Running-best tracker (4.10.6) confirmed correct against
+`SItem::operator<` (`plan.h:9-12`), not just assumed:** `score_max_queue_t`
+is `std::priority_queue<SItem, ..., std::less<SItem>>` — a max-heap by
+`operator<`'s ordering, so `.top()` returns the highest score, ties
+broken by highest `item_id`. `select_build` only ever calls `.top()`/
+`.size()` once, at the very end, never `.pop()`/iterates — so this really
+is just "keep the best (score, item_id) pair seen so far," no heap
+needed. Lua's `new_build_tracker()`/`push_item()` tie-break replicates
+that ordering exactly.
+
+**Temporary diagnostic hook, same precedent as step 1's
+`vehicle_counts_check`.** `push_item()` already logs its own final
+adjusted score via `debug("push_item %d %d %d %s\n", score, retool,
+item_id, ...)` (`build.cpp:835`, now `843` after the new hook call) on
+every one of its ~10 calls per `select_build` invocation
+(`build.cpp:1044-1305`) — a gift, same as step 1's `select_build` debug
+line. Added `push_item_check` (`lua/ai/build.lua`): computes
+`push_item_score` independently and logs it via `log.debug`, registered
+in `lua/ai/init.lua` the same way `vehicle_counts_check` is (reuses
+existing hook dispatch, zero new C++ infrastructure beyond the one call
+site in `build.cpp`). `has_retool` gets indirect coverage through
+`push_item_score`; `skip_facility` isn't called by `push_item` at all
+(used elsewhere in `select_build`'s still-unported main body) — left
+"validated by inspection" for now, same category 4.9 originally used,
+closed for real once step 4 wires the actual hook.
+
+**`port.source` entries added** for `has_retool`/`skip_facility`/
+`push_item` (same pinned commit as everything else in this file) —
+`push_item_check` isn't tracked, it has no C++ equivalent (diagnostic-only,
+no upstream function it ports). `tools/port_drift.py` confirms 14 clean,
+0 drifted.
+
+**Live-verified (2026-07-16), same session — real bug found and fixed
+along the way.** First autoplay run paired 987/987 lines but
+**985/987 mismatched** — traced to the hook call site itself, not the
+port: it sat *after* `push_item`'s own `score -=`/`+=` adjustments and
+handed Lua the already-adjusted value, so `push_item_score` (which
+independently reapplies the same adjustments) double-applied them. Fixed
+by moving the `lua_ai_hook("push_item_check", ...)` call to the top of
+`push_item()`, before any mutation, passing the untouched incoming
+`score`/`retool`/`modifier` — matching what the C++ function itself
+receives from its callers. Rebuilt clean, second autoplay run: **859/859
+paired, zero mismatches.** `push_item`/`push_item_score`/`has_retool`
+(exercised indirectly) confirmed correct against real captured data, not
+just build-clean code. `skip_facility` still untested (not called by
+`push_item`) — closes with step 4's real hook.
+
+**Next:** step 3 (`IMPLEMENTATION_DETAILS.md` 4.10.9's `build_order`
+scoring loop, ~45 branches, its own multi-session effort).
+
+**Files touched:** `tools/gen_ffi.cpp` (4 enum emit lines), `src/luaai.h`/
+`.cpp` (2 new `LuaHostApi` entries + wrappers, `api_version` bump),
+`lua/ffi/funcs.lua` (matching cdef + wrappers, `HOST_API_VERSION` bump),
+`lua/ai/build.lua` (`has_retool`, `skip_facility`, `push_item_score`,
+`new_build_tracker`, `push_item`, `push_item_check`, three new
+`port.source` entries), `lua/ai/init.lua` (registers `push_item_check`),
+`src/build.cpp` (one hook call inside `push_item()`).
 
 ### 4.11 Port drift detection (2026-07-16) — Consolidation gate item e, done
 
