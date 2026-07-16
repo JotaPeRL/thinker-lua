@@ -1001,8 +1001,8 @@ c. **Golden traces (Phase 5.2), starting with the two functions currently
    dual-run seam at all today and are therefore the least-validated code
    in the port so far, not the most.
 
-d. **All five ported domains re-validated on the harness, by REAL shadow
-   mode (item b), not by trajectory comparison.**
+d. ~~**All five ported domains re-validated on the harness, by REAL shadow
+   mode (item b), not by trajectory comparison.**~~ **Done (2026-07-16).**
    **Acceptance criterion changed (2026-07-16, by decision — see
    `IMPLEMENTATION_DETAILS.md` 5.3.6's closing note for the full
    rationale):** zero `lua_shadow=1` divergences, at the class-appropriate
@@ -1031,14 +1031,19 @@ d. **All five ported domains re-validated on the harness, by REAL shadow
    > decision, not resolved; see there for what to do if it ever matters
    > again (M6).
    >
-   > **Progress (2026-07-16):** two data points landed —
-   > `IMPLEMENTATION_DETAILS.md` 5.1.2, two full autoplay runs on distinct
-   > manually-started games (71 and 70 turns, all 9 hooked functions
-   > exercised each time; the second deliberately included a `rule_psi`
-   > faction), zero `lua_shadow=1` divergences in either. **2 of the
-   > required 3+ saves/maps**, `rule_psi` requirement satisfied; still
-   > need at least one more distinct save/map before this item can
-   > formally close.
+   > **Closed (2026-07-16) — `IMPLEMENTATION_DETAILS.md` 5.1.2.** Three
+   > full autoplay runs on three distinct manually-started games (71, 70,
+   > and 70 turns; all 9 hooked functions —
+   > `mod_tech_val`/`mod_tech_ai`/`mod_social_ai`/`mod_wants_to_attack`/
+   > `find_proto`/`select_colony`/`select_combat`/`facility_score`/
+   > `governor_priorities` — exercised every run; the second game
+   > deliberately included a `rule_psi` faction), **zero `lua_shadow=1`
+   > divergences in any run.** Acceptance criterion met in full: 3+
+   > distinct saves/maps, `rule_psi` covered. M4 and porting-order items
+   > 1, 2, 2b, and 3-partial (the `find_proto`/`select_colony`/
+   > `select_combat`/`unit_score`/`facility_score`/`governor_priorities`
+   > slice) are formally closed. `select_build` itself (stages 2-4)
+   > remains open and still frozen pending gate items (c) and (e).
 
 e. **`tools/port_drift.py` plus provenance entries in `docs/LUA_PORTING.md`**
    (Phase 4.4/6) — needed before any upstream merge is even attempted, and

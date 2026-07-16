@@ -1642,8 +1642,17 @@ scoring and `veh_combat.cpp`'s psi attack/defense bonus). Confirmed via
 consistent with an active `rule_psi` faction exercising that branch.
 `outcome: COMPLETED` at turn 70, **zero `lua/cpp ... mismatch` lines**
 again. **2 of the required 3+ saves/maps for gate item (d)**, and the
-`rule_psi` requirement is now satisfied — still need at least one more
-distinct save/map before the item can formally close.
+`rule_psi` requirement is now satisfied.
+
+**Third run (2026-07-16), third distinct new game.** Same
+`--no-xvfb --lua-shadow` harness, another manually-started game.
+`register_hooks: 11 hook(s) registered`, `config: lua_ai=1 lua_shadow=1
+lua_strict=0 autoplay=1`, `outcome: COMPLETED` at turn 70, **zero
+`lua/cpp ... mismatch` lines** in `lua.log` or `debug.txt`. **3rd of the
+required 3+ saves/maps — gate item (d)'s acceptance criterion is met:
+zero `lua_shadow=1` divergences across 3 distinct saves/maps, including
+one with a `rule_psi` faction.** See `IMPLEMENTATION_PLAN.md`'s
+Consolidation gate for the formal close-out.
 
 ### 5.2 Golden traces and out-of-game tests
 
