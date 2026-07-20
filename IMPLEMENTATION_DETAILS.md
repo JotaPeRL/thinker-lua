@@ -1893,6 +1893,90 @@ trade-off as this file's own session-record structure.
 
 ---
 
+### 4.12 Movement port (porting-order item 4) — scoped, staged plan agreed, starting stage 0+1
+
+**Status: 🔨 scoping done, starting stage 0+1.** Real function sizes
+read directly from `move.cpp`/`veh_turn.cpp`/`goal.cpp` (3657/887/183
+loc) rather than estimated — the one-liner in `IMPLEMENTATION_PLAN.md`
+predates this pass. Complements 4.4's earlier high-level notes
+(`move_upkeep`'s split, `combat_move`'s Class 3 shape); this section is
+the concrete staging.
+
+**Dispatch shape confirmed:** `mod_enemy_move` (`veh_turn.cpp:147`)
+routes each vehicle to exactly one mover by type — `colony_move`/
+`former_move`/`crawler_move`/`artifact_move`/`trans_move` (sea triad
+with cargo)/`nuclear_move` (planet busters)/`combat_move` (everything
+else). Each mover is Class 3 in the plan's own sense: it calls host
+mutators directly (`set_move_to`, `mod_veh_skip`, `mod_study_artifact`,
+...) and returns an action code (`VEH_SYNC`/`VEH_SKIP`) the C++ caller
+uses as-is — confirmed by reading `artifact_move` end to end, the
+smallest one. This means each mover is independently hookable, matching
+the plan's own per-function staging intent.
+
+**Real sizes (loc), smallest to largest:** `artifact_move` ~23,
+`crawler_move` ~67, `colony_move` ~125, `former_move` ~157, `nuclear_move`
+~163, `trans_move` ~253, `move_upkeep` ~354, `combat_move` ~726 (by far
+the largest single function in the whole project so far). Faction-level
+planning: `land_raise_plan` ~115, `invasion_plan` ~106,
+`update_main_region` ~61. `goal.cpp` (add_goal/wipe_goals/clear_goals/
+del_site/has_goal/find_priority_goal) ~180 total, small state-management
+helpers consumed by the planning functions, not the movers themselves.
+
+**Out of scope, by explicit user decision (2026-07-20):** native life
+(fauna/aliens — `mod_alien_move`/`mod_alien_base`/`mod_alien_fauna`/
+`mod_do_fungal_towers`, `veh_turn.cpp:261-887`, ~640 loc). Not strategic
+faction AI; revisit later only if it turns out to matter.
+
+**Staged plan (agreed with the user, adjusts the plan's original
+per-function order by merging two adjacent isolated movers):**
+
+- **Stage 0 — Class 3 hook infrastructure (prerequisite, no mover yet).**
+  Every hook so far (Class 1/2) lets C++ fall back cleanly at any point,
+  since nothing is mutated before the fallback decision. Class 3 is
+  different: once Lua issues its first host-mutator call, there is no
+  fallback to C++ for that invocation — an error after that point must
+  finish the unit safely (`veh_skip` via host API) and log, not re-run
+  the C++ body (`IMPLEMENTATION_PLAN.md` 4.1's own rule, not yet
+  implemented anywhere). Verification is also structurally different:
+  no per-call shadow comparison (nothing to compare against once
+  mutations happen) — a decision trace (unit, options considered,
+  scores, chosen action) logged from both sides in *separate* runs,
+  diffed after the fact; whole-system fidelity comes from the
+  determinism harness (5.3) toggling `lua_ai` between runs, not
+  per-call snapshot/restore.
+- **Stage 1 — `artifact_move` (~23 loc) as the pilot.** Smallest,
+  simplest mover; proves the Class 3 mechanism end-to-end (new host
+  wrappers: `search_route`, `set_move_to`, `mod_veh_skip`,
+  `mod_study_artifact`; `TileSearch` itself stays opaque, per 4.3)
+  before risking it on anything bigger. **Stop here for in-game testing
+  before continuing**, per the user's own pacing.
+- **Stage 2 — `crawler_move` (~67 loc) + `nuclear_move` (~163 loc),
+  merged into one stage** (user's call — both isolated, no shared
+  dependency forcing this, just batched for pacing).
+- **Stage 3 — `colony_move`** (~125 loc, reuses `can_build_base`/
+  `base_tile_score`).
+- **Stage 4 — `former_move`** (~157 loc). The one stage where a real,
+  substantial new port is unavoidable: `select_item`
+  (`move.cpp:1803-2004`, ~200 loc) plus its 12 `can_*` tile-eligibility
+  helpers (`move.cpp:1530-1803`), deliberately left as an opaque wrapper
+  during `select_build`'s `FormerUnit` branch (`former_tile_tally`,
+  `IMPLEMENTATION_DETAILS.md` 4.10.29) specifically because only here,
+  in `former_move`, does *which* terraform action gets chosen matter as
+  real AI policy rather than a `>=0` eligibility check.
+- **Stage 5 — `trans_move`** (~253 loc, invasion/landing logic:
+  `make_landing`/`near_landing`/`invasion_unit`).
+- **Stage 6 — `combat_move`** (~726 loc). Last, by far the largest and
+  most performance-sensitive — ported only once a C++ baseline is
+  measured, per the plan's own rule (5.4).
+- **Stage 7 — `move_upkeep` + `invasion_plan`/`land_raise_plan`/
+  `update_main_region` + `goal.cpp`.** Faction-level orchestration (once
+  per faction per turn, not per unit) rather than per-unit dispatch;
+  `move_upkeep` itself splits per 4.4's existing note (table fills stay
+  C++, the planning that consumes them is what ports); `goal.cpp` lands
+  here since it's consumed by this planning, not by the movers.
+
+---
+
 ## Phase 5 — validation
 
 The Consolidation gate (`IMPLEMENTATION_PLAN.md`, opened 2026-07-14) exists

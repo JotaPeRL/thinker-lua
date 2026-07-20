@@ -538,10 +538,19 @@ enable Lua by default on the branch → next.
    4.10.31). `select_build` itself is fully closed. `mod_base_hurry`/
    `plans_upkeep`/`design_units`/`former_plans` remain unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
-   with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
+   with the isolated movers (`artifact_move` → `crawler_move`/`nuclear_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +
    `move_upkeep` + invasion plans. Class 3 territory: largest, most
    performance-sensitive, ported last with the C++ baseline already measured.
+
+   **Status: 🔨 scoped, staged plan agreed, starting stage 0+1.** Real
+   function sizes read (not estimated) and a concrete stage-by-stage
+   breakdown written up — see `IMPLEMENTATION_DETAILS.md` 4.12. Native
+   life (fauna/aliens — `mod_alien_move`/`mod_alien_fauna`/
+   `mod_do_fungal_towers`, `veh_turn.cpp`) is explicitly out of scope,
+   by user decision (2026-07-20): not strategic faction AI, revisit
+   later if it ever makes sense to. `goal.cpp` is folded into the final
+   stage (consumed by faction-level planning, not the per-unit movers).
 5. **AI probe decisions** (`probe.cpp`, partial — target/action choices only;
    resolution mechanics stay in C++).
 
