@@ -901,21 +901,22 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-2 done, step 3 sub-steps 1-4 done, all live-verified
+### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-3 done, step 4 (wiring the real hook) is the resume point
 
 **Current state:** steps 1-2 done and live-verified; step 3 (the
-`build_order` loop) has 4 sub-steps done — shared prologue (4.10.12),
-`DefendUnit`/`CombatUnit`'s early-return decision (4.10.13), the
-`build_order` loop skeleton + 14 no-branch facilities (4.10.14), and the
-facility-branch catalog + 3 more facilities done (4.10.15). **4.10.15 is
-the resume point** — full catalog of what's left (13 more facility-branch
-code blocks / 21 facilities, 7 more special unit-type branches, then wiring
-the real hook). Sections 4.10.1-4.10.9 below are the original 2026-07-14
-scoping pass — still useful background on `VEH`/field locations, but check
-any specific "already exposed" claim against `lua/ffi/types.lua` directly
-before trusting it; later sessions found it wrong more than once. Session
-narrative and bug hunts for steps 1-3.4: `DEVELOPMENT_DIARY.md`,
-2026-07-14/16.
+`build_order` loop) is entirely done — shared prologue (4.10.12),
+`DefendUnit`/`CombatUnit`'s early-return decision (4.10.13), the loop
+skeleton + 14 no-branch facilities (4.10.14), and the full facility- and
+unit-type branch catalog, all 47 `build_order[]` entries (4.10.15–4.10.30,
+consolidated into one lean section below). **Step 4 — wiring the real
+`select_build` hook — is the resume point**, unblocked now that every
+branch has a real Lua implementation; see `IMPLEMENTATION_PLAN.md` item 3
+for current status. Sections 4.10.1-4.10.9 below are the original
+2026-07-14 scoping pass — still useful background on `VEH`/field
+locations, but check any specific "already exposed" claim against
+`lua/ffi/types.lua` directly before trusting it; later sessions found it
+wrong more than once. Session narrative and bug hunts for steps 1-3.4:
+`DEVELOPMENT_DIARY.md`, 2026-07-14/16.
 
 Full read of `select_build` (`src/build.cpp:867-1334`, 467 loc — the
 number quoted when this was first surveyed, 454, was a rough estimate;
@@ -1595,104 +1596,137 @@ bump), `lua/ai/build.lua` (`select_build_prologue` gains `wenergy`/
 `port.source` entry), `lua/ai/init.lua` (registers the real shadow
 hook), `src/build.cpp` (one shadow-call site, one shadow-check site).
 
-### 4.10.15 Facility-branch catalog + `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER` (2026-07-16) — implemented and live-verified
+### 4.10.15–4.10.30 Facility- and unit-branch catalog — complete (2026-07-16 through 2026-07-20)
 
-**Status: ✅ done for 1 of 15 code blocks (3 of 24 branch-having
-facilities); the other 13 blocks (21 facilities) cataloged below, not yet
-ported.** `port_drift.py` clean at 19. Live-verified: 0 mismatches on the 3
-implemented facilities across two full autoplay runs (2234 total mismatches
-in the second run, none on these three, confirmed by absence). One bug
-found and fixed along the way (a missing field in a shared return table) —
-see `DEVELOPMENT_DIARY.md`, 2026-07-16, which also lists all four distinct
-bug classes found across steps 2-3.4.
+**Status: ✅ done.** Every `build_order[]` entry — all 38 facilities (15
+code blocks) and all 9 unit-type branches — has a real Lua implementation
+in `build_order_item_score`/its branch functions. Both presets build
+clean; `port_drift.py` clean. Live-exercise evidence (via the methodology
+below): 33/38 facilities and 8/9 unit branches confirmed with 0
+mismatches across several `--lua-shadow` autoplay runs (up to 220 turns).
+Remaining unconfirmed — not known defects, all late-tier prereq tech or
+narrow eligibility gates, deprioritized by explicit user direction
+(2026-07-20), revisit opportunistically rather than as scheduled work:
+facilities `FAC_ROBOTIC_ASSEMBLY_PLANT`/`FAC_NANOREPLICATOR`/
+`FAC_QUANTUM_CONVERTER` (share `FAC_GENEJACK_FACTORY`'s branch code,
+partial evidence only)/`FAC_PARADISE_GARDEN`/`FAC_PSI_GATE`; unit branch
+`Satellites`.
 
-**Full facility-branch catalog** (`build.cpp:1229-1358`, 15 code blocks
-covering 24 distinct facility IDs beyond the 14 already handled by
-3.3's base formula) — recorded here since cataloging it was this
-session's first task, not just the one branch implemented. **Corrected
-count, verified programmatically, not by eye:** `build_order[]` has 47
-entries (9 unit sentinels + **38** facilities, not the "~45 entries,
-36 facilities" quoted around this session — a rough estimate from the
-2026-07-14 original scoping pass that was never recounted precisely
-until now), of which 14 have no branch (3.3) and 24 do (this section) —
-14 + 24 = 38, confirmed. This section implements 1 of the 15 blocks (3
-of the 24 branch-having facilities), leaving **13 blocks / 21 facilities
-still open.**
+**Corrected count** (verified programmatically, not by eye):
+`build_order[]` has 47 entries — 9 unit sentinels + 38 facilities, of
+which 14 use only the base formula (3.3) and 24 are branched here across
+15 code blocks.
 
-- **Zero new engine surface, implementable immediately:**
-  `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER`
-  (done, this section) and the `FAC_PERIMETER_DEFENSE`-only half of the
-  `FAC_PERIMETER_DEFENSE`/`FAC_TACHYON_FIELD`/`FAC_GEOSYNC_SURVEY_POD`/
-  `FAC_FLECHETTE_DEFENSE_SYS` shared `MaxEnemyRange` bonus block (the
-  other three need `allow_units`, see below).
-- **Recurring blocker: `queue_items[0]`** (a `BASE` array field, first
-  needed field-array of this port — whether `tools/gen_ffi.cpp`'s
-  `FIELD()` macro already handles a single array slot, or needs a new
-  case, hasn't come up yet). Needed by `FAC_PSI_GATE` (`b->item()`) and
-  by the still-deferred `allow_units`/`project_change` from 3.3 (which
-  also blocks the `TACHYON_FIELD`/`GEOSYNC_SURVEY_POD`/
-  `FLECHETTE_DEFENSE_SYS` half of the block above).
-- **Recurring blocker: `base.eco_damage`** (a plain `int32_t` `BASE`
-  field, no mechanism question — just not added yet). Needed by 3
-  separate blocks: `FAC_TREE_FARM`/`FAC_HYBRID_FOREST`,
-  `FAC_BIOLOGY_LAB`/`FAC_CENTAURI_PRESERVE`, and the
-  `FAC_GENEJACK_FACTORY`/`FAC_ROBOTIC_ASSEMBLY_PLANT`/
-  `FAC_NANOREPLICATOR`/`FAC_QUANTUM_CONVERTER` group.
-- **New opaque wrappers needed** (real engine mechanics, none AI
-  policy): `base_unused_space(base_id)`, `facility_count(item_id,
-  faction_id)`, `mineral_output_modifier(base_id)` (all already flagged
-  in 4.10.5, still unimplemented); `nearby_items(x, y, r1, r2, flags)`
-  (a tile-scan, same category as the still-unwritten `FormerUnit`
-  wrapper from 4.10.2); two `conf.*` accessors
-  (`biology_lab_bonus`, `clean_minerals`, same tier as
-  `ignore_reactor_power` etc.).
-- **`mod_psych_check(faction_id, &content_pop, &base_limit)`** — two
-  `int32_t` out-params, needed by the shared `FAC_RECREATION_COMMONS`/
-  `FAC_HOLOGRAM_THEATRE`/`FAC_RESEARCH_HOSPITAL`/`FAC_PARADISE_GARDEN`
-  block. 4.10.5 flagged the encoding as an open question ("two int32_t
-  halves, or a second `LuaHostApi` entry") — still open.
-- **New `ResInfo` global** (`FAC_RECYCLING_TANKS` only) — a new fixed
-  global struct, not a field addition to an existing one; smallest slice
-  is just its `recycling_tanks.{energy,nutrient,mineral}` sub-struct
-  (144-byte `CResourceInfo` per the existing `static_assert`, almost
-  certainly has unrelated resource-type sub-structs — 4.10.3 already
-  scoped this narrowly).
-- **New `Faction`/`AIPlans` fields, no mechanism question, just
-  unadded:** `SE_growth_pending`, `SE_effic_pending`, `SE_alloc_labs`,
-  `SE_alloc_psych`, `SE_planet_pending`, `clean_minerals_modifier`,
-  `mineral_intake` (distinct from the already-exposed `mineral_intake_2`
-  — verify which is which before use), `naval_start_x`/`naval_start_y`.
-- **New `BASE` fields, same category:** `specialist_total`,
-  `assimilation_turns_left`.
-- **`drone_riots`/`drones`**: prologue locals explicitly skipped in 3.1
-  ("Deliberately skips ... drone_riots/drones") — needed by
-  `FAC_PUNISHMENT_SPHERE` and the shared psych-facility block; adding
-  them to `select_build_prologue` is small (both derive from already-
-  exposed `BASE.drone_total`/`talent_total`/`specialist_adjust` plus
-  `base.drone_riots()`/`drone_riots_active()` inline methods, not yet
-  re-ported to Lua).
-- **`map_range(BASE*, BASE*)` overload**: `FAC_PSI_GATE` calls a
-  two-`BASE*`-pointer form, distinct from the already-exposed
-  `map_range(x1,y1,x2,y2)` — likely just needs `base.x`/`.y` extracted
-  in Lua and passed through the existing wrapper; worth confirming
-  they're equivalent before assuming so.
-- **Enums still needed**: `FAC_VIRTUAL_WORLD`, `BIT_FOREST` (used with
-  `BIT_SIMPLE`/`BIT_ADVANCED` per 4.10.4, likely all three together).
+**Facility branches implemented:** `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`
+(two separately gated blocks — see the split-block lesson below)/
+`FAC_BIOENHANCEMENT_CENTER`; `FAC_PERIMETER_DEFENSE`/`FAC_TACHYON_FIELD`/
+`FAC_GEOSYNC_SURVEY_POD`/`FAC_FLECHETTE_DEFENSE_SYS` (shared
+`MaxEnemyRange` block); `FAC_BIOLOGY_LAB`/`FAC_CENTAURI_PRESERVE` (also
+split-block); `FAC_RECREATION_COMMONS`/`FAC_HOLOGRAM_THEATRE`/
+`FAC_RESEARCH_HOSPITAL`/`FAC_PARADISE_GARDEN` (shared `mod_psych_check`
+block); `FAC_PSI_GATE` (its own base-scan loop); `FAC_PUNISHMENT_SPHERE`
+(shared `GOV_MAY_FORCE_PSYCH` gate); `FAC_CHILDREN_CRECHE`;
+`FAC_TREE_FARM`/`FAC_HYBRID_FOREST`; `FAC_GENEJACK_FACTORY`/
+`FAC_ROBOTIC_ASSEMBLY_PLANT`/`FAC_NANOREPLICATOR`/`FAC_QUANTUM_CONVERTER`
+(shared block); `FAC_NETWORK_NODE`; `FAC_RECYCLING_TANKS`.
 
-**This session, implemented only `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/
-`FAC_BIOENHANCEMENT_CENTER`** (`build.cpp:1322-1331`), chosen
-specifically because it needed none of the above — every value
-(`sea_base`, `allow_ships`, `minerals`, `reserve`, `project_limit`,
-`defend_range`, `MaxEnemyRange`, `Facility[t].cost`/`.maint`) was already
-in `select_build_prologue` (3.1-3.3) or `tech.facility()`. No RNG, so no
-new shadow-call placement question — this only extends the *body* of
-the existing `build_order_item_score` (3.3) between its energy gate and
-`return score`; the C++ shadow-call/check sites (already correctly
-positioned around the whole per-item computation) needed zero changes.
+**Unit-type branches implemented:** `DefendUnit`/`CombatUnit` (4.10.13,
+predates this catalog); `ColonyUnit`/`CrawlerUnit`/`FerryUnit`/
+`SeaProbeUnit`/`Satellites`; `SecretProject` (via a full port of
+`find_project`, cheaper than its ~112 loc suggested since it reuses many
+already-ported pieces — `facility_score`/`check_retool`/`prod_count`/
+`unit_score`/`can_build`/`has_fac_built`/`has_tech`/`at_war`/`is_alive`/
+`defense_modifier` — plus 4 small new helpers: `find_missile`/
+`faction_might`/`has_pact`/`redundant_project`); `FormerUnit`.
 
-**Files touched:** `lua/ai/build.lua` only (`select_build_prologue`
-gains `defend_range` in its return table; `build_order_item_score`
-extended with the new branch). No `port.source`/registration changes.
+**`FormerUnit`/`select_item` scope decision.** `FormerUnit`'s own
+dependency, `move.cpp`'s `select_item` plus its 12 `can_*` helpers,
+totals ~472 loc with zero engine surface exposed — comparable in size to
+the entire facility-branch catalog. Scoped concretely and presented to
+the user as a choice: port it now (the project's usual "1:1, mechanical"
+default), or recognize that within `select_build`, `select_item`'s return
+value is only ever used as a `>= 0` eligibility check, never scored.
+User chose the latter: the whole tile-quality tally (`iterate_tiles` +
+`select_item(...) >= 0` + `worked_tiles`/`sea` counts) was wrapped as one
+opaque host call, `former_tile_tally(base_id) -> {num, sea}` (same tier
+as `has_base_sites`), and only the outer branch logic was ported.
+Porting `select_item` itself as real AI policy is deferred to Movement's
+`former_move` (Phase 4.2 item 4), where its terraform-choice value
+actually matters — a different, Class 3 shadow-verification shape.
+
+**New engine surface added across this whole stretch** (`api_version`
+grew 13→22): `BASE.queue_items[10]`/`eco_damage`/`specialist_total`/
+`assimilation_turns_left`/`mineral_intake`; `Faction.SE_planet_pending`/
+`SE_growth_pending`/`SE_effic_pending`/`SE_alloc_labs`/`SE_alloc_psych`/
+`clean_minerals_modifier`/`satellites_nutrient`/`_mineral`/`_energy`/
+`_ODP`/`planet_busters`/`diplo_status[8]`/`pop_total`;
+`CRules.drones_induced_genejack_factory`; a new `ResInfoRecyclingTanks`
+global (computed address, not hand-transcribed — `FIELD()`/`FieldShape`
+only handles scalar/array-of-scalar members, not a nested sub-struct, so
+its address is computed from `offsetof` at generation time instead);
+`MapAreaTiles` global; host wrappers `base_unused_space`, `nearby_items`,
+`mineral_output_modifier`, `clean_minerals`, `unknown_factions`,
+`has_facility`, `is_alive`, `enemy_odp`, `enemy_sat`,
+`satellite_goal_setting`, `max_satellites`, `mil_strength`,
+`former_tile_tally`, `mod_psych_check`, `naval_start_x`/`naval_start_y`,
+`biology_lab_bonus`; plus ~20 new `FAC_*`/`GOV_*`/`PFLAG_*`/`DIPLO_*`/
+`BSTATE_*`/`BIT_*` enums (see `lua/ai/build.lua` and `tools/gen_ffi.cpp`
+for the exhaustive list, not reproduced here).
+
+**Design lessons from this stretch** (full incident narrative:
+`DEVELOPMENT_DIARY.md`, 2026-07-16 through 2026-07-20):
+
+- **RNG-hazard hook-argument threading.** `select_build_prologue` is
+  recomputed fresh on every shadow-called per-item hook (up to 38× per
+  real `select_build` call). A local that consumes RNG when derived
+  (`allow_units`, via `can_build_unit`) cannot be re-derived inside the
+  prologue — it must be computed once in C++ and threaded through as a
+  hook argument, same precedent as `mod_social_ai`'s `pop_boom` (4.5).
+  Locals that are pure/RNG-free (`drone_riots`, `drones`,
+  `mod_psych_check`, `main_region`, `target_land_region`) are safe to
+  re-derive per item instead.
+- **Split-block facilities.** A single facility ID can be gated by more
+  than one separate `if (t == FAC_X)` block in `build.cpp` (found for
+  `FAC_NAVAL_YARD` and `FAC_BIOLOGY_LAB`). Porting only one block leaves
+  the facility silently half-implemented — check for a second block
+  before calling any facility "done".
+- **Verification methodology correction (2026-07-17, raised by the
+  user): absence of a `mismatch` line is not evidence of correctness.**
+  `lua_shadow`'s per-item hook only fires if the surrounding C++ loop
+  already decided the item is eligible (`can_build`, gated on prereq
+  tech). An unreached branch and a correctly-handled one produce
+  identical "no mismatch" output. Fix: cross-check `push_item`'s own
+  debug line (`push_item %d %d %d %s` → nonzero count of the specific
+  facility/unit name) as independent evidence the branch was actually
+  exercised. Both `lua.log`/`debug.txt` truncate on every launch, so this
+  must be checked per-run, not retroactively. Documented as a standing
+  rule in `IMPLEMENTATION_PLAN.md`'s Phase 5 handoff note.
+- **Two real bugs caught by review before they could ship:**
+  `faction.has_project(...) ~= 0` is always `true` — `has_project` is
+  declared `bool` in `LuaHostApi`, and LuaJIT auto-converts a C `_Bool`
+  return to a genuine Lua boolean, which is never `~= 0`-comparable the
+  way a raw `int32_t` host call is (caught by re-reading other call
+  sites before trusting new code). `C.SP_ID_First`/`C.SP_ID_Last` don't
+  exist — those enums are under `E.` (`enums`), not `C.` (`counts`); a
+  `nil` table lookup doesn't error until the code path actually runs, so
+  this would have passed a clean build and only failed at runtime.
+- **A real, pre-existing gap found while wiring unit branches (not a bug
+  in new code):** `select_build_prologue`'s `need_ferry`/`allow_supply`
+  exposed `count_vehicles`'s raw loop-accumulated values, but real C++
+  applies a post-loop refinement (`build.cpp:948-950`) never ported —
+  invisible until `CrawlerUnit`/`FerryUnit` became the first consumers,
+  since the pre-existing `vehicle_counts_check` diagnostic runs *before*
+  the refinement in the C++ source too. Fixed in `select_build_prologue`,
+  not `count_vehicles`, to leave that diagnostic's own comparison point
+  unchanged.
+
+**This closes the entire `build_order[]` catalog.** Step 4 (wiring the
+real `select_build` hook, Class 2 propose-then-commit) is no longer
+blocked on missing branches — see `IMPLEMENTATION_PLAN.md` item 3 for
+current status and next step. `mod_base_hurry`/`plans_upkeep`/
+`design_units`/`former_plans` remain unsurveyed.
+
+---
 
 ### 4.11 Port drift detection (2026-07-16) — Consolidation gate item e, done
 

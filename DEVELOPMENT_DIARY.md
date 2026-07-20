@@ -300,258 +300,209 @@ nice-to-have.
 
 ## 2026-07-16
 
-### `game_rand` pinning + root-cause run (supports `IMPLEMENTATION_DETAILS.md` 5.3.6)
+### RNG pinning root-cause hunt, then abandoned in favor of shadow mode (supports `IMPLEMENTATION_DETAILS.md` 5.3.6)
 
-The 5.3.5 diagnostics, run for real (same save, same seed, twice):
-`mod_rng`/`map_rng` matched across launches as already known, but
-**`game_rand` (the engine's own RNG) did not** — different values at the
-exact same point right after `load_daemon()` returns. `fixed_rng_seed` had
-only ever pinned the mod's own streams; the engine's `game_rand` was never
-touched by it and drifted freely from process start.
+Cross-launch determinism work found a real bug (`game_rand`, the engine's
+own RNG, was never re-seeded by `fixed_rng_seed` — fixed by calling the
+existing `game_rand_restore` from `mod_load_daemon`), which pushed
+divergence from turn 1 to turn 3 but didn't close it fully. Closed by
+decision, not by resolving the remaining turn-3 gap: per-call shadow-mode
+comparison (implemented the same day) is strictly stronger evidence of
+port fidelity than trajectory comparison, and needs no cross-launch
+determinism at all — both sides run inside the same process invocation.
+Chasing engine-internal nondeterminism further would be engine debugging,
+not AI porting. The only future consumer of trajectory-style comparison
+is Movement (M6), which will use a windowed method (reload once, compare
+one turn) whose prerequisite — single-turn reproducibility — this work
+already delivers.
 
-**Fixed:** `mod_load_daemon` now calls the existing (until-now-unused)
-`game_rand_restore(conf.fixed_rng_seed)` immediately after `load_daemon()`
-returns.
+### Shadow mode, golden traces, port drift — Consolidation gate closed (supports `IMPLEMENTATION_DETAILS.md` 5.1, 5.2.1, 4.11)
 
-**Acceptance run:** same save, same seed, twice. `game_rand` now matches
-identically in both. Result: **turns 1 and 2 now match completely**
-(state hash and all three RNG-state fields byte-identical). `cmp` on the
-full `state_hashes.log` pair: still differs, **first at turn 3**.
+Replaced the hand-rolled dual-run blocks with real `lua_ai_shadow_call`/
+`_check` plus the typed `out_count` descriptor refactor (closes the
+`facility_score`/`governor_priorities` hookability gap). First live run
+found the autoplay harness was silently discarding `lua_shadow=1`
+(`tools/autoplay_run.sh` force-set `lua_ai`/`lua_strict` but not
+`lua_shadow` when overwriting `thinker.ini`) — fixed with a `--lua-shadow`
+flag and a `config: ...` line at Lua init so a run's actual flags are
+always visible in the log, not just inferred from zero mismatches. Three
+autoplay runs (one with `rule_psi`) then came back clean, closing gate
+item (d). Golden traces (capture + native-`luajit` replay) verified
+against a real captured corpus, 1265/1265 passed. `tools/port_drift.py`
+verified against all three real outcomes (clean/drifted/error), not just
+a smoke test — the synthetic "drifted" case correctly flagged exactly
+the 3 functions touched by an intervening upstream commit.
 
-**Localization (not root-caused — this is as far as this session went):**
-diffing the two `debug.txt`s found the first difference during turn 3,
-faction 1's processing — one run shows an extra sequence (`veh_init`,
-`enemy_move ... Unity Rover`, `set_move_to`) the other doesn't. The
-per-faction draw counters immediately before this point were **still
-identical** in both runs — so whatever causes the extra event isn't (yet
-visibly) a prior draw-count difference; either the same draw produces a
-different outcome at this exact call, or something non-RNG-related decides
-differently whether the event fires at all.
+### `select_build` steps 2–3.4 — four distinct bug classes, same discipline catches all of them (supports `IMPLEMENTATION_DETAILS.md` 4.10.11–4.10.15)
 
-**Net effect: real, measurable progress (divergence pushed one full turn
-later, one genuine bug fixed) but the full-trajectory acceptance criterion
-was not met.**
+Porting `select_build`'s prologue, `DefendUnit`/`CombatUnit`, and the
+first facility branch surfaced four unrelated failure classes, each
+found only because a real diagnostic/shadow hook was run against live
+data, not because the code "looked right" or built clean:
 
-**Closed by decision, not resolved.** Rationale: per-call shadow-mode
-comparison (implemented the same day, see below) is strictly stronger
-evidence of port fidelity than trajectory comparison, and needs no
-cross-launch determinism at all — both sides run inside the same process
-invocation. The only future consumer of trajectory-style comparison is
-movement (M6), which will use a **windowed** method instead: reload the
-same autosave twice, compare exactly one turn, not a full trajectory. That
-method's prerequisite is single-turn reproducibility, which this session's
-work already delivers. Chasing engine-internal nondeterminism further is
-also, on reflection, engine debugging rather than AI porting — outside this
-project's charter. Net: the RNG-pinning work is not wasted, it's
-re-purposed from "prove two processes reach the same state" (dropped) to
-"prove one save reloads deterministically for one turn" (M6's actual need,
-already met).
+1. **Double-application** (step 2): the `push_item_check` hook sat
+   *after* `push_item`'s own score adjustments, feeding Lua an
+   already-adjusted value that its independent recomputation adjusted
+   again. Fixed by moving the hook to the top of the function.
+2. **Pure ordering bug** (step 3.1): `select_build_prologue` referenced
+   `governor_priorities` before its `local function` declaration — Lua
+   locals aren't hoisted, so the forward reference silently fell through
+   to a nil global. Every call failed identically until reordered.
+3. **Shadow-placement bug** (step 3.2): `lua_ai_shadow_call` for
+   `combat_unit_early_return` was placed *after* C++'s own
+   `select_combat` call had already consumed its RNG draws, desyncing
+   the two sides even though the underlying logic was correct. Fixed by
+   moving the shadow call before C++'s own call.
+4. **Missing field in a shared return table** (step 3.4): `select_build_
+   prologue` computed `defend_range` as an internal local but never
+   returned it — invisible until the first facility branch that needed
+   it externally. Since this was a shadow hook, the resulting Lua error
+   was safely contained (logged and skipped) the whole time.
 
-**Resume point, only if M6's windowed method fails for a reason that traces
-back to this:** two discriminating tests were proposed (external review)
-and deliberately **not run**: (1) binary-diff the turn-2 autosaves between
-the two runs — confirms whether state itself is identical at the point
-divergence starts; (2) repeat the same-seed pair again and see whether the
-divergence point wanders to a different turn or stays put — wandering would
-point at genuine nondeterminism (timing, ASLR-dependent container
-iteration), a stable turn 3 every time would point at something more
-mundane. Do not restart general-purpose determinism-chasing without a
-concrete M6 trigger.
+---
 
-### Shadow mode implementation + typed-descriptor refactor (supports `IMPLEMENTATION_DETAILS.md` 5.1.1)
+## 2026-07-17
 
-Replaced every hand-rolled per-hook dual-run block with the real
-`lua_ai_shadow_call`/`lua_ai_shadow_check` mechanism, gated on
-`conf.lua_shadow`. Same pass did the typed hook-descriptor refactor
-(`out_count` parameter) — this is what makes `facility_score`/
-`governor_priorities` hookable, closing the gap the earlier "implemented,
-not dual-run verifiable" status left open. All seven pre-existing hooks
-migrated; the manual RNG snapshot/restore some of them carried individually
-was removed in favor of `lua_ai_shadow_call` doing it unconditionally for
-every hook. Both presets rebuild clean; sanity-checked at build time, then
-exercised live the same day (see below).
+### `allow_units` RNG hazard — the hook-argument-threading pattern (supports `IMPLEMENTATION_DETAILS.md` 4.10.16)
 
-### Shadow mode exercised live — harness ini-overwrite bug (supports `IMPLEMENTATION_DETAILS.md` 5.1.2)
+Caught before any run, while wiring `queue_items[0]`: the obvious port
+would add `allow_units` to `select_build_prologue`'s return table, but
+`select_build_prologue` isn't computed once per `select_build` call the
+way its name suggests — `build_order_item_score` calls it fresh
+internally and is itself shadow-called up to 38× per real invocation
+(once per `build_order[]` item). `allow_units`'s backing function
+(`can_build_unit`) contains a conditional `random(32)` draw; real C++
+computes it once before the loop and reuses that single value for all 38
+items. Re-deriving it per item in Lua would draw RNG up to 38× instead of
+once, and could resolve to a different boolean on different items within
+the same call — something C++ structurally cannot do. Fixed by threading
+the already-computed C++ value through as a hook argument instead (same
+precedent as `mod_social_ai`'s `pop_boom`). General rule going forward:
+a per-call-once C++ local is only safe to re-derive inside a
+per-item-called prologue if it's pure/RNG-free; confirmed safe cases
+found the same session (`drone_riots`, `drones`, `mod_psych_check`,
+`main_region`, `target_land_region`) by actually reading each function's
+body for a `random()` call, not by pattern-matching the "computed once
+before a loop" shape.
 
-First actual `lua_shadow=1` session. Two real gaps found and fixed before
-any comparison data could be trusted:
+### Split-block facilities: a second `if (t == FAC_X)` block can hide (supports `IMPLEMENTATION_DETAILS.md` 4.10.17)
 
-- **The harness silently discarded `lua_shadow=1`.** The "force the
-  settings this harness needs" block in `tools/autoplay_run.sh` overwrote
-  the deployed `thinker.ini` with the shipped template's default
-  (`lua_shadow=0`), then only force-set `autoplay`/`lua_ai`/`lua_strict`/
-  `minimal_popups`, never `lua_shadow` — found live when asked to confirm a
-  completed run's results. A run launched this way never invoked the Lua
-  side for comparison at all. Fixed with a new `--lua-shadow` flag.
-- **No way to confirm which flags were actually in effect after the fact.**
-  Zero mismatch lines in `lua.log` is the expected output both when shadow
-  ran and matched perfectly, and when shadow was never active at all —
-  indistinguishable from the log alone. Fixed with a `config: lua_ai=...
-  lua_shadow=... lua_strict=... autoplay=...` line at Lua runtime init.
+`FAC_NAVAL_YARD` had been reported "0 mismatches" after porting only
+`build.cpp:1322-1331`; a second, separate block at `1333-1334` (also
+gated on `FAC_NAVAL_YARD`) went untranscribed and unnoticed because the
+first block's own gate (`!allow_ships → continue`) filtered out most
+bases before they'd ever reach the second. Same shape recurred
+immediately with `FAC_BIOLOGY_LAB` (`1302-1306` and `1307-1310`, the
+second shared with `FAC_CENTAURI_PRESERVE`) — caught this time by
+deliberately checking for a second block before calling the facility
+done, specifically because the `FAC_NAVAL_YARD` gap had just been found.
+Standing rule: a facility ID appearing in more than one `if` block in
+`build.cpp` is not fully ported until every block is.
 
-With both fixes in place: first full run, `register_hooks: 11 hook(s)
-registered`, `outcome: COMPLETED` at turn 71, **zero mismatch lines** across
-all 9 hooked decision functions. Second run, new game deliberately including
-a `rule_psi` faction: `outcome: COMPLETED` at turn 70, zero mismatches
-again. Third run, another distinct new game: `outcome: COMPLETED` at turn
-70, zero mismatches. **Consolidation gate item (d)'s acceptance criterion
-met: zero divergences across 3 distinct saves/maps, including one with
-`rule_psi`.**
+### Verification methodology correction: absence of a mismatch is not evidence of correctness (supports `IMPLEMENTATION_DETAILS.md` 4.10.20)
 
-### Golden traces, first slice — implementation and real-corpus replay (supports `IMPLEMENTATION_DETAILS.md` 5.2.1)
+The user asked whether late-game facilities could even be reached in a
+60-turn test — checking the code (not guessing) showed `can_build`
+gates the entire per-item loop body *before* `build_order_item_score`'s
+shadow call runs, so an unreached branch and a correctly-handled one
+produce byte-identical `lua.log` output. Every prior "0 mismatches,
+confirmed by absence" claim was, strictly, unconfirmed for facilities
+that hadn't been queued as a candidate that run — and since both
+`lua.log`/`debug.txt` truncate on every launch, there was no way to
+retroactively check whether earlier runs actually had. Fix: cross-check
+`push_item`'s own debug line (already logs `prod_name(item_id)` on every
+item that survives to be scored) for a nonzero count of the specific
+name, as independent evidence of exercise, not just absence of
+disagreement. Applied immediately: a 172-turn run (ended in an unrelated
+engine crash, not a Lua error) brought 24 of 28 then-"done" facilities to
+real confirmed-exercise evidence, all clean. Now a standing rule,
+recorded in `IMPLEMENTATION_PLAN.md`'s Phase 5 handoff note.
 
-Built the capture side (`src/golden_trace.h`/`.cpp`, gated on
-`conf.golden_trace`) and the replay runner (`tools/golden_trace_replay.lua`,
-native-`luajit`-only). The replay runner can't load the real
-`lua/api/*.lua` modules unmodified (they read live engine memory via
-`ffi.cast`, none of which exists outside the actual running game process),
-so it overrides the global `dofile` before loading `lua/ai/build.lua`,
-substituting fixture-backed stand-ins for the three modules the two
-functions under test actually call into.
+### `has_project(...) ~= 0` — a `bool`-vs-`int32_t` FFI trap, caught in review (supports `IMPLEMENTATION_DETAILS.md` 4.10.22)
 
-**One stub couldn't be trivially empty, found before running anything:**
-`lua/ffi/validate.lua`'s `types.enums` is read unconditionally at module
-load by `governor_priorities`'s `is_human` branch — an empty-table stub made
-`E` nil, and any `E.FOO` lookup would have errored immediately. Fixed by
-hand-copying the four real `GOV_PRIORITY_*` bit values into the stub.
+First draft of `FAC_CHILDREN_CRECHE` copied the raw-`int32_t`
+`has_fac_built ~= 0` idiom for `has_project`, but `has_project` is
+declared `bool` in `LuaHostApi` — LuaJIT auto-converts a C `_Bool` return
+to a genuine Lua boolean, and `false ~= 0` is `true` in Lua (no C-style
+truthy coercion), so the comparison was unconditionally `true`. Caught by
+grepping every other `faction.has_project` call site before trusting the
+new one — none use `~= 0`. Fixed before the first build. Rule: FFI
+functions declared `bool` return real Lua booleans and must be used as
+such; only raw `int32_t` host calls need the `~= 0` idiom.
 
-**Verified genuinely end-to-end:** hand-built fixture lines covering a
-correct case, a deliberately-wrong case (to prove the checker isn't
-vacuous — confirmed `FAIL` with expected/actual values and nonzero exit
-code), and both `governor_priorities` branches. All four behaved exactly as
-hand-computed. **Then confirmed against a real capture, same session:** a
-`--no-xvfb --golden-trace` autoplay run, replayed — **1265/1265 passed**,
-zero failures, across many distinct `facility_score` item IDs (including
-negative results) and both `governor_priorities` branches over 100+ distinct
-base IDs.
+---
 
-### `select_build` step 2 (`push_item`/`has_retool`/`skip_facility`) — one bug found and fixed (supports `IMPLEMENTATION_DETAILS.md` 4.10.11)
+## 2026-07-19
 
-Reused the precedent from step 1: `push_item()` already logs its own final
-adjusted score via an existing `debug()` line on every call, so a temporary
-diagnostic hook (`push_item_check`) could compute the same score
-independently and log it for comparison, no new C++ infrastructure needed
-beyond one call site.
+### `need_ferry`/`allow_supply` — a refinement gap invisible since step 1 (supports `IMPLEMENTATION_DETAILS.md` 4.10.27)
 
-**First autoplay run paired 987/987 lines but 985/987 mismatched** — traced
-to the hook call site itself, not the port: it sat *after* `push_item`'s own
-score adjustments and handed Lua the already-adjusted value, so
-`push_item_score` (which independently reapplies the same adjustments)
-double-applied them. Fixed by moving the hook call to the top of
-`push_item()`, before any mutation. Rebuilt clean, second autoplay run:
-**859/859 paired, zero mismatches.**
+While wiring `CrawlerUnit`/`FerryUnit` (the first real consumers of
+either value), found `select_build_prologue` had been exposing
+`count_vehicles`'s raw, loop-accumulated `need_ferry`/`allow_supply` —
+but real C++ applies a post-loop refinement (`build.cpp:948-950`) never
+ported. Not a new mistake: a gap dating back to step 1 (4.10.10),
+invisible until now because `vehicle_counts_check` (the temporary
+diagnostic that verifies `count_vehicles`' output) runs *before* that
+refinement in the C++ source too, so it structurally never had a chance
+to catch it. Fixed inside `select_build_prologue` itself, deliberately
+not inside `count_vehicles`, to avoid silently changing what the
+existing diagnostic verifies.
 
-### `select_build` step 3.1 (shared prologue) — an ordering bug, not a math bug (supports `IMPLEMENTATION_DETAILS.md` 4.10.12)
+### `C.SP_ID_First` vs `E.SP_ID_First` — a wrong-table lookup caught by cross-reference, not by the build (supports `IMPLEMENTATION_DETAILS.md` 4.10.28)
 
-Read the full current `select_build` body before planning anything, rather
-than trusting the original 2026-07-14 scoping pass at face value — accurate
-about the overall shape, but it hadn't actually enumerated the branches
-(the "~35 facility branches" estimate later turned out to be 15 code blocks
-covering 24 facility IDs, not recounted precisely until step 3.4). Ported
-only the shared prologue through `Wbase`/`Wthreat`.
+`find_project`'s first draft used `C.SP_ID_First`/`C.SP_ID_Last` (the
+`counts` table); both are actually under `enums`, confirmed by checking
+`gen_ffi.cpp`'s own emission order and by the one pre-existing correct
+usage elsewhere in the file (`E.SP_ID_First` at `build.lua:709`).
+`C.SP_ID_First` would silently be `nil` — Lua doesn't error on a nil loop
+bound until the code actually runs, so this would have built clean and
+only failed the first time `find_project` executed in-game. Caught
+during review, before any build. Separately, double-checked (correctly)
+that `f->diplo_status[i]` is the *current* faction's own array indexed
+by the *other* faction, not the reverse — verified against the source
+directly since `has_pact`'s own argument order reads the opposite way
+and could easily have been copied wrong.
 
-**Real bug found and fixed: an ordering bug, not a math bug.** First
-autoplay run logged zero comparable lines at all — `lua.log` showed
-`attempt to call global 'governor_priorities' (a nil value)`, every single
-call. Root cause: `select_build_prologue` was placed *before*
-`governor_priorities`'s own `local function` declaration in the file — Lua
-locals aren't hoisted, so referencing a not-yet-declared local falls
-through to the global namespace, which is nil. Fixed by reordering. This is
-a different failure class than step 2's bug (a real double-application
-logic error) — worth distinguishing, since this one says nothing about
-whether the ported math was correct, only that it never ran. Before
-requesting the second run, manually re-checked `Wbase`/`Wthreat` term-by-term
-against the C++ — useful discipline, though it wouldn't have caught this
-particular bug class since the math itself was fine all along. Second run,
-after the fix: **556/556 clean.**
+### `FormerUnit`/`select_item` — scoped concretely, then deliberately not ported (supports `IMPLEMENTATION_DETAILS.md` 4.10.29)
 
-### `select_build` step 3.2 (`DefendUnit`/`CombatUnit` early return) — a shadow-placement bug (supports `IMPLEMENTATION_DETAILS.md` 4.10.13)
+`FormerUnit`'s dependency, `select_item` plus its 12 `can_*` helpers,
+was first estimated loosely as "medium, unsurveyed"; reading it to the
+actual end put it at ~472 loc with zero engine surface exposed —
+comparable to the entire 15-block facility-branch catalog, not "one more
+branch." Presented concretely to the user rather than pushed through on
+the earlier estimate. Re-reading the `FormerUnit` branch itself
+(`build.cpp:1152-1179`) showed `select_item(...) >= 0` is used purely as
+a tile-quality signal (a tally), never scored or branched on by which
+specific terraform action it names — that judgment only matters later,
+in Movement's `former_move` (not yet ported, a different Class 3
+shadow-verification shape). Given a genuine choice — port `select_item`
+properly now, or wrap just the tally the branch actually needs — the
+user picked the minimal option: one opaque host wrapper
+(`former_tile_tally`), same "wrap the scan, don't expose the primitives"
+precedent `has_base_sites` already set for `select_colony`. Result ended
+up comparable in size to `ColonyUnit`/`CrawlerUnit`, not to the facility
+catalog. This closed `select_build`'s unit-branch catalog at 9 of 9.
 
-Design departure from steps 1-3.1: used real `lua_ai_shadow_call`/`_check`
-hooks instead of another throwaway diagnostic one, since `DefendUnit`'s
-second branch and `CombatUnit`'s check both consume RNG and neither has an
-existing debug line to diff against — a plain hook has no RNG
-snapshot/restore and would have permanently desynced the real RNG stream.
+---
 
-**Real bug found and fixed: a shadow-hook placement error, a third distinct
-failure class this session.** First run: `defend_unit_*` both clean, but
-`combat_unit_early_return` showed **147 mismatches**, always
-`lua=[-1] cpp=[<real choice>]`. `select_combat`'s own pre-existing hook
-stayed at 0 mismatches in the same run, isolating the bug to the new code.
-Root cause: `lua_ai_shadow_call` was placed *after* C++'s own
-`select_combat(...)` call already ran and consumed its RNG draws, instead
-of before it — since Lua's `combat_unit_early_return` independently calls
-`select_combat` itself, it started from an already-advanced RNG position,
-so the two calls were never operating on aligned RNG state even though
-`select_combat`'s logic itself was fine. Fixed by moving the shadow-call
-line to the top of the block, before C++'s own call. Second run: all three
-hooks clean.
+## 2026-07-20
 
-**Three distinct bug classes this session, worth keeping straight:** step
-2's bug was a double-application (an already-adjusted value fed back into a
-function that re-adjusts it); step 3.1's was a pure ordering error (a
-forward reference to a not-yet-declared Lua local); this one is a
-shadow-call placement error relative to an RNG-consuming call the Lua side
-re-invokes independently. All three were caught by the same discipline:
-ship the diagnostic/shadow hook, run it against real data, don't assume
-"builds clean" means "is correct."
+### Unit-branch catalog live-verified; `Satellites` and the remaining untested facilities explicitly deprioritized (supports `IMPLEMENTATION_DETAILS.md` 4.10.30)
 
-### `select_build` step 3.3 (`build_order` loop skeleton, 14 no-branch facilities) (supports `IMPLEMENTATION_DETAILS.md` 4.10.14)
-
-Cataloged the loop skeleton before planning: of `build_order[]`'s 36-ish
-facility entries (later recounted precisely as 38), ~14 have no dedicated
-scoring branch at all — for exactly those, the shared per-item base-score
-formula is a complete computation. Live run: **587 mismatches, and every
-one falls on a facility with a real, not-yet-ported branch** — zero
-mismatches on any of the 14 no-branch facilities, confirmed by checking
-there's no overlap between mismatched item_ids and the 14 expected-clean
-ones, not just eyeballing a low count.
-
-### `select_build` step 3.4 (facility-branch catalog + first branch) — a missing-field bug (supports `IMPLEMENTATION_DETAILS.md` 4.10.15)
-
-Cataloging session: `build_order[]` has 47 entries (9 unit sentinels + 38
-facilities, not the "~45 entries, 36 facilities" quoted around this
-session — corrected count, verified programmatically, not by eye). Of the
-38 facilities, 14 have no branch (3.3) and 24 do (this section). Implemented
-only `FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/`FAC_BIOENHANCEMENT_CENTER`,
-chosen specifically because it needed no new engine surface.
-
-**Real bug found and fixed — a fourth distinct failure class, not a repeat
-of steps 2/3.1/3.2's.** First run: 56 `error in 'build_order_item_score'`
-lines, `attempt to compare number with nil`. Root cause:
-`select_build_prologue` computes `defend_range` as a local (used internally
-since step 3.1) but **never included it in the function's own returned
-table** — every prior sub-step happened not to need it externally, so the
-gap went unnoticed until this one, the first to reference `r.defend_range`.
-Fixed by adding it to the return table. Since this is a shadow hook, the Lua
-error was safely contained the whole time — logged and skipped, C++ always
-governed regardless — worth noting since a bug here could easily be
-mistaken for something that risked real gameplay; it didn't. Second run
-confirmed **0 mismatches on all three facilities** across 2234 total
-mismatches (all on the other, still-unported facilities).
-
-**Four distinct bug classes found this session, worth the full list:** step
-2 — double-application; step 3.1 — pure ordering (forward reference to a
-not-yet-declared Lua local); step 3.2 — shadow-call placement relative to an
-RNG-consuming call the Lua side re-invokes independently; step 3.4 — a
-missing field in a shared return table, invisible until a new caller needed
-exactly that field. All four caught the same way: ship the verification,
-run it against real data, don't assume "builds clean" or "syntax-checks"
-means "is correct."
-
-### Port drift detection — verified against three real outcomes (supports `IMPLEMENTATION_DETAILS.md` 4.11)
-
-Built `tools/port_drift.py` and verified it against three real scenarios,
-not just a smoke test:
-
-- **Clean (real run):** `upstream/master`'s current tip *is* the pinned
-  commit for every existing entry — reports **11 clean, 0 drifted, 0
-  errors**.
-- **Drifted (synthetic — pointed at a commit 5 commits before the pin):**
-  correctly reports **6 clean, 3 drifted** — the 3 flagged
-  (`select_colony`, `social_score`, `mod_social_ai`) are exactly the
-  functions actually touched by the intervening "Rewrite faction and
-  movement code" commit, and the other 8 correctly report clean. Real
-  evidence the diff detection works, not just that the script runs.
-- **Error (bogus base ref):** all entries correctly report as errors, exit
-  1, rather than crashing or silently reporting false negatives.
+Facility item-IDs map 1:1 to a branch, so the `push_item.*<name>` grep
+worked directly for the facility catalog; unit branches share one
+`push_item` call site, so confirming each needed a `prod_name` value
+distinctive to that branch's specific `WMODE`/triad combination (e.g.
+"Foil Probe Team", not the more general "Probe Team", to confirm the
+sea-triad branch specifically) — checked against each branch's code
+before trusting it. A 61-turn run confirmed 5 of 7 new branches clean;
+a second, 100-turn run requested specifically to chase `CrawlerUnit`
+("Supply Crawler", 257 occurrences, 0 mismatches) confirmed it too.
+`Satellites` showed zero occurrences in both runs. Rather than leave it
+as open-ended "try again later," the user made an explicit, durable call
+to deprioritize `Satellites` and the remaining handful of untested
+facilities long-term — not project-blocking, not scheduled, revisit
+opportunistically — recorded in `IMPLEMENTATION_PLAN.md` so it doesn't
+quietly turn into a forgotten action item. Standing count: 8 of 9 unit
+branches and 33 of 38 facilities carry real confirmed-exercise evidence,
+0 mismatches ever recorded.

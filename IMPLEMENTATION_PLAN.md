@@ -511,14 +511,26 @@ enable Lua by default on the branch → next.
 
    **Status: 🔨 in progress.** `unit_score`/`find_proto`,
    `select_colony`/`select_combat`, `governor_priorities`/`facility_score`
-   are ✅ in-game verified clean and formally closed by the Consolidation
-   gate below (`IMPLEMENTATION_DETAILS.md` 4.7–4.9). `select_build` itself
-   (the final, largest piece) is mid-port: steps 1–2 and step 3's 4
-   sub-steps are done and live-verified, 17 of 38 facility branches fully
-   correct — see "Resuming after the gate" below for the exact resume
-   point and `IMPLEMENTATION_DETAILS.md` 4.10 for the full catalog.
-   `find_project`/`mod_base_hurry`/`plans_upkeep`/`design_units`/
-   `former_plans` remain unsurveyed.
+   are ✅ closed by the Consolidation gate below (`IMPLEMENTATION_DETAILS.md`
+   4.7–4.9). `select_build` itself: steps 1–2 done; step 3's
+   `build_order[]` catalog is **fully ported** — all 38 facility branches
+   and all 9 unit-type branches have real Lua implementations
+   (`IMPLEMENTATION_DETAILS.md` 4.10). Live-exercise evidence: 33/38
+   facilities and 8/9 unit branches confirmed with 0 mismatches; 5
+   facilities (late-tier prereq tech: `FAC_ROBOTIC_ASSEMBLY_PLANT`/
+   `FAC_NANOREPLICATOR`/`FAC_QUANTUM_CONVERTER`/`FAC_PARADISE_GARDEN`/
+   `FAC_PSI_GATE`) and `Satellites` remain unconfirmed — not known
+   defects, deprioritized by explicit user direction (2026-07-20),
+   revisit opportunistically rather than as scheduled work.
+   `FormerUnit`'s dependency (`select_item`, ~472 loc) was deliberately
+   wrapped as an opaque host call (`former_tile_tally`) instead of
+   ported — its return value is only ever used as a `>= 0` eligibility
+   check within this branch; the real port is deferred to Movement's
+   `former_move`, where its terraform-choice value actually matters
+   (`IMPLEMENTATION_DETAILS.md` 4.10.15–4.10.30). **Next: step 4** — wire the
+   real `select_build` hook (Class 2 propose-then-commit), no longer
+   blocked on missing branches. `mod_base_hurry`/`plans_upkeep`/
+   `design_units`/`former_plans` remain unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +
@@ -630,25 +642,65 @@ e. **`tools/port_drift.py` + provenance entries in `docs/LUA_PORTING.md`.**
    drifted, error), `docs/LUA_PORTING.md` written, 11 tracked functions.
    Detail: `IMPLEMENTATION_DETAILS.md` 4.11.
 
-**Resuming after the gate:** `select_build` porting (Phase 4.2 item 3) is
-mid-flight. Current state: steps 1-2 done; step 3 (the `build_order` loop)
-has 4 sub-steps done — shared prologue, `DefendUnit`/`CombatUnit`'s
-early-return decision, the per-item base formula (14 of 38 facilities), and
-3 more facilities with a real branch (`FAC_COMMAND_CENTER`/`FAC_NAVAL_YARD`/
-`FAC_BIOENHANCEMENT_CENTER`). **17 of 38 facilities fully correct.** Still
-open: step 4 (wiring the real hook), 13 more facility-branch code blocks (21
-facilities, two recurring blockers — `queue_items[0]` array-field support,
-`base.eco_damage`), and 7 more special unit-type branches.
-**`IMPLEMENTATION_DETAILS.md` 4.10.15 is the resume point** — full catalog
-of what's left, per-facility engine-surface requirements. Re-read 3.7's
-float-arithmetic rule before touching further `float` fields
-(`Wbase`/`Wthreat` already apply it correctly). Session-by-session bug hunts
-across steps 1-3 (four distinct bug classes found and fixed): `DEVELOPMENT_
-DIARY.md`, 2026-07-14/16.
+**Resuming after the gate:** `select_build` (Phase 4.2 item 3) is now fully
+ported — see item 3's status above for current state and next step.
+Design notes worth re-reading before touching this code further:
+`IMPLEMENTATION_DETAILS.md` 4.10 (RNG-hazard hook-argument threading,
+multi-block facility gating, the `FormerUnit`/`select_item` scope
+decision) and 3.7 (float-narrowing rule, `Wbase`/`Wthreat`). Bug hunts and
+decision rationale from this stretch of work: `DEVELOPMENT_DIARY.md`,
+2026-07-14 through 2026-07-20.
 
 ---
 
 ## Phase 5 — Validation, testing and performance
+
+> **Current testing reality:** every in-game run referenced below (manual
+> play, `--lua-shadow`/`--no-xvfb` autoplay sessions, live verification of
+> a newly-ported branch) is performed by the human maintainer, not by an
+> agent session. Coding sessions routinely have no `DISPLAY` and cannot
+> drive Wine/the game GUI (no autoplay-menu-bootstrap path exists yet —
+> Consolidation gate item a's still-open sub-item, `IMPLEMENTATION_
+> DETAILS.md` 5.3.1–5.3.3 — and headless Xvfb launch itself doesn't work
+> on the dev machine, same section). Until that's solved, a session that
+> implements a new branch/hook should build-verify (both presets) and
+> native-`luajit` syntax-check it, then say so explicitly and hand off
+> live verification rather than claim "live-verified" — see
+> `IMPLEMENTATION_DETAILS.md` 4.10.15–4.10.30 for the convention this follows.
+>
+> **Handoff protocol:** the maintainer runs the game/autoplay session
+> themselves and reports back when it's done — the agent does not wait on
+> or poll for that. Once told a run is complete, the agent's job is to
+> read the results, not take the "it's done" report at face value: check
+> `lua.log` (game folder root, `lua/cpp <hook> mismatch: ...` lines,
+> `lua_ai_shadow_check`/`src/luaai.cpp:472`) and, on debug builds,
+> `debug.txt` (mirrors the same lines, `IMPLEMENTATION_DETAILS.md` 2.6),
+> for mismatches on the specific hook(s)/facility branch(es) that session
+> just implemented. Report exactly what was found (or that logs weren't
+> present where expected), not just "the maintainer confirmed it works."
+>
+> **Absence of a mismatch line is not, by itself, evidence of
+> correctness — confirm the branch was actually exercised too**
+> (`IMPLEMENTATION_DETAILS.md` 4.10.20, found 2026-07-17 after several
+> earlier sessions' "0 mismatches, confirmed by absence" claims turned
+> out to rest on this gap). `lua_shadow`'s per-item shadow call only
+> fires if the surrounding C++ loop already decided the item is
+> eligible (e.g. `build_order_item_score`'s hook sits behind
+> `can_build(base_id, item_id)`, itself gated on the facility's
+> prerequisite tech being researched) — an unreached branch and a
+> correctly-handled one produce the exact same "no mismatch line"
+> output. For hooks with an existing debug-line signal of "this item was
+> actually considered" (`build_order_item_score`: grep `debug.txt` for
+> `push_item.*<Facility Name>` and require a nonzero count, not just zero
+> mismatches), cross-check both. Both `lua.log` and `debug.txt` truncate
+> on every launch (`fopen(..., "w")`) — there is no way to retroactively
+> audit a past run once a new one starts, so get this right per-run, not
+> after the fact. A late-game/high-tech-prereq/high-cost branch may
+> simply need a much longer run (100+ turns) or a later save before it is
+> ever exercised at all; that is a test-coverage gap to report, not
+> something to paper over by treating silence as a pass.
+> Revisit this note if/when autoplay gets a real headless or
+> agent-drivable path.
 
 ### 5.1 Shadow mode (per hook class)
 
