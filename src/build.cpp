@@ -816,15 +816,6 @@ int select_combat(int base_id, bool sea_base, bool build_ships) {
 static void push_item(score_max_queue_t& builds, int base_id, int item_id, int retool, int score, int modifier) {
     BASE* base = &Bases[base_id];
     assert(item_id < 0 ? can_build(base_id, -item_id) : mod_veh_avail(item_id, base->faction_id, base_id));
-    // TEMPORARY select_build step 2 verification instrumentation
-    // (IMPLEMENTATION_DETAILS.md 4.10.9/4.10.11, resumed after the
-    // Consolidation gate) -- same precedent as vehicle_counts_check
-    // (step 1). Must run on the ORIGINAL incoming score/modifier/retool,
-    // before any of this function's own adjustments below -- Lua's
-    // push_item_score independently reapplies the same adjustments, so
-    // handing it an already-adjusted score would double-apply them.
-    int lua_push_item_dummy;
-    lua_ai_hook("push_item_check", &lua_push_item_dummy, 1, {base_id, item_id, retool, score, modifier});
     if (item_id >= 0) {
         score -= 2*Units[item_id].cost;
     } else if (item_id >= -FAC_ORBITAL_DEFENSE_POD) {
@@ -847,12 +838,30 @@ static void push_item(score_max_queue_t& builds, int base_id, int item_id, int r
 int select_build(int base_id) {
     BASE* base = &Bases[base_id];
     int faction_id = base->faction_id;
+    // select_build step 4 (IMPLEMENTATION_DETAILS.md 4.10): plans_upkeep
+    // is a mutating side effect independent of which side (Lua or C++)
+    // decides the return value, so it runs exactly once here, before the
+    // hook attempt -- the fallback body below no longer calls it a
+    // second time (see the removed call inside the retool block).
+    if (base->plr_owner()) {
+        plans_upkeep(faction_id);
+    }
+    // Class 2 hook (IMPLEMENTATION_PLAN.md Phase 4.1): Lua proposes the
+    // full decision; this side validates nothing extra beyond the
+    // existing lua_ai_hook/lua_strict error containment, since select_
+    // build's own contract is "return an item_id the caller queues",
+    // no separate commit step. Falls back to the original body
+    // (unchanged below, still shadow-verified piece by piece) whenever
+    // lua_ai=0, the hook isn't registered, or the Lua call errors.
+    int value;
+    if (lua_ai_hook("select_build", &value, 1, {base_id})) {
+        return value;
+    }
     Faction* f = &Factions[faction_id];
     AIPlans* p = &plans[faction_id];
     int retool = 0; // Skip retooling penalties
     int prev_id = base->production_id_last;
     if (base->plr_owner()) {
-        plans_upkeep(faction_id);
         if (check_retool(base) && (prev_id >= 0
         || (prev_id >= -Fac_ID_Last && !has_fac_built((FacilityId)-prev_id, base_id))
         || (prev_id < -Fac_ID_Last && prev_id != -FAC_STOCKPILE_ENERGY))) {
@@ -933,16 +942,6 @@ int select_build(int base_id) {
             }
         }
     }
-    // TEMPORARY porting-order-item-3 verification instrumentation for
-    // select_build's own step 1 (IMPLEMENTATION_DETAILS.md 4.10.9):
-    // standalone correctness check for VEH's first-ever FFI exposure +
-    // this vehicle-count loop, not a real hook yet (select_build itself is
-    // not ported/hooked -- 4.10 lists the remaining steps). Logs its own
-    // counters to lua.log so they can be diffed by hand against the
-    // debug("select_build ...") line below, which already prints
-    // def/frm/prb/crw/pods/scouts for this same base.
-    int lua_vehicle_counts_dummy;
-    lua_ai_hook("vehicle_counts_check", &lua_vehicle_counts_dummy, 1, {base_id, sea_base});
     WItem Wgov;
     governor_priorities(Bases[base_id], Wgov);
     need_ferry = need_ferry && !transports
@@ -964,16 +963,6 @@ int select_build(int base_id) {
     }
     float Wthreat = 1.0f - (1.0f / (1.0f + Wbase));
 
-    // TEMPORARY select_build step 3 sub-step 1 verification
-    // instrumentation (IMPLEMENTATION_DETAILS.md 4.10.9/4.10.12, resumed
-    // after the Consolidation gate) -- same precedent as
-    // vehicle_counts_check (step 1) and push_item_check (step 2).
-    // select_build_prologue_check re-derives everything from base_id
-    // alone via FFI (no C++ value passed in to double-apply, unlike step
-    // 2's bug), so placement here isn't load-bearing the way push_item's
-    // was -- kept next to the comparable debug() line below for clarity.
-    int lua_select_build_prologue_dummy;
-    lua_ai_hook("select_build_prologue_check", &lua_select_build_prologue_dummy, 1, {base_id});
     debug("select_build %3d %3d %3d %3d def: %d frm: %d prb: %d crw: %d pods: %d expand: %d "\
         "scouts: %d min: %2d res: %2d limit: %2d mil: %.4f threat: %.4f\n",
         *CurrentTurn, base_id, base->x, base->y,

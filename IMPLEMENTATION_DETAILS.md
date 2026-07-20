@@ -901,7 +901,7 @@ change (nothing to register).
 
 ---
 
-### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-3 done, step 4 (wiring the real hook) is the resume point
+### 4.10 `select_build` itself (porting-order item 3, final piece) — steps 1-4 implemented, live verification of step 4 is the resume point
 
 **Current state:** steps 1-2 done and live-verified; step 3 (the
 `build_order` loop) is entirely done — shared prologue (4.10.12),
@@ -909,9 +909,10 @@ change (nothing to register).
 skeleton + 14 no-branch facilities (4.10.14), and the full facility- and
 unit-type branch catalog, all 47 `build_order[]` entries (4.10.15–4.10.30,
 consolidated into one lean section below). **Step 4 — wiring the real
-`select_build` hook — is the resume point**, unblocked now that every
-branch has a real Lua implementation; see `IMPLEMENTATION_PLAN.md` item 3
-for current status. Sections 4.10.1-4.10.9 below are the original
+`select_build` hook — is implemented** (4.10.31): the first hook in the
+project whose return value actually drives the game, build-verified,
+**live verification is the resume point**; see `IMPLEMENTATION_PLAN.md`
+item 3 for current status. Sections 4.10.1-4.10.9 below are the original
 2026-07-14 scoping pass — still useful background on `VEH`/field
 locations, but check any specific "already exposed" claim against
 `lua/ffi/types.lua` directly before trusting it; later sessions found it
@@ -1720,11 +1721,88 @@ for the exhaustive list, not reproduced here).
   not `count_vehicles`, to leave that diagnostic's own comparison point
   unchanged.
 
-**This closes the entire `build_order[]` catalog.** Step 4 (wiring the
-real `select_build` hook, Class 2 propose-then-commit) is no longer
-blocked on missing branches — see `IMPLEMENTATION_PLAN.md` item 3 for
-current status and next step. `mod_base_hurry`/`plans_upkeep`/
-`design_units`/`former_plans` remain unsurveyed.
+**This closes the entire `build_order[]` catalog.**
+
+### 4.10.31 Step 4: wiring the real `select_build` hook (2026-07-20) — implemented, build-verified, live verification pending
+
+**Status: 🔨 implemented, both presets build clean, every touched file
+passes a native-`luajit` syntax check.** This is the first hook in the
+whole project wired via `lua_ai_hook` rather than `lua_ai_shadow_call`
+— every earlier "closed" domain (tech pilot, social, and all of
+`select_build`'s own sub-pieces above) only ever fed a shadow-mode
+comparison log; C++ always computed and returned its own value
+regardless. From this point, `lua_ai=1` actually changes which item a
+base builds, not just what gets logged. Confirmed with the user before
+implementing, given the stakes (first-ever behavior-affecting hook,
+5 facilities + `Satellites` still without direct exercise evidence) —
+chosen approach: wire it as documented (Phase 4.1's Class 2
+propose-then-commit), keep the existing per-piece `lua_ai_shadow_call`/
+`_check` instrumentation intact in the C++ fallback body (still useful
+whenever `lua_ai=0`), gated behind the same `lua_ai=1` flag already used
+for all testing.
+
+**C++ side (`src/build.cpp`):** `plans_upkeep(faction_id)` hoisted to run
+once, unconditionally, before the hook attempt — it's a mutating side
+effect independent of which side decides the return value, so it can't
+live inside the (now fallback-only) retool-computation block anymore.
+`select_build` gains `if (lua_ai_hook("select_build", &value, 1,
+{base_id})) return value;` immediately after, matching the plan's own
+Class 2 example. The three temporary, verification-only diagnostics that
+predated real hooks on their call sites (`vehicle_counts_check`,
+`push_item_check`, `select_build_prologue_check`) are removed, per their
+own long-standing "deleted once step 4 wires the real hook" comments —
+their underlying ported logic (`count_vehicles`, `push_item`/
+`push_item_score`, `select_build_prologue`) stays, only the thin
+log-only wrapper functions and hook registrations are gone.
+
+**Lua side (`lua/ai/build.lua`):** a new top-level `select_build(base_id)`
+reimplements `build.cpp`'s `build_order[]` loop (`BUILD_ORDER_LIST`, the
+47 entries in their exact original order — RNG draws happen per item in
+this order, so it must match exactly, not just the final chosen
+item_id), dispatching to already-ported/shadow-verified pieces directly:
+`select_build_prologue` for the shared locals, `build_order_item_score`
+for the whole facility path (already computes the base score + all 38
+branches internally), and the 7 push-a-candidate unit branches (colony/
+crawler/ferry/sea_probe/satellites/secret_project/former) verbatim —
+each takes the shared per-item base score as an argument and returns
+`{choice, score}`. This is safe because `select_build_prologue` itself
+is RNG-free (proven by every earlier shadow-verification session calling
+it fresh per item with 0 mismatches), so letting each branch re-derive it
+costs nothing but redundant work. `DefendUnit`/`CombatUnit` get inline
+logic instead of reusing their existing early-return-only hooks:
+`CombatUnit`'s hook (`combat_unit_early_return`) only ever covered the
+immediate-return half, and calling it plus separately recomputing
+`select_combat` for the push_item fallback would invoke `select_combat`
+twice — drawing RNG twice instead of C++'s single call — so `CombatUnit`
+is inlined to call `select_combat` exactly once, matching
+`build.cpp:1121-1151`. A small shared helper, `base_item_score(w, wgov)`,
+factors out the `rand.map(0,32) + Wgov-weighted sum` computation that
+both `build_order_item_score` and the new per-item loop need; this draw
+happens for *every* item that passes the two outer gates, unit or
+facility alike, even when the result is discarded (`DefendUnit` never
+scores or pushes anything) — skipping it for "irrelevant" items would
+desync every later item's RNG draws against C++.
+
+**New engine surface:** `project_change`/`allow_units` (`build.cpp:
+868-872`), computed once per real `select_build` call now that this is
+the top-level hook (previously threaded through as a hook argument from
+C++, since re-deriving `allow_units` inside the *per-item* shadow-called
+`build_order_item_score` would have drawn RNG up to 38× instead of once
+— that hazard doesn't apply here, since the whole per-item loop is now a
+single Lua call). `can_build_unit(base_id, -1)`'s body (`base.cpp:4813`)
+reduces, for `unit_id == -1`, to one `conf.max_veh_num`-gated expression
+— ported directly rather than via a generic 2-argument wrapper, needing
+only a new `max_veh_num()` host accessor (`LuaHostApi` bumped to
+`api_version=23`, same tier as `biology_lab_bonus`/`clean_minerals`).
+`project_change` itself needed no new surface (`item_is_project`/
+`can_build`/`state_flags`/`minerals_accumulated`/`retool_exemption` were
+all already exposed).
+
+**Next: live verification** (maintainer-run, per Phase 5's handoff
+note) — the first run to check should confirm the game still makes
+sensible build decisions with `lua_ai=1 lua_shadow=1`, not just "no
+errors," precisely because this is the first hook whose output is no
+longer purely diagnostic.
 
 ---
 

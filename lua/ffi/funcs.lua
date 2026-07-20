@@ -106,10 +106,11 @@ typedef struct {
     int32_t (*max_satellites)();
     int32_t (*mil_strength)(int32_t faction_id);
     void (*former_tile_tally)(int32_t base_id, int32_t* num, int32_t* sea);
+    int32_t (*max_veh_num)();
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 22
+local HOST_API_VERSION = 23
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -220,4 +221,5 @@ return {
     former_tile_tally = function(base_id, num, sea)
         return api.former_tile_tally(base_id, num, sea)
     end,
+    max_veh_num = function() return api.max_veh_num() end,
 }

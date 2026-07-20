@@ -344,6 +344,17 @@ static int32_t host_mil_strength(int32_t faction_id) {
     return plans[faction_id].mil_strength;
 }
 
+// select_build itself, step 4 (wiring the real hook, IMPLEMENTATION_
+// DETAILS.md 4.10): allow_units's own can_build_unit(base_id, -1) call
+// (build.cpp:872) reduces, for unit_id == -1, to this one conf-gated
+// expression (base.cpp:4829) -- ported directly to Lua rather than
+// wrapped (same "cheap enough once actually read" precedent as
+// facility_count/prod_count), since only conf.max_veh_num itself is
+// Thinker-internal and not otherwise exposed.
+static int32_t host_max_veh_num() {
+    return conf.max_veh_num;
+}
+
 // select_build itself, unit-branch catalog continued (IMPLEMENTATION_
 // DETAILS.md 4.10.29): FormerUnit's own tile-quality tally
 // (build.cpp:1157-1166), reproduced verbatim.
@@ -477,7 +488,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 22,
+    /* api_version          */ 23,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -573,6 +584,7 @@ static LuaHostApi g_host_api = {
     /* max_satellites       */ host_max_satellites,
     /* mil_strength         */ host_mil_strength,
     /* former_tile_tally    */ host_former_tile_tally,
+    /* max_veh_num          */ host_max_veh_num,
 };
 
 static lua_State* L = NULL;

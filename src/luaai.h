@@ -227,6 +227,12 @@ struct LuaHostApi {
     // select_colony, 4.8) -- raw pointers (MAP*, the tile iterator) never
     // cross into Lua either way.
     void (*former_tile_tally)(int32_t base_id, int32_t* num, int32_t* sea);
+    // select_build itself, step 4 (IMPLEMENTATION_DETAILS.md 4.10):
+    // allow_units's own can_build_unit(base_id, -1) call reduces to a
+    // single conf.max_veh_num-gated expression for unit_id == -1 -- see
+    // src/luaai.cpp's host_max_veh_num for why only this one conf field
+    // needs a wrapper, not the whole function.
+    int32_t (*max_veh_num)(); // -> conf.max_veh_num
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

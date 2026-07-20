@@ -98,6 +98,11 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         former_unit_branch = { file = "src/build.cpp", func = "select_build",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- select_build itself, step 4 (IMPLEMENTATION_DETAILS.md 4.10):
+        -- the real Class 2 hook, tying every branch above into the
+        -- build_order[] loop.
+        select_build = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -662,21 +667,10 @@ local function count_vehicles(base_id, sea_base)
     }
 end
 
-local function vehicle_counts_check(base_id, sea_base)
-    local c = count_vehicles(base_id, sea_base)
-    log.debug(
-        "vehicle_counts base:%d def:%d frm:%d prb:%d crw:%d pods:%d scouts:%d "
-        .. "lprb:%d sprb:%d trn:%d near_frm:%d art:%d ferry:%d supply:%s",
-        base_id, idiv(c.defenders + 2, 8), c.formers, c.landprobes + c.seaprobes,
-        c.all_crawlers, c.pods, c.scouts, c.landprobes, c.seaprobes, c.transports,
-        c.near_formers, c.artifacts, c.need_ferry, tostring(c.allow_supply))
-end
-
 -- select_build itself (porting-order item 3, final piece), step 2
 -- (IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9, resumed after the
 -- Consolidation gate): push_item (build.cpp:816-836) + its two small
--- dependents. Not wiring select_build itself yet (steps 3-4) -- these
--- are standalone, verifiable building blocks. mod_base_making/
+-- dependents. mod_base_making/
 -- skip_gov_facility_bit stay opaque host wrappers (genuine engine
 -- mechanics, not AI policy, same bucket as mod_veh_avail/has_abil).
 local function has_retool(base_id, item_id, retool)
@@ -730,17 +724,6 @@ local function push_item(tracker, base_id, item_id, retool, score, modifier)
         tracker.item_id, tracker.score = item_id, final_score
     end
     return final_score
-end
-
--- Temporary, verification-only (same precedent as vehicle_counts_check,
--- step 1): select_build's own push_item() already logs the exact
--- adjusted score for every call (build.cpp:835), so this gives the same
--- kind of log-diff verification without wiring the real hook yet.
--- Deleted once step 4 wires select_build for real.
-local function push_item_check(base_id, item_id, retool, score, modifier)
-    log.debug("push_item_check %d %d %d",
-        push_item_score(base_id, item_id, retool, score, modifier), retool, item_id)
-    return 1
 end
 
 -- Production/plans port, third slice (porting-order item 3,
@@ -921,29 +904,11 @@ local function select_build_prologue(base_id)
     }
 end
 
--- Temporary, verification-only (same precedent as vehicle_counts_check/
--- push_item_check): logs a line comparable to the existing
--- debug("select_build ...") line's own min/res/limit/mil/threat and
--- vehicle-count fields. Deleted once step 4 wires the real hook.
-local function select_build_prologue_check(base_id)
-    local r = select_build_prologue(base_id)
-    log.debug(
-        "select_build_prologue_check base:%d def:%d frm:%d prb:%d crw:%d pods:%d "
-        .. "expand:%d scouts:%d min:%d res:%d limit:%d mil:%.4f threat:%.4f",
-        base_id, r.defenders, r.formers, r.landprobes + r.seaprobes, r.all_crawlers,
-        r.pods, r.allow_pods and 1 or 0, r.scouts, r.minerals, r.reserve,
-        r.project_limit, r.enemy_mil_factor, r.wthreat)
-    return 1
-end
-
 -- select_build itself, step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md
 -- 4.10.9/4.10.13, resumed after the Consolidation gate): DefendUnit's
 -- two return sites and CombatUnit's early-return check (build.cpp,
--- inside the build_order loop). Each is a real Class 1/2 shadow hook
--- (not a temporary diagnostic one, unlike vehicle_counts_check/
--- push_item_check/select_build_prologue_check above) -- both consume
--- RNG (random(8)/random(256)) with no existing debug line to diff
--- against (they're early returns, select_build exits immediately), so
+-- inside the build_order loop). Each is a real Class 1/2 shadow hook --
+-- both consume RNG (random(8)/random(256)) with no existing debug line to diff
 -- this needs lua_ai_shadow_call's snapshot/restore, same as
 -- find_proto/mod_tech_ai. Returns the chosen unit_id, or -1 for "no
 -- decision" (matching find_proto's own negative-sentinel convention).
@@ -1529,6 +1494,19 @@ local BUILD_ORDER = {
     [E.FAC_EMPTY_FACILITY_45] = {0, 2, 2, 0, 0},
 }
 
+-- select_build itself, step 4 (IMPLEMENTATION_DETAILS.md 4.10): the
+-- per-item base score (build.cpp:1064-1067), factored out so both
+-- build_order_item_score (facilities) and select_build itself (units,
+-- which have no other place this computation lives) can share it. w is
+-- a BUILD_ORDER[item_id] weight tuple; the rand.map(0,32) draw happens
+-- for every item that passes both outer gates, facility or unit alike,
+-- even when the result ends up discarded (DefendUnit) -- see
+-- select_build's own comment below for why this must not be skipped.
+local function base_item_score(w, wgov)
+    return rand.map(0, 32) + 4 * (wgov.AI_growth * w[1] + wgov.AI_tech * w[2]
+        + wgov.AI_wealth * w[3] + wgov.AI_power * w[4])
+end
+
 -- Implements build.cpp:1049-1051 (skip)/1055-1058 (base formula)/
 -- 1171-1177 (energy gate) only -- not the GOV_MAY_FORCE_PSYCH gate
 -- (build.cpp:1178-1182, only relevant to FAC_PUNISHMENT_SPHERE/
@@ -1573,9 +1551,7 @@ local function build_order_item_score(base_id, item_id, allow_units)
     if skip_facility(base_id, item_id) then
         return -1
     end
-    local score = rand.map(0, 32)
-        + 4 * (r.wgov.AI_growth * w[1] + r.wgov.AI_tech * w[2]
-            + r.wgov.AI_wealth * w[3] + r.wgov.AI_power * w[4])
+    local score = base_item_score(w, r.wgov)
     if w[5] > 0 then
         local base = base_api.get(base_id)
         if base.energy_surplus < 4 and item_id ~= E.FAC_NETWORK_NODE then
@@ -1855,6 +1831,202 @@ local function build_order_item_score(base_id, item_id, allow_units)
     return score
 end
 
+-- select_build itself, step 4 (IMPLEMENTATION_DETAILS.md 4.10): the
+-- exact build_order[] iteration order (build.cpp:993-1041) -- needed
+-- because RNG draws happen in this order, and must match C++'s exactly
+-- for determinism, not just the final chosen item_id.
+local BUILD_ORDER_LIST = {
+    -3, E.FAC_PRESSURE_DOME, E.FAC_HEADQUARTERS, E.FAC_PUNISHMENT_SPHERE,
+    E.FAC_RECREATION_COMMONS, -4, -6, -2, E.FAC_RECYCLING_TANKS, -9, -8, -7, -5, -1,
+    E.FAC_CHILDREN_CRECHE, E.FAC_HAB_COMPLEX, E.FAC_NETWORK_NODE, E.FAC_HOLOGRAM_THEATRE,
+    E.FAC_PERIMETER_DEFENSE, E.FAC_AEROSPACE_COMPLEX, E.FAC_TREE_FARM, E.FAC_GENEJACK_FACTORY,
+    E.FAC_ROBOTIC_ASSEMBLY_PLANT, E.FAC_NANOREPLICATOR, E.FAC_QUANTUM_CONVERTER,
+    E.FAC_HABITATION_DOME, E.FAC_TACHYON_FIELD, E.FAC_GEOSYNC_SURVEY_POD, E.FAC_FLECHETTE_DEFENSE_SYS,
+    E.FAC_BIOENHANCEMENT_CENTER, E.FAC_COMMAND_CENTER, E.FAC_NAVAL_YARD, E.FAC_PSI_GATE,
+    E.FAC_FUSION_LAB, E.FAC_QUANTUM_LAB, E.FAC_ENERGY_BANK, E.FAC_PARADISE_GARDEN,
+    E.FAC_RESEARCH_HOSPITAL, E.FAC_NANOHOSPITAL, E.FAC_HYBRID_FOREST, E.FAC_BIOLOGY_LAB,
+    E.FAC_CENTAURI_PRESERVE, E.FAC_COVERT_OPS_CENTER, E.FAC_EMPTY_FACILITY_42,
+    E.FAC_EMPTY_FACILITY_43, E.FAC_EMPTY_FACILITY_44, E.FAC_EMPTY_FACILITY_45,
+}
+
+-- build.cpp:872's can_build_unit(base_id, -1), reduced to the one
+-- conf.max_veh_num-gated expression that applies when unit_id == -1 (see
+-- src/luaai.cpp's host_max_veh_num) -- ported directly rather than via a
+-- generic can_build_unit(base_id, unit_id) wrapper, since select_build
+-- only ever calls it with unit_id fixed at -1.
+local function allow_units_check()
+    local n = veh.count()
+    local max_n = funcs.max_veh_num()
+    return n + 32 < max_n or n + rand.map(0, 32) < max_n
+end
+
+-- select_build itself (porting-order item 3, final piece), step 4
+-- (IMPLEMENTATION_DETAILS.md 4.10): the real Class 2 hook
+-- (IMPLEMENTATION_PLAN.md Phase 4.1) -- wired via lua_ai_hook, so this
+-- is the first hook in the project whose return value actually drives
+-- the game, not just a shadow-mode comparison log. src/build.cpp's own
+-- body (still shadow-verified piece by piece, unchanged) remains as the
+-- C++ fallback for lua_ai=0 or a Lua error.
+--
+-- Reuses every already-ported/shadow-verified piece directly: select_
+-- build_prologue for the shared locals, build_order_item_score for the
+-- whole facility path (base score + all 38 branches), and the 7
+-- push-a-candidate unit branches (colony/crawler/ferry/sea_probe/
+-- satellites/secret_project/former) verbatim -- each is safe to call
+-- here since select_build_prologue itself is RNG-free (proven by every
+-- earlier shadow-verification session calling it fresh per item with 0
+-- mismatches), so re-deriving it inside these branches costs nothing but
+-- redundant work.
+--
+-- DefendUnit/CombatUnit get their own inline logic instead: the existing
+-- DefendUnit hooks (defend_unit_land_defense/_explore_veh) are reused
+-- directly (both immediate-return only, no "else" path to duplicate),
+-- but CombatUnit's existing hook (combat_unit_early_return) only covers
+-- its immediate-return half -- calling it AND separately recomputing
+-- select_combat for the push_item fallback would call select_combat
+-- twice, drawing RNG twice instead of C++'s single call, so CombatUnit's
+-- full branch (both outcomes) is inlined here instead, calling
+-- select_combat exactly once, matching build.cpp:1121-1151.
+--
+-- The per-item base score (rand.map(0,32) + Wgov-weighted sum) is drawn
+-- for EVERY item that passes both outer gates, unit or facility alike,
+-- even when the result is discarded (DefendUnit never scores/pushes at
+-- all) -- build.cpp's own `score = random(32) + ...` runs unconditionally
+-- before any `if (t == X)` branch, so skipping this draw for "irrelevant"
+-- items would desync every later item's RNG draws against C++.
+local function select_build(base_id)
+    local base = base_api.get(base_id)
+    local faction_id = base.faction_id
+    local r = select_build_prologue(base_id)
+
+    -- build.cpp:868-872: project_change/allow_units, computed once here
+    -- (not inside select_build_prologue -- see build_order_item_score's
+    -- own comment on why allow_units specifically must not be
+    -- re-derived per item).
+    local project_change = base_api.item_is_project(base)
+        and not funcs.can_build(base_id, -base_api.item(base))
+        and bit.band(base.state_flags, E.BSTATE_PRODUCTION_DONE) == 0
+        and base.minerals_accumulated > tech.rules().retool_exemption
+    local allow_units = allow_units_check() and not project_change
+
+    local tracker = new_build_tracker()
+    local Wt = 8
+    local early_return = nil
+
+    for _, t in ipairs(BUILD_ORDER_LIST) do
+        local gate_ok = t < 0 or (bit.band(r.gov, E.GOV_MAY_PROD_FACILITIES) ~= 0 and funcs.can_build(base_id, t))
+        if gate_ok and t <= -3 and not allow_units then
+            gate_ok = false
+        end
+        if gate_ok then
+            if t == -2 then -- Satellites
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                local res = satellites_branch(base_id, score)
+                if res[1] >= 0 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, res[1], r.retool, res[2], Wt)
+                end
+            elseif t == -1 then -- SecretProject
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                local res = secret_project_branch(base_id, score)
+                if res[1] >= 0 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, res[1], r.retool, res[2], Wt)
+                end
+            elseif t == -3 then -- DefendUnit
+                base_item_score(BUILD_ORDER[t], r.wgov) -- discarded; RNG sequence only
+                if bit.band(r.gov, E.GOV_ALLOW_COMBAT) ~= 0 then
+                    local choice = defend_unit_land_defense(base_id)
+                    if choice < 0 then
+                        choice = defend_unit_explore_veh(base_id)
+                    end
+                    if choice >= 0 then
+                        early_return = choice
+                    end
+                end
+            elseif t == -4 then -- CombatUnit
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                if bit.band(r.gov, E.GOV_ALLOW_COMBAT) ~= 0 and r.minerals >= r.reserve then
+                    local choice = select_combat(base_id, r.sea_base, r.allow_ships)
+                    if choice >= 0 then
+                        if rand.map(0, 256) < math.floor(256 * r.wthreat)
+                            and not has_retool(base_id, choice, r.retool) then
+                            early_return = choice
+                        else
+                            if proto_extra_cost(choice) > 0 then
+                                score = score + 4 * clamp(base.mineral_surplus - 4, 0, 32)
+                                score = score + 80 * funcs.has_fac_built(E.FAC_SKUNKWORKS, base_id)
+                                if base.mineral_surplus >= funcs.median_limit(faction_id) then
+                                    score = score
+                                        + 80 * b2n(tech.proto_offense(choice) > funcs.max_offense_value(faction_id))
+                                        + 80 * b2n(tech.proto_defense(choice) > funcs.max_defense_value(faction_id))
+                                end
+                            end
+                            score = score - r.defend_range
+                            push_item(tracker, base_id, choice, r.retool, score, 0)
+                        end
+                    end
+                end
+            elseif t == -6 then -- FormerUnit
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                local res = former_unit_branch(base_id, score)
+                if res[1] >= 0 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, res[1], r.retool, res[2], Wt)
+                end
+            elseif t == -9 then -- SeaProbeUnit
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                local res = sea_probe_unit_branch(base_id, score)
+                if res[1] >= 0 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, res[1], r.retool, res[2], Wt)
+                end
+            elseif t == -8 then -- CrawlerUnit
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                local res = crawler_unit_branch(base_id, score)
+                if res[1] >= 0 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, res[1], r.retool, res[2], Wt)
+                end
+            elseif t == -7 then -- FerryUnit
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                local res = ferry_unit_branch(base_id, score)
+                if res[1] >= 0 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, res[1], r.retool, res[2], Wt)
+                end
+            elseif t == -5 then -- ColonyUnit
+                local score = base_item_score(BUILD_ORDER[t], r.wgov)
+                local res = colony_unit_branch(base_id, score)
+                if res[1] >= 0 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, res[1], r.retool, res[2], Wt)
+                end
+            else -- facility
+                local score = build_order_item_score(base_id, t, allow_units)
+                if score ~= -1 then
+                    Wt = Wt - 1
+                    push_item(tracker, base_id, -t, r.retool, score, Wt)
+                end
+            end
+        end
+        if early_return then
+            break
+        end
+    end
+    if early_return then
+        return early_return
+    end
+
+    if tracker.item_id ~= nil then
+        return tracker.item_id
+    end
+    if not allow_units or bit.band(r.gov, E.GOV_ALLOW_COMBAT) == 0 then
+        return -E.FAC_STOCKPILE_ENERGY
+    end
+    return select_combat(base_id, r.sea_base, r.allow_ships)
+end
+
 port.need_police = need_police
 port.unit_support_plan = unit_support_plan
 port.check_retool = check_retool
@@ -1870,16 +2042,13 @@ port.facility_score = facility_score
 port.governor_priorities = governor_priorities
 port.facility_score_hook = facility_score_hook
 port.governor_priorities_hook = governor_priorities_hook
-port.vehicle_counts_check = vehicle_counts_check
 port.count_vehicles = count_vehicles
 port.select_build_prologue = select_build_prologue
-port.select_build_prologue_check = select_build_prologue_check
 port.has_retool = has_retool
 port.skip_facility = skip_facility
 port.push_item_score = push_item_score
 port.new_build_tracker = new_build_tracker
 port.push_item = push_item
-port.push_item_check = push_item_check
 port.defend_unit_land_defense = defend_unit_land_defense
 port.defend_unit_explore_veh = defend_unit_explore_veh
 port.combat_unit_early_return = combat_unit_early_return
@@ -1900,4 +2069,5 @@ port.find_project = find_project
 port.secret_project_branch = secret_project_branch
 port.former_unit_branch = former_unit_branch
 port.build_order_item_score = build_order_item_score
+port.select_build = select_build
 return port

@@ -19,7 +19,6 @@ return {
     find_proto = build.find_proto,
     select_colony = build.select_colony,
     select_combat = build.select_combat,
-    vehicle_counts_check = build.vehicle_counts_check,
     turn_state_hash = state_hash.dump,
     -- Consolidation gate item b: facility_score/governor_priorities
     -- become hookable via the typed-descriptor refactor (out_count > 1)
@@ -27,15 +26,6 @@ return {
     -- IMPLEMENTATION_DETAILS.md 4.9 left open.
     facility_score = build.facility_score_hook,
     governor_priorities = build.governor_priorities_hook,
-    -- select_build step 2 (IMPLEMENTATION_DETAILS.md 4.10.9, resumed
-    -- after the Consolidation gate): temporary, verification-only, same
-    -- precedent as vehicle_counts_check -- deleted once step 4 wires the
-    -- real select_build hook.
-    push_item_check = build.push_item_check,
-    -- select_build step 3 sub-step 1 (IMPLEMENTATION_DETAILS.md
-    -- 4.10.9/4.10.12, resumed after the Consolidation gate): same
-    -- temporary, verification-only precedent.
-    select_build_prologue_check = build.select_build_prologue_check,
     -- select_build step 3 sub-step 2 (IMPLEMENTATION_DETAILS.md
     -- 4.10.9/4.10.13, resumed after the Consolidation gate): real
     -- Class 1/2 shadow hooks, not temporary diagnostic ones -- both
@@ -61,4 +51,12 @@ return {
     satellites_branch = build.satellites_branch,
     secret_project_branch = build.secret_project_branch,
     former_unit_branch = build.former_unit_branch,
+    -- select_build itself, step 4 (IMPLEMENTATION_DETAILS.md 4.10): the
+    -- real Class 2 hook (IMPLEMENTATION_PLAN.md Phase 4.1) -- the first
+    -- hook in the project whose return value actually drives the game
+    -- (via lua_ai_hook) rather than only feeding a shadow-mode
+    -- comparison log. Every branch above remains registered too, so
+    -- their existing lua_ai_shadow_call/_check seams in the C++
+    -- fallback body still work whenever lua_ai=0 or this hook errors.
+    select_build = build.select_build,
 }
