@@ -1723,10 +1723,10 @@ for the exhaustive list, not reproduced here).
 
 **This closes the entire `build_order[]` catalog.**
 
-### 4.10.31 Step 4: wiring the real `select_build` hook (2026-07-20) — implemented, build-verified, live verification pending
+### 4.10.31 Step 4: wiring the real `select_build` hook (2026-07-20) — done, live-verified
 
-**Status: 🔨 implemented, both presets build clean, every touched file
-passes a native-`luajit` syntax check.** This is the first hook in the
+**Status: ✅ done.** Both presets build clean, every touched file
+passes a native-`luajit` syntax check. This is the first hook in the
 whole project wired via `lua_ai_hook` rather than `lua_ai_shadow_call`
 — every earlier "closed" domain (tech pilot, social, and all of
 `select_build`'s own sub-pieces above) only ever fed a shadow-mode
@@ -1798,11 +1798,29 @@ only a new `max_veh_num()` host accessor (`LuaHostApi` bumped to
 `can_build`/`state_flags`/`minerals_accumulated`/`retool_exemption` were
 all already exposed).
 
-**Next: live verification** (maintainer-run, per Phase 5's handoff
-note) — the first run to check should confirm the game still makes
-sensible build decisions with `lua_ai=1 lua_shadow=1`, not just "no
-errors," precisely because this is the first hook whose output is no
-longer purely diagnostic.
+**Live-verified same day, via the handoff protocol.** A 60-turn
+`--lua-shadow` autoplay session (`bases` grew 0→108, `vehs` 34→315,
+game still running normally at cutoff, not crashed): `register_hooks: 22
+hook(s) registered` confirms `select_build` registered; `lua_ai_hook:
+'select_build' invoked and handled` confirms the first real call
+succeeded. Went further than "no errors" per this section's own note
+above — checked whether the hook is actually *governing*, not just
+callable: `mod_base_build`'s `BUILD NEW` debug line (fires immediately
+before every real `select_build` call) shows **698 calls across all 7
+factions**; `push_item`/the `select_build %3d ...` debug line (both only
+reachable from the C++ *fallback* body, after the hook check) show
+**zero occurrences** — meaning all 698 calls were handled by the Lua
+hook, none fell back to C++. Zero `error in` lines, zero `mismatch`
+lines anywhere (the still-shadow-verified hooks elsewhere stayed clean
+too). The resulting `choice: <id> <name>` lines span every branch
+category with plausible names and no repeated/garbage values (`Scout
+Patrol`/`Colony Pod`/`Formers`/`Probe Team` for units; `Recycling
+Tanks`/`Children's Creche`/`Network Node`/`Recreation Commons` for
+facilities, among others) — this is the first time in the project this
+kind of check (does the AI's output look sane, not just error-free)
+actually matters, since it's the first hook whose output is no longer
+purely diagnostic. **This closes `select_build` and porting-order item 3
+is fully done.**
 
 ---
 

@@ -528,14 +528,15 @@ enable Lua by default on the branch → next.
    check within this branch; the real port is deferred to Movement's
    `former_move`, where its terraform-choice value actually matters
    (`IMPLEMENTATION_DETAILS.md` 4.10.15–4.10.30). **Step 4 (wiring the
-   real hook) is implemented**: `select_build` is now a genuine Class 2
-   hook via `lua_ai_hook` — the first hook in the whole project whose
-   return value actually drives the game rather than only feeding a
-   shadow-mode comparison log, gated behind the same `lua_ai=1` flag
-   already used for testing. Both presets build clean; native-`luajit`
-   syntax-checked. Live verification pending (`IMPLEMENTATION_DETAILS.md`
-   4.10.31). `mod_base_hurry`/`plans_upkeep`/`design_units`/
-   `former_plans` remain unsurveyed.
+   real hook) is ✅ done and live-verified**: `select_build` is now a
+   genuine Class 2 hook via `lua_ai_hook` — the first hook in the whole
+   project whose return value actually drives the game rather than only
+   feeding a shadow-mode comparison log. A 60-turn `--lua-shadow`
+   autoplay run confirmed it: 698 real `select_build` calls across all
+   7 factions, 100% handled by the Lua hook (0 fallback-path debug
+   lines), 0 errors, 0 mismatches anywhere (`IMPLEMENTATION_DETAILS.md`
+   4.10.31). `select_build` itself is fully closed. `mod_base_hurry`/
+   `plans_upkeep`/`design_units`/`former_plans` remain unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `nuclear_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +

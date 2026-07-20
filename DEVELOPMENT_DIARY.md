@@ -506,3 +506,37 @@ opportunistically — recorded in `IMPLEMENTATION_PLAN.md` so it doesn't
 quietly turn into a forgotten action item. Standing count: 8 of 9 unit
 branches and 33 of 38 facilities carry real confirmed-exercise evidence,
 0 mismatches ever recorded.
+
+### `select_build` wired as the project's first real hook, then verified with a different question than usual (supports `IMPLEMENTATION_DETAILS.md` 4.10.31)
+
+Realized before starting: every hook in the project to date, including
+every "closed" domain, only ever used `lua_ai_shadow_call`/`_check` —
+C++ always computed and returned its own value, Lua's result only fed a
+comparison log. `lua_ai_hook` (the mechanism that actually uses Lua's
+return value) had only ever been called by throwaway diagnostics that
+discard the result. Wiring `select_build` for real via `lua_ai_hook`
+would be the first time `lua_ai=1` — a flag already set in every prior
+test session — actually changes what a base builds, not just what gets
+logged. Flagged this explicitly to the user before implementing, given
+the stakes; user chose to proceed as documented (Phase 4.1's Class 2
+contract), keeping the existing per-piece shadow instrumentation intact
+in the C++ fallback body for when `lua_ai=0`.
+
+**Verification needed a different question than every prior session's
+"0 mismatches, confirmed by absence" check — mismatch-absence is
+meaningless here by construction**, since when the real hook succeeds,
+the C++ fallback body (which is what previously produced comparison
+data) doesn't run at all. The actual question: is the hook *governing*,
+not just callable without crashing? Answered by cross-checking
+`mod_base_build`'s `BUILD NEW` debug line (fires right before every real
+`select_build` call) against `push_item`'s debug line (only reachable
+from the C++ fallback, after the hook check) — 698 `BUILD NEW` calls
+across all 7 factions in a 60-turn run, 0 `push_item` lines, meaning
+100% of calls were handled by Lua, none fell back. 0 errors, 0
+mismatches anywhere else. Went one step further than every prior
+verification too: since this is the first hook whose output isn't
+purely diagnostic, also checked that the resulting `choice: <id> <name>`
+values look like a sane production AI (varied, plausible names across
+every branch category), not just error-free — a check that didn't matter
+for any earlier shadow-only hook, where a wrong Lua answer was invisible
+to the running game either way.
