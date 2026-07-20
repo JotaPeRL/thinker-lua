@@ -5,6 +5,7 @@ local tech = dofile("lua/ai/tech.lua")
 local social = dofile("lua/ai/social.lua")
 local war = dofile("lua/ai/war.lua")
 local build = dofile("lua/ai/build.lua")
+local move = dofile("lua/ai/move.lua")
 -- Not an AI module -- the autoplay determinism harness's per-turn state
 -- hash (IMPLEMENTATION_PLAN.md "Consolidation gate" item a). Registered
 -- here anyway because register_hooks() only reads this one table; see
@@ -59,4 +60,9 @@ return {
     -- their existing lua_ai_shadow_call/_check seams in the C++
     -- fallback body still work whenever lua_ai=0 or this hook errors.
     select_build = build.select_build,
+    -- Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12): the first
+    -- Class 3 (command/effect) hook in the project -- see luaai.h's
+    -- lua_ai_command_hook for the contract (no fallback once a mutation
+    -- is issued, unlike every hook above).
+    artifact_move = move.artifact_move,
 }

@@ -105,4 +105,7 @@ return {
     se_police = se_police,
     has_fac_built = funcs.has_fac_built,
     former_tile_tally = former_tile_tally,
+    -- Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12):
+    -- artifact_move's own dependency (base.cpp:4866), a plain read query.
+    can_link_artifact = funcs.can_link_artifact,
 }

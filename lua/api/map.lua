@@ -16,4 +16,11 @@ end
 return {
     continent = continent,
     bad_reg = funcs.bad_reg,
+    -- Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12):
+    -- artifact_move's own dependencies. base_at is a plain coordinate ->
+    -- base_id lookup; safety reads mapdata (PMTable, a
+    -- std::unordered_map) -- stays entirely opaque in C++ per Phase 4.3,
+    -- exposed only as this one-field read.
+    base_at = funcs.base_at,
+    safety = funcs.map_safety,
 }

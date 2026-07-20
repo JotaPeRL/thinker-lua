@@ -1893,9 +1893,10 @@ trade-off as this file's own session-record structure.
 
 ---
 
-### 4.12 Movement port (porting-order item 4) — scoped, staged plan agreed, starting stage 0+1
+### 4.12 Movement port (porting-order item 4) — stage 0+1 implemented, live verification pending
 
-**Status: 🔨 scoping done, starting stage 0+1.** Real function sizes
+**Status: 🔨 stage 0+1 implemented and build-verified, live
+verification is the resume point.** Real function sizes
 read directly from `move.cpp`/`veh_turn.cpp`/`goal.cpp` (3657/887/183
 loc) rather than estimated — the one-liner in `IMPLEMENTATION_PLAN.md`
 predates this pass. Complements 4.4's earlier high-level notes
@@ -1950,6 +1951,52 @@ per-function order by merging two adjacent isolated movers):**
   `mod_study_artifact`; `TileSearch` itself stays opaque, per 4.3)
   before risking it on anything bigger. **Stop here for in-game testing
   before continuing**, per the user's own pacing.
+
+**Stage 0+1 implementation (2026-07-20).** `lua_ai_command_hook`
+(`src/luaai.h`/`.cpp`) is structurally close to `lua_ai_hook` (same
+registry lookup, pcall/traceback shape) but adds a `g_mutation_issued`
+flag, set by every mutating host wrapper as its first action and reset
+at hook entry: if Lua errors after issuing a mutation, the hook finishes
+the vehicle safely (`mod_veh_skip`) and reports "handled" rather than
+letting the caller re-run its own C++ body over already-mutated state;
+if it errors before any mutation, it reports "not handled" and the
+caller's C++ body runs unchanged. No RNG snapshot/restore, unlike
+Class 1/2 — Class 3 never runs both sides, so there's nothing to keep
+aligned. Wired at `artifact_move`'s one call site in `mod_enemy_move`
+(`veh_turn.cpp`).
+
+New engine surface: `VEH.iter_count`/`waypoint_x`/`waypoint_y`/
+`waypoint_count` (back `VEH::at_target()`, ported to `lua/api/veh.lua`);
+enums `ORDER_NONE`/`ORDER_HOLD` (already-visible via `engine_veh.h`) and
+`VEH_SYNC`/`VEH_SKIP`/`PM_SAFE` — the latter three hand-transcribed
+(`0`/`1`/`-20`) rather than read via `#include`, since their home headers
+(`veh_turn.h`/`move.h`) pull in `main.h` → `windows.h` transitively,
+which the natively-compiled (non-mingw) `gen_ffi` host tool can't
+process; same tier as this file's other hand-transcribed globals
+predating the computed-address technique (4.10.26). Seven new
+`LuaHostApi` entries (`api_version` bumped 23→24): `base_at`/
+`can_link_artifact`/`map_safety` (pure reads — `map_safety` reads
+`mapdata`, a `std::unordered_map`, so stays opaque per 4.3, exposed only
+as this one-field read), `search_route` (wraps its own local
+`TileSearch`, also opaque, 3 out-params: found/tx/ty), and the first
+three *mutating* wrappers in the project (`mod_study_artifact`/
+`set_move_to`/`mod_veh_skip` — Phase 3's read/write asymmetry rule
+finally has a write side). New `lua/api/path.lua` (the first
+path-domain module, per Phase 3.2's planned shape).
+
+**Files touched:** `tools/gen_ffi.cpp`, `src/luaai.h`/`.cpp`,
+`src/veh_turn.cpp` (seam + `#include "luaai.h"`), `lua/ffi/funcs.lua`,
+`lua/api/veh.lua` (`at_target`), `lua/api/map.lua` (`base_at`/`safety`),
+`lua/api/base.lua` (`can_link_artifact`), `lua/api/path.lua` (new),
+`lua/ai/move.lua` (new, `artifact_move`), `lua/ai/init.lua`
+(registration). **Next: live verification** — since decision-trace
+comparison (not per-call shadow) is this phase's verification method,
+the check is: run once with `lua_ai=1`, confirm `artifact_link`/
+`artifact_move` debug lines still appear with plausible coordinates and
+no errors, same discipline as `select_build`'s own live check (4.10.31)
+but without a fallback-count signal to cross-check against (Class 3 has
+none) — absence of errors plus plausible logged behavior is the
+available evidence here.
 - **Stage 2 — `crawler_move` (~67 loc) + `nuclear_move` (~163 loc),
   merged into one stage** (user's call — both isolated, no shared
   dependency forcing this, just batched for pacing).

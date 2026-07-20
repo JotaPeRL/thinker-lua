@@ -233,7 +233,48 @@ struct LuaHostApi {
     // src/luaai.cpp's host_max_veh_num for why only this one conf field
     // needs a wrapper, not the whole function.
     int32_t (*max_veh_num)(); // -> conf.max_veh_num
+    // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12):
+    // artifact_move's own dependencies. base_at/can_link_artifact are
+    // plain read queries; map_safety reads mapdata (PMTable, a
+    // std::unordered_map -- stays entirely in C++ per Phase 4.3, exposed
+    // only as this one-field read, same tier as former_tile_tally's
+    // opaque tile scan). search_route wraps its own local TileSearch
+    // (also stays in C++) and returns via 3 out-params (found/tx/ty),
+    // same shape as mod_psych_check/former_tile_tally.
+    int32_t (*base_at)(int32_t x, int32_t y);
+    int32_t (*can_link_artifact)(int32_t base_id);
+    int32_t (*map_safety)(int32_t x, int32_t y);
+    // x/y seed the search (the vehicle's current position, matching the
+    // C++ call sites' own `int tx = veh->x; int ty = veh->y;` before
+    // calling search_route) -- tx/ty are updated in place only if found.
+    void (*search_route)(int32_t veh_id, int32_t x, int32_t y,
+        int32_t* found, int32_t* tx, int32_t* ty);
+    // Mutating wrappers (IMPLEMENTATION_PLAN.md Phase 3's read/write
+    // asymmetry: the first ever needed, since every wrapper before this
+    // phase was a pure read). Each sets g_mutation_issued (src/luaai.cpp)
+    // as its first action -- see lua_ai_command_hook for why.
+    int32_t (*mod_study_artifact)(int32_t veh_id);
+    int32_t (*set_move_to)(int32_t veh_id, int32_t x, int32_t y);
+    int32_t (*mod_veh_skip)(int32_t veh_id);
 };
+
+// Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3
+// (command/effect) hook dispatch. Unlike lua_ai_hook (Class 1) and
+// lua_ai_shadow_call/_check (Class 1/2 shadow comparison, C++ always
+// governs), Class 3 hooks let Lua mutate real engine state directly via
+// the host API as they execute -- IMPLEMENTATION_PLAN.md Phase 4.1's own
+// rule applies: once the first mutation is issued, there is no fallback
+// to C++ for that invocation. If the Lua call errors after mutating,
+// this function finishes the vehicle safely (mod_veh_skip) and reports
+// "handled" so the caller does not re-run its own C++ body over an
+// already-mutated state; if it errors before any mutation, it reports
+// "not handled" and the caller's C++ body runs exactly as if the hook
+// were absent. Every Class 3 hook shares this exact (veh_id) -> action
+// code shape (colony_move/former_move/crawler_move/artifact_move/
+// trans_move/nuclear_move/combat_move all take one veh_id and return one
+// int), so this is a dedicated function rather than reusing lua_ai_hook's
+// generic args-list contract.
+bool lua_ai_command_hook(const char* name, int* out, int veh_id);
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai
 // is 0), applies any pending reload request, then returns. No AI hooks are

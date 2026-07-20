@@ -543,14 +543,18 @@ enable Lua by default on the branch → next.
    `move_upkeep` + invasion plans. Class 3 territory: largest, most
    performance-sensitive, ported last with the C++ baseline already measured.
 
-   **Status: 🔨 scoped, staged plan agreed, starting stage 0+1.** Real
-   function sizes read (not estimated) and a concrete stage-by-stage
-   breakdown written up — see `IMPLEMENTATION_DETAILS.md` 4.12. Native
-   life (fauna/aliens — `mod_alien_move`/`mod_alien_fauna`/
-   `mod_do_fungal_towers`, `veh_turn.cpp`) is explicitly out of scope,
-   by user decision (2026-07-20): not strategic faction AI, revisit
-   later if it ever makes sense to. `goal.cpp` is folded into the final
-   stage (consumed by faction-level planning, not the per-unit movers).
+   **Status: 🔨 stage 0+1 implemented, build-verified, live verification
+   pending.** Real function sizes read (not estimated) and a concrete
+   stage-by-stage breakdown agreed with the user — see
+   `IMPLEMENTATION_DETAILS.md` 4.12. Stage 0 (the Class 3 hook
+   mechanism, `lua_ai_command_hook`) and stage 1 (`artifact_move`, the
+   pilot) are implemented: both presets build clean, every touched file
+   passes a native-`luajit` syntax check. Native life (fauna/aliens —
+   `mod_alien_move`/`mod_alien_fauna`/`mod_do_fungal_towers`,
+   `veh_turn.cpp`) is explicitly out of scope, by user decision
+   (2026-07-20): not strategic faction AI, revisit later if it ever
+   makes sense to. `goal.cpp` is folded into the final stage (consumed
+   by faction-level planning, not the per-unit movers).
 5. **AI probe decisions** (`probe.cpp`, partial — target/action choices only;
    resolution mechanics stay in C++).
 

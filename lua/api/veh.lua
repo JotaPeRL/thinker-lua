@@ -77,6 +77,15 @@ local function eval_garrison(veh)
         + (is_combat_unit(veh) and 1 or 0) + (tech.proto_is_armored(veh.unit_id) and 1 or 0)
 end
 
+-- Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12): artifact_move's
+-- own re-check-in-progress-order branch. engine_veh.h:647-650 -- pure
+-- delegation to already/newly-exposed fields, no host wrapper needed.
+local function at_target(veh)
+    return veh.order == types.enums.ORDER_NONE or veh.order == types.enums.ORDER_HOLD
+        or (veh.waypoint_x[0] < 0 and veh.waypoint_y[0] < 0)
+        or (veh.x == veh.waypoint_x[0] and veh.y == veh.waypoint_y[0] and veh.waypoint_count == 0)
+end
+
 return {
     count = count,
     get = get,
@@ -91,4 +100,5 @@ return {
     is_combat_unit = is_combat_unit,
     is_garrison_unit = is_garrison_unit,
     eval_garrison = eval_garrison,
+    at_target = at_target,
 }

@@ -462,6 +462,9 @@ int main() {
     // Deliberately narrow -- select_build's only direct VEH reads are in
     // its vehicle-count loop (build.cpp:913-955); everything else in VEH
     // (waypoints, morale, combat state, ...) stays unexposed padding.
+    // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12):
+    // iter_count/waypoint_x/waypoint_y/waypoint_count back VEH::at_target(),
+    // needed by artifact_move's own re-check-in-progress-order branch.
     emit_struct(stdout, {"VEH", sizeof(VEH), alignof(VEH), {
         FIELD(VEH, x),
         FIELD(VEH, y),
@@ -469,6 +472,10 @@ int main() {
         FIELD(VEH, faction_id),
         FIELD(VEH, order),
         FIELD(VEH, home_base_id),
+        FIELD(VEH, iter_count),
+        FIELD(VEH, waypoint_x),
+        FIELD(VEH, waypoint_y),
+        FIELD(VEH, waypoint_count),
     }});
 
     printf("]]\n\n");
@@ -719,6 +726,9 @@ int main() {
     printf("    BSC_FUNGAL_TOWER = %d,\n", BSC_FUNGAL_TOWER);
     printf("    ORDER_CONVOY = %d,\n", ORDER_CONVOY);
     printf("    GOV_MAY_PROD_TERRAFORMERS = %d,\n", GOV_MAY_PROD_TERRAFORMERS);
+    // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12): VEH::at_target().
+    printf("    ORDER_NONE = %d,\n", ORDER_NONE);
+    printf("    ORDER_HOLD = %d,\n", ORDER_HOLD);
     // select_build itself, step 2 (push_item + has_retool/skip_facility,
     // IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9 resumed after the
     // Consolidation gate).
@@ -801,6 +811,19 @@ int main() {
     printf("    FAC_EMPTY_FACILITY_43 = %d,\n", FAC_EMPTY_FACILITY_43);
     printf("    FAC_EMPTY_FACILITY_44 = %d,\n", FAC_EMPTY_FACILITY_44);
     printf("    FAC_EMPTY_FACILITY_45 = %d,\n", FAC_EMPTY_FACILITY_45);
+    // Movement port, stage 0+1 (IMPLEMENTATION_DETAILS.md 4.12): the two
+    // action codes every mover returns (veh_turn.h's EnemyVehMove) and
+    // PM_SAFE (move.h, a plain `const int`). Hand-transcribed, not read
+    // via #include, because veh_turn.h/move.h pull in main.h -> windows.h
+    // transitively, which the natively-compiled (non-mingw) gen_ffi host
+    // tool can't process -- same tier as this file's other hand-
+    // transcribed globals (Rules/GameRules) predating the computed-
+    // address technique (4.10.26). All three are small, stable literals
+    // (0/1/-20) unlikely to change; cross-check against veh_turn.h/move.h
+    // directly if this ever needs revisiting.
+    printf("    VEH_SYNC = %d,\n", 0);
+    printf("    VEH_SKIP = %d,\n", 1);
+    printf("    PM_SAFE = %d,\n", -20);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

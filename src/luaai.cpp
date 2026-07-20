@@ -355,6 +355,57 @@ static int32_t host_max_veh_num() {
     return conf.max_veh_num;
 }
 
+// Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): tracks whether
+// the current Class 3 hook invocation has mutated engine state yet. Reset
+// to false at the start of every lua_ai_command_hook call, set to true by
+// each mutating wrapper below as its first action. Single global is safe
+// because movement dispatch is strictly sequential (one veh at a time,
+// no reentrant Lua calls mid-mover).
+static bool g_mutation_issued = false;
+
+// Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12): artifact_move's
+// own dependencies, all pure reads.
+static int32_t host_base_at(int32_t x, int32_t y) {
+    return base_at(x, y);
+}
+
+static int32_t host_can_link_artifact(int32_t base_id) {
+    return can_link_artifact(base_id);
+}
+
+static int32_t host_map_safety(int32_t x, int32_t y) {
+    return mapdata[{x, y}].safety;
+}
+
+static void host_search_route(int32_t veh_id, int32_t x, int32_t y,
+int32_t* found, int32_t* tx, int32_t* ty) {
+    TileSearch ts;
+    int local_tx = x;
+    int local_ty = y;
+    *found = search_route(ts, veh_id, &local_tx, &local_ty);
+    *tx = local_tx;
+    *ty = local_ty;
+}
+
+// Mutating wrappers (the first ever added -- every prior LuaHostApi entry
+// was a pure read). Each sets g_mutation_issued before doing anything
+// else, so lua_ai_command_hook can tell, even after a Lua error, whether
+// real state changed and the no-fallback rule applies.
+static int32_t host_mod_study_artifact(int32_t veh_id) {
+    g_mutation_issued = true;
+    return mod_study_artifact(veh_id);
+}
+
+static int32_t host_set_move_to(int32_t veh_id, int32_t x, int32_t y) {
+    g_mutation_issued = true;
+    return set_move_to(veh_id, x, y);
+}
+
+static int32_t host_mod_veh_skip(int32_t veh_id) {
+    g_mutation_issued = true;
+    return mod_veh_skip(veh_id);
+}
+
 // select_build itself, unit-branch catalog continued (IMPLEMENTATION_
 // DETAILS.md 4.10.29): FormerUnit's own tile-quality tally
 // (build.cpp:1157-1166), reproduced verbatim.
@@ -488,7 +539,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 23,
+    /* api_version          */ 24,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -585,6 +636,13 @@ static LuaHostApi g_host_api = {
     /* mil_strength         */ host_mil_strength,
     /* former_tile_tally    */ host_former_tile_tally,
     /* max_veh_num          */ host_max_veh_num,
+    /* base_at              */ host_base_at,
+    /* can_link_artifact    */ host_can_link_artifact,
+    /* map_safety           */ host_map_safety,
+    /* search_route         */ host_search_route,
+    /* mod_study_artifact   */ host_mod_study_artifact,
+    /* set_move_to          */ host_set_move_to,
+    /* mod_veh_skip         */ host_mod_veh_skip,
 };
 
 static lua_State* L = NULL;
@@ -905,6 +963,63 @@ bool lua_ai_hook(const char* name, int* out, int out_count, std::initializer_lis
     static std::unordered_set<std::string> logged_first_call;
     if (handled && logged_first_call.insert(name).second) {
         lua_logf("lua_ai_hook: '%s' invoked and handled (result[0]=%d)\n", name, out[0]);
+    }
+    return handled;
+}
+
+// Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3
+// (command/effect) hook dispatch -- see luaai.h's own comment for the
+// contract. Structurally close to lua_ai_hook (same registry lookup,
+// same pcall/traceback shape, same single-int-arg-in/single-int-out
+// convention) but with no RNG snapshot/restore -- Class 3 never runs
+// both sides, so there's nothing to keep aligned -- and the added
+// no-fallback-after-mutation rule the loop below implements.
+bool lua_ai_command_hook(const char* name, int* out, int veh_id) {
+    if (!conf.lua_ai || disabled_for_session || !L) {
+        return false;
+    }
+    auto it = hook_refs.find(name);
+    if (it == hook_refs.end()) {
+        return false;
+    }
+
+    g_mutation_issued = false;
+    lua_pushcfunction(L, traceback_handler);
+    int errfunc = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, it->second);
+    lua_pushinteger(L, veh_id);
+    if (lua_pcall(L, 1, 1, errfunc) != 0) {
+        const char* msg = lua_tostring(L, -1);
+        handle_lua_error(name, msg);
+        lua_settop(L, errfunc - 1);
+        if (g_mutation_issued) {
+            // Real state already changed -- cannot fall back to the
+            // caller's own C++ body over a partially-mutated vehicle.
+            // Finish it safely instead (same veh_skip the C++ fallback
+            // itself would use on an unrecoverable path).
+            *out = mod_veh_skip(veh_id);
+            return true;
+        }
+        return false;
+    }
+
+    bool handled = lua_isnumber(L, -1);
+    if (handled) {
+        *out = lua_tointeger(L, -1);
+    }
+    lua_settop(L, errfunc - 1);
+
+    if (!handled && g_mutation_issued) {
+        // Lua mutated state but returned something other than a plain
+        // number -- same no-fallback rule applies; a malformed return is
+        // not evidence "nothing happened" once a mutation already did.
+        *out = mod_veh_skip(veh_id);
+        handled = true;
+    }
+
+    static std::unordered_set<std::string> logged_first_command_call;
+    if (handled && logged_first_command_call.insert(name).second) {
+        lua_logf("lua_ai_command_hook: '%s' invoked and handled (result=%d)\n", name, *out);
     }
     return handled;
 }

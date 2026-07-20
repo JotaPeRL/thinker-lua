@@ -1,5 +1,6 @@
 
 #include "veh_turn.h"
+#include "luaai.h"
 
 void __cdecl mod_enemy_turn(int faction_id) {
     debug("enemy_turn %d %d\n", *CurrentTurn, faction_id);
@@ -189,6 +190,13 @@ int __cdecl mod_enemy_move(int veh_id) {
         } else if (veh->is_supply()) {
             return crawler_move(veh_id);
         } else if (veh->is_artifact()) {
+            // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12):
+            // Class 3 hook (see luaai.h's lua_ai_command_hook) -- the
+            // pilot for the whole Movement phase's hook mechanism.
+            int value;
+            if (lua_ai_command_hook("artifact_move", &value, veh_id)) {
+                return value;
+            }
             return artifact_move(veh_id);
         } else if (triad == TRIAD_SEA && veh_cargo(veh_id) > 0) {
             return trans_move(veh_id);

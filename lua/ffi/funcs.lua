@@ -107,10 +107,18 @@ typedef struct {
     int32_t (*mil_strength)(int32_t faction_id);
     void (*former_tile_tally)(int32_t base_id, int32_t* num, int32_t* sea);
     int32_t (*max_veh_num)();
+    int32_t (*base_at)(int32_t x, int32_t y);
+    int32_t (*can_link_artifact)(int32_t base_id);
+    int32_t (*map_safety)(int32_t x, int32_t y);
+    void (*search_route)(int32_t veh_id, int32_t x, int32_t y,
+        int32_t* found, int32_t* tx, int32_t* ty);
+    int32_t (*mod_study_artifact)(int32_t veh_id);
+    int32_t (*set_move_to)(int32_t veh_id, int32_t x, int32_t y);
+    int32_t (*mod_veh_skip)(int32_t veh_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 23
+local HOST_API_VERSION = 24
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -222,4 +230,13 @@ return {
         return api.former_tile_tally(base_id, num, sea)
     end,
     max_veh_num = function() return api.max_veh_num() end,
+    base_at = function(x, y) return api.base_at(x, y) end,
+    can_link_artifact = function(base_id) return api.can_link_artifact(base_id) ~= 0 end,
+    map_safety = function(x, y) return api.map_safety(x, y) end,
+    search_route = function(veh_id, x, y, found, tx, ty)
+        return api.search_route(veh_id, x, y, found, tx, ty)
+    end,
+    mod_study_artifact = function(veh_id) return api.mod_study_artifact(veh_id) end,
+    set_move_to = function(veh_id, x, y) return api.set_move_to(veh_id, x, y) end,
+    mod_veh_skip = function(veh_id) return api.mod_veh_skip(veh_id) end,
 }
