@@ -543,13 +543,15 @@ enable Lua by default on the branch → next.
    `move_upkeep` + invasion plans. Class 3 territory: largest, most
    performance-sensitive, ported last with the C++ baseline already measured.
 
-   **Status: 🔨 stage 0+1 implemented, build-verified, live verification
-   pending.** Real function sizes read (not estimated) and a concrete
-   stage-by-stage breakdown agreed with the user — see
-   `IMPLEMENTATION_DETAILS.md` 4.12. Stage 0 (the Class 3 hook
-   mechanism, `lua_ai_command_hook`) and stage 1 (`artifact_move`, the
-   pilot) are implemented: both presets build clean, every touched file
-   passes a native-`luajit` syntax check. Native life (fauna/aliens —
+   **Status: 🔨 stage 0+1 done and live-verified, next up is stage 2
+   (`crawler_move`+`nuclear_move`).** Real function sizes read (not
+   estimated) and a concrete stage-by-stage breakdown agreed with the
+   user — see `IMPLEMENTATION_DETAILS.md` 4.12. Stage 0 (the Class 3
+   hook mechanism, `lua_ai_command_hook`) and stage 1 (`artifact_move`,
+   the pilot) are done: both presets build clean, and a live autoplay
+   run confirmed the hook actually governs — 5 real invocations, all
+   handled by Lua, 0 fallback to C++, 0 errors, a coherent multi-turn
+   movement trajectory logged. Native life (fauna/aliens —
    `mod_alien_move`/`mod_alien_fauna`/`mod_do_fungal_towers`,
    `veh_turn.cpp`) is explicitly out of scope, by user decision
    (2026-07-20): not strategic faction AI, revisit later if it ever

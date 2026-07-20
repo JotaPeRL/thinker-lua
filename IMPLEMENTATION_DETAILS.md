@@ -1893,10 +1893,9 @@ trade-off as this file's own session-record structure.
 
 ---
 
-### 4.12 Movement port (porting-order item 4) — stage 0+1 implemented, live verification pending
+### 4.12 Movement port (porting-order item 4) — stage 0+1 done and live-verified
 
-**Status: 🔨 stage 0+1 implemented and build-verified, live
-verification is the resume point.** Real function sizes
+**Status: ✅ stage 0+1 done, live-verified.** Real function sizes
 read directly from `move.cpp`/`veh_turn.cpp`/`goal.cpp` (3657/887/183
 loc) rather than estimated — the one-liner in `IMPLEMENTATION_PLAN.md`
 predates this pass. Complements 4.4's earlier high-level notes
@@ -1945,12 +1944,11 @@ per-function order by merging two adjacent isolated movers):**
   diffed after the fact; whole-system fidelity comes from the
   determinism harness (5.3) toggling `lua_ai` between runs, not
   per-call snapshot/restore.
-- **Stage 1 — `artifact_move` (~23 loc) as the pilot.** Smallest,
-  simplest mover; proves the Class 3 mechanism end-to-end (new host
-  wrappers: `search_route`, `set_move_to`, `mod_veh_skip`,
-  `mod_study_artifact`; `TileSearch` itself stays opaque, per 4.3)
-  before risking it on anything bigger. **Stop here for in-game testing
-  before continuing**, per the user's own pacing.
+- **Stage 1 — `artifact_move` (~23 loc) as the pilot. ✅ done,
+  live-verified.** Smallest, simplest mover; proved the Class 3
+  mechanism end-to-end (new host wrappers: `search_route`,
+  `set_move_to`, `mod_veh_skip`, `mod_study_artifact`; `TileSearch`
+  itself stays opaque, per 4.3).
 
 **Stage 0+1 implementation (2026-07-20).** `lua_ai_command_hook`
 (`src/luaai.h`/`.cpp`) is structurally close to `lua_ai_hook` (same
@@ -1989,14 +1987,25 @@ path-domain module, per Phase 3.2's planned shape).
 `lua/api/veh.lua` (`at_target`), `lua/api/map.lua` (`base_at`/`safety`),
 `lua/api/base.lua` (`can_link_artifact`), `lua/api/path.lua` (new),
 `lua/ai/move.lua` (new, `artifact_move`), `lua/ai/init.lua`
-(registration). **Next: live verification** — since decision-trace
-comparison (not per-call shadow) is this phase's verification method,
-the check is: run once with `lua_ai=1`, confirm `artifact_link`/
-`artifact_move` debug lines still appear with plausible coordinates and
-no errors, same discipline as `select_build`'s own live check (4.10.31)
-but without a fallback-count signal to cross-check against (Class 3 has
-none) — absence of errors plus plausible logged behavior is the
-available evidence here.
+(registration).
+
+**Live-verified (2026-07-21).** First run (~52 turns) found no artifact
+units at all — inconclusive by construction (a hook with zero
+invocations proves nothing about the mechanism), same "exercise
+evidence, not absence" discipline as `select_build`'s 4.10.20 note. A
+second run with an early artifact confirmed it for real: 5 real
+`artifact_move` invocations, **all 5 lines in `debug.txt` prefixed
+`lua:`** (the mirror-from-Lua marker) — meaning every single call was
+handled by the Class 3 hook, zero fell back to the C++ body. 0 errors.
+The logged coordinates form a coherent multi-turn trajectory for what is
+clearly the same unit continuing its journey turn over turn (`30 44 ->
+33 41` at one point, `33 41 -> 35 37` later — the second call's start
+matches the first's destination), not just error-free noise. The
+`artifact_link` branch (studying at a base) never fired this run — not
+concerning, just means no artifact reached a friendly base under the
+right conditions yet; revisit opportunistically like the handful of
+still-unexercised `select_build` branches, not a blocker. **Stage 0+1
+closed.**
 - **Stage 2 — `crawler_move` (~67 loc) + `nuclear_move` (~163 loc),
   merged into one stage** (user's call — both isolated, no shared
   dependency forcing this, just batched for pacing).
