@@ -42,6 +42,34 @@ local function gov_config(base)
     return 0xffffffff
 end
 
+-- engine_base.h:221-229. Currently-building item: >=0 is a unit_id,
+-- negative is -facility_id (or a secret-project sentinel below
+-- -SP_ID_First).
+local function item(base)
+    return base.queue_items[0]
+end
+
+local function item_is_project(base)
+    return base.queue_items[0] <= -types.enums.SP_ID_First
+end
+
+local function item_is_unit(base)
+    return base.queue_items[0] >= 0
+end
+
+-- engine_base.h:230-234. select_build itself, facility-branch catalog
+-- continued (IMPLEMENTATION_DETAILS.md 4.10.18): the shared FAC_
+-- RECREATION_COMMONS/FAC_HOLOGRAM_THEATRE/FAC_RESEARCH_HOSPITAL/
+-- FAC_PARADISE_GARDEN branch's drone_riots local
+-- (build.cpp:877, `base->drone_riots() || base->drone_riots_active()`).
+local function drone_riots_active(base)
+    return bit.band(base.state_flags, types.enums.BSTATE_DRONE_RIOTS_ACTIVE) ~= 0
+end
+
+local function drone_riots(base)
+    return base.drone_total > base.talent_total
+end
+
 -- engine_base.h:294-296. Takes base_id (not the BASE cdata) since
 -- has_fac_built needs it too.
 local function se_police(base_id, pending)
@@ -54,11 +82,27 @@ local function se_police(base_id, pending)
     return value
 end
 
+-- select_build itself, unit-branch catalog continued (IMPLEMENTATION_
+-- DETAILS.md 4.10.29): FormerUnit's own tile-quality tally
+-- (build.cpp:1157-1166), a two-int32_t*-out-param host wrapper -- same
+-- ffi.new-array-as-out-buffer shape as faction.lua's psych_check.
+local function former_tile_tally(base_id)
+    local out = ffi.new("int32_t[2]")
+    funcs.former_tile_tally(base_id, out, out + 1)
+    return { num = out[0], sea = out[1] }
+end
+
 return {
     get = get,
     count = count,
     plr_owner = plr_owner,
     gov_config = gov_config,
+    item = item,
+    item_is_project = item_is_project,
+    item_is_unit = item_is_unit,
+    drone_riots_active = drone_riots_active,
+    drone_riots = drone_riots,
     se_police = se_police,
     has_fac_built = funcs.has_fac_built,
+    former_tile_tally = former_tile_tally,
 }

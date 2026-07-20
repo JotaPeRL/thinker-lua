@@ -50,6 +50,13 @@ local function is_artifact(veh)
     return tech.proto_is_artifact(veh.unit_id)
 end
 
+-- select_build itself, unit-branch catalog continued (IMPLEMENTATION_
+-- DETAILS.md 4.10.28): find_project's own VEH scan (SecretProject
+-- branch). engine_veh.h:577-578 delegates the same way is_former/etc do.
+local function is_planet_buster(veh)
+    return tech.proto_is_planet_buster(veh.unit_id)
+end
+
 local function triad(veh)
     return tech.proto_triad(veh.unit_id)
 end
@@ -79,6 +86,7 @@ return {
     is_supply = is_supply,
     is_transport = is_transport,
     is_artifact = is_artifact,
+    is_planet_buster = is_planet_buster,
     triad = triad,
     is_combat_unit = is_combat_unit,
     is_garrison_unit = is_garrison_unit,

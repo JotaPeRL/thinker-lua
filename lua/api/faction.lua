@@ -45,6 +45,16 @@ local function social_upheaval(faction_id, models)
     return funcs.social_upheaval(faction_id, models_to_cdata(models))
 end
 
+-- select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+-- DETAILS.md 4.10.18): mod_psych_check's two int32_t* out-params, same
+-- ffi.new-array-as-out-buffer shape as social_calc above (kept here, not
+-- in lua/ai/, since lua/ai/ never touches ffi directly).
+local function psych_check(faction_id)
+    local out = ffi.new("int32_t[2]")
+    funcs.mod_psych_check(faction_id, out, out + 1)
+    return { content_pop = out[0], base_limit = out[1] }
+end
+
 return {
     get = get,
     meta = get_meta,
@@ -63,6 +73,7 @@ return {
     social_ai_bias = funcs.social_ai_bias,
     social_calc = social_calc,
     social_upheaval = social_upheaval,
+    psych_check = psych_check,
     -- War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
     -- 4.6): great_beelzebub/great_satan/has_agenda stay opaque host calls;
     -- hq_region replaces evaluate_attack's own Bases[]/region_at scan.

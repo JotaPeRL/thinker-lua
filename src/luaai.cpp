@@ -22,6 +22,7 @@
 #include "veh.h"
 #include "build.h"
 #include "path.h"
+#include "move.h"
 
 #include <string>
 #include <unordered_set>
@@ -257,6 +258,110 @@ static int32_t host_energy_limit(int32_t faction_id) {
     return plans[faction_id].energy_limit;
 }
 
+// select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.17): FAC_BIOLOGY_LAB's own branch (build.cpp:1302-1306).
+static int32_t host_biology_lab_bonus() {
+    return conf.biology_lab_bonus;
+}
+
+// select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.18): the shared FAC_RECREATION_COMMONS/FAC_HOLOGRAM_
+// THEATRE/FAC_RESEARCH_HOSPITAL/FAC_PARADISE_GARDEN branch. Real engine
+// mechanics (diff-level content_pop table lookup + a base_limit formula),
+// not AI policy -- same precedent as social_calc.
+static void host_mod_psych_check(int32_t faction_id, int32_t* content_pop, int32_t* base_limit) {
+    mod_psych_check(faction_id, content_pop, base_limit);
+}
+
+// select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.19): FAC_PSI_GATE's own branch. Same AIPlans-accessor
+// pattern as main_region/target_land_region above.
+static int32_t host_naval_start_x(int32_t faction_id) {
+    return plans[faction_id].naval_start_x;
+}
+
+static int32_t host_naval_start_y(int32_t faction_id) {
+    return plans[faction_id].naval_start_y;
+}
+
+// select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.22): FAC_CHILDREN_CRECHE's own branch.
+static int32_t host_base_unused_space(int32_t base_id) {
+    return base_unused_space(base_id);
+}
+
+// select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.23): FAC_TREE_FARM/FAC_HYBRID_FOREST's shared branch.
+static int32_t host_nearby_items(int32_t x, int32_t y, int32_t start_index, int32_t end_index, uint32_t item) {
+    return nearby_items(x, y, (size_t)start_index, (size_t)end_index, item);
+}
+
+// select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.24): the FAC_GENEJACK_FACTORY group's shared branch.
+static int32_t host_mineral_output_modifier(int32_t base_id) {
+    return mineral_output_modifier(base_id);
+}
+
+static int32_t host_clean_minerals() {
+    return conf.clean_minerals;
+}
+
+// select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+// 4.10.27): SeaProbeUnit's own AIPlans accessor.
+static int32_t host_unknown_factions(int32_t faction_id) {
+    return plans[faction_id].unknown_factions;
+}
+
+// Satellites branch, via find_satellite (build.cpp:286-330).
+static int32_t host_has_facility(int32_t item_id, int32_t base_id) {
+    return has_facility((FacilityId)item_id, base_id);
+}
+
+static int32_t host_is_alive(int32_t faction_id) {
+    return is_alive(faction_id);
+}
+
+static int32_t host_enemy_odp(int32_t faction_id) {
+    return plans[faction_id].enemy_odp;
+}
+
+static int32_t host_enemy_sat(int32_t faction_id) {
+    return plans[faction_id].enemy_sat;
+}
+
+static int32_t host_satellite_goal_setting(int32_t faction_id) {
+    return plans[faction_id].satellite_goal;
+}
+
+static int32_t host_max_satellites() {
+    return conf.max_satellites;
+}
+
+// select_build itself, unit-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.28): faction_might, via find_project's SecretProject
+// branch.
+static int32_t host_mil_strength(int32_t faction_id) {
+    return plans[faction_id].mil_strength;
+}
+
+// select_build itself, unit-branch catalog continued (IMPLEMENTATION_
+// DETAILS.md 4.10.29): FormerUnit's own tile-quality tally
+// (build.cpp:1157-1166), reproduced verbatim.
+static void host_former_tile_tally(int32_t base_id, int32_t* num, int32_t* sea) {
+    BASE* base = &Bases[base_id];
+    int faction_id = base->faction_id;
+    *num = 0;
+    *sea = 0;
+    for (const auto& m : iterate_tiles(base->x, base->y, 1, 21)) {
+        if (m.sq->owner == faction_id
+        && select_item(m.x, m.y, faction_id, FM_Auto_Full, m.sq) >= 0) {
+            *num += (base->worked_tiles & (1 << m.i)
+                && !(m.sq->items & (BIT_SIMPLE|BIT_ADVANCED)) ? 2 : 1);
+            *sea += is_ocean(m.sq);
+        }
+    }
+}
+
 static int32_t host_ignore_reactor_power() {
     return conf.ignore_reactor_power;
 }
@@ -372,7 +477,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 13,
+    /* api_version          */ 22,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -451,6 +556,23 @@ static LuaHostApi g_host_api = {
     /* adjacent_region      */ host_adjacent_region,
     /* can_build            */ host_can_build,
     /* energy_limit         */ host_energy_limit,
+    /* biology_lab_bonus    */ host_biology_lab_bonus,
+    /* mod_psych_check      */ host_mod_psych_check,
+    /* naval_start_x        */ host_naval_start_x,
+    /* naval_start_y        */ host_naval_start_y,
+    /* base_unused_space    */ host_base_unused_space,
+    /* nearby_items         */ host_nearby_items,
+    /* mineral_output_modifier */ host_mineral_output_modifier,
+    /* clean_minerals       */ host_clean_minerals,
+    /* unknown_factions     */ host_unknown_factions,
+    /* has_facility         */ host_has_facility,
+    /* is_alive             */ host_is_alive,
+    /* enemy_odp            */ host_enemy_odp,
+    /* enemy_sat            */ host_enemy_sat,
+    /* satellite_goal_setting */ host_satellite_goal_setting,
+    /* max_satellites       */ host_max_satellites,
+    /* mil_strength         */ host_mil_strength,
+    /* former_tile_tally    */ host_former_tile_tally,
 };
 
 static lua_State* L = NULL;

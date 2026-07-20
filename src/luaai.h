@@ -157,6 +157,76 @@ struct LuaHostApi {
     // loop's per-item base score.
     int32_t (*can_build)(int32_t base_id, int32_t item_id);
     int32_t (*energy_limit)(int32_t faction_id);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.17): FAC_BIOLOGY_LAB's own branch
+    // (build.cpp:1302-1306). conf is Thinker-internal, not FFI-mapped,
+    // same pattern as tech_balance_enabled/social_ai_bias.
+    int32_t (*biology_lab_bonus)(); // -> conf.biology_lab_bonus
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.18): the shared FAC_RECREATION_
+    // COMMONS/FAC_HOLOGRAM_THEATRE/FAC_RESEARCH_HOSPITAL/FAC_PARADISE_
+    // GARDEN branch. Two-out-param shape kept as-is (same precedent as
+    // social_calc's out_values array) rather than split into two
+    // single-value wrappers -- content_pop/base_limit are computed
+    // together from the same diff_level/MapAreaSqRoot inputs.
+    void (*mod_psych_check)(int32_t faction_id, int32_t* content_pop, int32_t* base_limit);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.19): FAC_PSI_GATE's own branch,
+    // same AIPlans-accessor pattern as main_region/target_land_region.
+    int32_t (*naval_start_x)(int32_t faction_id); // -> plans[faction_id].naval_start_x
+    int32_t (*naval_start_y)(int32_t faction_id); // -> plans[faction_id].naval_start_y
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.22): FAC_CHILDREN_CRECHE's own
+    // branch. Real engine mechanics (population-cap formula depending on
+    // Rules/MFaction/has_fac_built), not AI policy -- same precedent as
+    // mineral_output_modifier-style wrappers.
+    int32_t (*base_unused_space)(int32_t base_id);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.23): FAC_TREE_FARM/FAC_HYBRID_
+    // FOREST's shared branch. Pure tile-scan (path.cpp:369-380) over the
+    // retained TableOffsetX/Y primitives -- stays in C++ per Phase 4.3,
+    // same category as has_base_sites.
+    int32_t (*nearby_items)(int32_t x, int32_t y, int32_t start_index, int32_t end_index, uint32_t item);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.24): the FAC_GENEJACK_FACTORY
+    // group's shared branch. mineral_output_modifier aggregates several
+    // facility/project checks (base.cpp:4358-4376) -- real engine
+    // mechanics, not AI policy, same precedent as has_base_sites.
+    // clean_minerals is Thinker-internal conf, not FFI-mapped, same
+    // pattern as biology_lab_bonus.
+    int32_t (*mineral_output_modifier)(int32_t base_id);
+    int32_t (*clean_minerals)(); // -> conf.clean_minerals
+    // select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+    // 4.10.27): SeaProbeUnit's own AIPlans accessor.
+    int32_t (*unknown_factions)(int32_t faction_id); // -> plans[faction_id].unknown_factions
+    // Satellites branch, via find_satellite (build.cpp:286-330). Real
+    // engine mechanics (facility/secret-project redundancy + faction
+    // aliveness), not AI policy -- same precedent as has_base_sites.
+    int32_t (*has_facility)(int32_t item_id, int32_t base_id);
+    int32_t (*is_alive)(int32_t faction_id);
+    int32_t (*enemy_odp)(int32_t faction_id);      // -> plans[faction_id].enemy_odp
+    int32_t (*enemy_sat)(int32_t faction_id);      // -> plans[faction_id].enemy_sat
+    int32_t (*satellite_goal_setting)(int32_t faction_id); // -> plans[faction_id].satellite_goal
+    int32_t (*max_satellites)(); // -> conf.max_satellites
+    // select_build itself, unit-branch catalog continued (IMPLEMENTATION_
+    // DETAILS.md 4.10.28): faction_might, via find_project's SecretProject
+    // branch.
+    int32_t (*mil_strength)(int32_t faction_id); // -> plans[faction_id].mil_strength
+    // select_build itself, unit-branch catalog continued (IMPLEMENTATION_
+    // DETAILS.md 4.10.29): FormerUnit's own tile-quality tally
+    // (build.cpp:1157-1166). Kept as one opaque wrapper reproducing the
+    // whole iterate_tiles/select_item/is_ocean scan in C++, rather than
+    // porting select_item's own ~200-line terraform-choice logic (and the
+    // dozen tile-eligibility primitives it depends on) to Lua -- within
+    // select_build, select_item's return value is only ever used as a
+    // >=0 eligibility check, never scored; the specific terraform action
+    // it picks only matters later, in former_move (Phase 4.2 item 4,
+    // Movement, not yet ported), which is where select_item would
+    // actually need porting as AI policy. Same "engine mechanics" bucket
+    // as has_base_sites (which wraps an analogous iterate_tiles scan for
+    // select_colony, 4.8) -- raw pointers (MAP*, the tile iterator) never
+    // cross into Lua either way.
+    void (*former_tile_tally)(int32_t base_id, int32_t* num, int32_t* sea);
 };
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai

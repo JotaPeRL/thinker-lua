@@ -20,6 +20,11 @@ local TechOwners = ffi.cast("uint8_t*", types.globals.TechOwners)
 -- Distinct from game.rules() (the *GameRules bitmask, a plain int) --
 -- Rules is a whole CRules rule-table struct.
 local Rules = ffi.cast("CRules*", types.globals.Rules)
+-- select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+-- DETAILS.md 4.10.26): FAC_RECYCLING_TANKS's own branch. Just the
+-- recycling_tanks ResValue's 3 leading int32_t fields (nutrient, mineral,
+-- energy -- engine_types.h:592-597), not the whole CResourceInfo.
+local ResInfoRecyclingTanks = ffi.cast("int32_t*", types.globals.ResInfoRecyclingTanks)
 
 local function bounded(name, id, max)
     assert(id >= 0 and id < max, name .. " out of range: " .. tostring(id))
@@ -209,6 +214,10 @@ return {
     proto_defense = proto_defense,
     owners = owners,
     rules = function() return Rules[0] end,
+    recycling_tanks = function()
+        return { nutrient = ResInfoRecyclingTanks[0], mineral = ResInfoRecyclingTanks[1],
+            energy = ResInfoRecyclingTanks[2] }
+    end,
     has_tech = funcs.has_tech,
     tech_level = funcs.tech_level,
     tech_is_preq = funcs.tech_is_preq,

@@ -279,6 +279,10 @@ int main() {
         FIELD(CRules, extra_cost_prototype_air),
         FIELD(CRules, extra_cost_prototype_land),
         FIELD(CRules, artillery_max_rng),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.21): the shared GOV_MAY_FORCE_
+        // PSYCH gate (FAC_PUNISHMENT_SPHERE/FAC_GENEJACK_FACTORY).
+        FIELD(CRules, drones_induced_genejack_factory),
     }});
 
     emit_struct(stdout, {"Faction", sizeof(Faction), alignof(Faction), {
@@ -344,6 +348,40 @@ int main() {
         // per-faction tech/energy summary the hash line folds in.
         FIELD(Faction, energy_credits),
         FIELD(Faction, tech_ranking),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.17): FAC_BIOLOGY_LAB's own
+        // branch (build.cpp:1302-1306).
+        FIELD(Faction, SE_planet_pending),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.21): FAC_PUNISHMENT_SPHERE's
+        // own branch.
+        FIELD(Faction, SE_alloc_labs),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.22): FAC_CHILDREN_CRECHE's own
+        // branch.
+        FIELD(Faction, SE_growth_pending),
+        FIELD(Faction, SE_effic_pending),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.23): FAC_TREE_FARM/
+        // FAC_HYBRID_FOREST's shared branch.
+        FIELD(Faction, SE_alloc_psych),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.24): the FAC_GENEJACK_FACTORY
+        // group's shared branch.
+        FIELD(Faction, clean_minerals_modifier),
+        // select_build itself, unit-branch catalog (IMPLEMENTATION_
+        // DETAILS.md 4.10.27): find_satellite's own dependencies
+        // (Satellites branch).
+        FIELD(Faction, satellites_nutrient),
+        FIELD(Faction, satellites_mineral),
+        FIELD(Faction, satellites_energy),
+        FIELD(Faction, satellites_ODP),
+        FIELD(Faction, planet_busters),
+        // select_build itself, unit-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.28): find_project/find_missile/
+        // faction_might/has_pact/redundant_project (SecretProject branch).
+        FIELD(Faction, diplo_status),
+        FIELD(Faction, pop_total),
     }});
 
     // production/plans port, first slice (porting-order item 3,
@@ -387,6 +425,36 @@ int main() {
         // resumed after the Consolidation gate): Wenergy + the energy gate.
         FIELD(BASE, energy_surplus),
         FIELD(BASE, energy_inefficiency),
+        // select_build itself, facility-branch catalog (IMPLEMENTATION_
+        // DETAILS.md 4.10.15): the current production item, backing
+        // engine_base.h's item()/item_is_project()/item_is_unit() inline
+        // methods -- unblocks select_build's project_change/allow_units
+        // locals (build.cpp:868-872) and FAC_PSI_GATE's own direct read.
+        // Whole 10-slot array exposed (same FieldShape<T[N]> mechanism
+        // already proven by Faction::region_force_rating) even though
+        // callers so far only need slot 0 -- narrower exposure would need
+        // a new FIELD() case for no real benefit.
+        FIELD(BASE, queue_items),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.17): FAC_BIOLOGY_LAB/
+        // FAC_CENTAURI_PRESERVE's shared branch (build.cpp:1307-1310),
+        // also a recurring blocker for FAC_TREE_FARM/FAC_HYBRID_FOREST
+        // and the FAC_GENEJACK_FACTORY group (not touched this session).
+        FIELD(BASE, eco_damage),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.18): the shared FAC_RECREATION_
+        // COMMONS/FAC_HOLOGRAM_THEATRE/FAC_RESEARCH_HOSPITAL/FAC_PARADISE_
+        // GARDEN branch's skip check.
+        FIELD(BASE, specialist_total),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.21): FAC_PUNISHMENT_SPHERE's
+        // own branch.
+        FIELD(BASE, assimilation_turns_left),
+        // select_build itself, facility-branch catalog continued
+        // (IMPLEMENTATION_DETAILS.md 4.10.24): the FAC_GENEJACK_FACTORY
+        // group's shared branch. Distinct from the already-exposed
+        // mineral_intake_2 -- verified against engine_base.h, not assumed.
+        FIELD(BASE, mineral_intake),
     }});
 
     // select_build itself (porting-order item 3, final piece,
@@ -429,6 +497,9 @@ int main() {
     printf("    SunspotDuration = 0x%08X,\n", 0x9A6800);
     printf("    DiffLevel = 0x%08X,\n", 0x9A64C4);
     printf("    MapAreaSqRoot = 0x%08X,\n", 0x949888);
+    // select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+    // 4.10.27): SeaProbeUnit's own adjacent_region radius.
+    printf("    MapAreaTiles = 0x%08X,\n", 0x949884);
     // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
     // 4.6): int* const, same provenance-by-comment convention (src/engine.cpp).
     printf("    FactionRankings = 0x%08X,\n", 0x9A64EC);
@@ -441,6 +512,21 @@ int main() {
     // category as Bases) -- exposed via a LuaHostApi vehs_ptr() wrapper
     // instead, fetched fresh by lua/api/veh.lua on every access.
     printf("    VehCount = 0x%08X,\n", 0x9A64C8);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.26): FAC_RECYCLING_TANKS's own
+    // branch. ResInfo (src/engine.cpp: `CResourceInfo* ResInfo =
+    // (CResourceInfo*)0x945F50;`) is a 144-byte, 9-ResValue-member
+    // struct (engine_types.h:599-609); only the recycling_tanks member
+    // is needed. Rather than emit_struct the whole CResourceInfo (the
+    // FIELD()/FieldShape mechanism only handles scalar/array-of-scalar
+    // members, not nested-struct members), expose just this one
+    // ResValue's address directly -- computed via the real offsetof, not
+    // hand-counted, so it stays compiler-verified like every other
+    // layout fact this tool emits. ResValue's field order (engine_types.h
+    // :592-597) is nutrient, mineral, energy, unused -- read as a plain
+    // int32_t[3] (skipping the unused 4th) in lua/api/tech.lua.
+    printf("    ResInfoRecyclingTanks = 0x%08X,\n",
+        (unsigned)(0x945F50 + offsetof(CResourceInfo, recycling_tanks)));
     printf("  },\n");
     // Array bounds for the exposed rule tables, from src/main.h (not
     // included here -- same provenance-by-comment convention as the
@@ -550,6 +636,11 @@ int main() {
     printf("    PLAN_PLANET_BUSTER = %d,\n", PLAN_PLANET_BUSTER);
     printf("    PLAN_COLONY = %d,\n", PLAN_COLONY);
     printf("    BSTATE_PRODUCTION_DONE = %d,\n", BSTATE_PRODUCTION_DONE);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.18): backs BASE::drone_riots_active()
+    // (engine_base.h:231), needed by the shared FAC_RECREATION_COMMONS/
+    // FAC_HOLOGRAM_THEATRE/FAC_RESEARCH_HOSPITAL/FAC_PARADISE_GARDEN branch.
+    printf("    BSTATE_DRONE_RIOTS_ACTIVE = %d,\n", BSTATE_DRONE_RIOTS_ACTIVE);
     printf("    RETOOL_ALWAYS_FREE = %d,\n", RETOOL_ALWAYS_FREE);
     printf("    RETOOL_FREE_PROJECT = %d,\n", RETOOL_FREE_PROJECT);
     printf("    RFLAG_FREEPROTO = %d,\n", RFLAG_FREEPROTO);
@@ -651,6 +742,38 @@ int main() {
     // compiler/generator catches a typo'd or missing name as a build
     // error.
     printf("    GOV_MAY_PROD_FACILITIES = %d,\n", GOV_MAY_PROD_FACILITIES);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.21): the shared gate before
+    // FAC_PUNISHMENT_SPHERE/FAC_GENEJACK_FACTORY.
+    printf("    GOV_MAY_FORCE_PSYCH = %d,\n", GOV_MAY_FORCE_PSYCH);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.23): FAC_TREE_FARM/FAC_HYBRID_
+    // FOREST's shared branch, nearby_items' tile-flag argument.
+    printf("    BIT_FOREST = %d,\n", BIT_FOREST);
+    // select_build itself, facility-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.25): FAC_NETWORK_NODE's own branch.
+    printf("    FAC_VIRTUAL_WORLD = %d,\n", FAC_VIRTUAL_WORLD);
+    // select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+    // 4.10.27): ColonyUnit/SeaProbeUnit/FerryUnit/CrawlerUnit/Satellites.
+    printf("    GOV_MAY_PROD_COLONY_POD = %d,\n", GOV_MAY_PROD_COLONY_POD);
+    printf("    FAC_NESSUS_MINING_STATION = %d,\n", FAC_NESSUS_MINING_STATION);
+    printf("    FAC_ORBITAL_POWER_TRANS = %d,\n", FAC_ORBITAL_POWER_TRANS);
+    printf("    FAC_SKY_HYDRO_LAB = %d,\n", FAC_SKY_HYDRO_LAB);
+    printf("    FAC_SPACE_ELEVATOR = %d,\n", FAC_SPACE_ELEVATOR);
+    // select_build itself, unit-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.28): find_project/redundant_project
+    // (SecretProject branch).
+    printf("    GOV_MAY_PROD_SP = %d,\n", GOV_MAY_PROD_SP);
+    // select_build itself, unit-branch catalog continued
+    // (IMPLEMENTATION_DETAILS.md 4.10.29): FormerUnit's own branch.
+    printf("    PFLAG_EXT_STRAT_LOTS_TERRAFORMERS = %d,\n", PFLAG_EXT_STRAT_LOTS_TERRAFORMERS);
+    printf("    DIPLO_MAJOR_ATROCITY_VICTIM = %d,\n", DIPLO_MAJOR_ATROCITY_VICTIM);
+    printf("    PFLAG_COMMIT_ATROCITIES_WANTONLY = %d,\n", PFLAG_COMMIT_ATROCITIES_WANTONLY);
+    printf("    FAC_SUBSPACE_GENERATOR = %d,\n", FAC_SUBSPACE_GENERATOR);
+    printf("    FAC_CITIZENS_DEFENSE_FORCE = %d,\n", FAC_CITIZENS_DEFENSE_FORCE);
+    printf("    FAC_MARITIME_CONTROL_CENTER = %d,\n", FAC_MARITIME_CONTROL_CENTER);
+    printf("    FAC_PLANETARY_DATALINKS = %d,\n", FAC_PLANETARY_DATALINKS);
+    printf("    FAC_LIVING_REFINERY = %d,\n", FAC_LIVING_REFINERY);
     printf("    FAC_PRESSURE_DOME = %d,\n", FAC_PRESSURE_DOME);
     printf("    FAC_NETWORK_NODE = %d,\n", FAC_NETWORK_NODE);
     printf("    FAC_HOLOGRAM_THEATRE = %d,\n", FAC_HOLOGRAM_THEATRE);

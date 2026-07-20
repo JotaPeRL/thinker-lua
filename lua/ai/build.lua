@@ -63,6 +63,41 @@ local port = {
         -- build_order loop's per-item base score.
         build_order_item_score = { file = "src/build.cpp", func = "select_build",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- select_build itself, unit-branch catalog (IMPLEMENTATION_
+        -- DETAILS.md 4.10.27), part of select_build itself (same
+        -- convention as build_order_item_score/defend_unit_*).
+        colony_unit_branch = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        crawler_unit_branch = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        ferry_unit_branch = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        sea_probe_unit_branch = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        satellites_branch = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        find_satellite = { file = "src/build.cpp", func = "find_satellite",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        prod_count = { file = "src/faction.cpp", func = "prod_count",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        satellite_count = { file = "src/plan.cpp", func = "satellite_count",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        satellite_goal_calc = { file = "src/plan.cpp", func = "satellite_goal",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        secret_project_branch = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        find_project = { file = "src/build.cpp", func = "find_project",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        find_missile = { file = "src/build.cpp", func = "find_missile",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        faction_might = { file = "src/plan.cpp", func = "faction_might",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        has_pact = { file = "src/faction.cpp", func = "has_pact",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        redundant_project = { file = "src/build.cpp", func = "redundant_project",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        former_unit_branch = { file = "src/build.cpp", func = "select_build",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -153,6 +188,22 @@ local function base_can_riot(base_id, allow_staple)
     return (not allow_staple or base.nerve_staple_turns_left == 0)
         and not faction.has_project(E.FAC_TELEPATHIC_MATRIX, base.faction_id)
         and funcs.has_fac_built(E.FAC_PUNISHMENT_SPHERE, base_id) == 0
+end
+
+-- select_build itself, facility-branch catalog continued (IMPLEMENTATION_
+-- DETAILS.md 4.10.25): FAC_NETWORK_NODE's own branch. faction.cpp:76-86
+-- -- a plain BASE[]-count loop over already-exposed primitives, ported
+-- directly rather than adding another opaque host wrapper for two lines
+-- of arithmetic, same precedent as FAC_PSI_GATE's own base-scan (4.10.19).
+local function facility_count(item_id, faction_id)
+    local n = 0
+    for i = 0, base_api.count() - 1 do
+        local base = base_api.get(i)
+        if base.faction_id == faction_id and funcs.has_fac_built(item_id, i) ~= 0 then
+            n = n + 1
+        end
+    end
+    return n
 end
 
 -- build.cpp:483-503 (debug()-only name log dropped, see module comment)
@@ -756,10 +807,14 @@ end
 -- 4.10.9/4.10.12, resumed after the Consolidation gate): the shared
 -- prologue through Wbase/Wthreat (build.cpp:847-965), everything every
 -- later branch (9 special unit types + ~35 facility branches, none
--- ported yet) depends on. Deliberately skips retool/project_change/
--- allow_units/allow_supply/allow_ships/drone_riots/drones -- none of
--- those feed Wbase/Wthreat or the existing debug() line this is
--- verified against, they belong to the branches this sub-step defers.
+-- ported yet) depends on. Originally deliberately skipped retool/
+-- project_change/allow_units/allow_supply/allow_ships/drone_riots/
+-- drones -- none of those fed Wbase/Wthreat or the existing debug() line
+-- this was verified against. retool/allow_ships landed with later
+-- sub-steps as branches started needing them; allow_units is threaded
+-- through as a hook argument instead (4.10.16, RNG-sensitivity reasons);
+-- drone_riots/drones land here (4.10.18) for the shared psych-facility
+-- branch. project_change/allow_supply remain genuinely unneeded so far.
 -- Wbase/Wthreat is genuine C float arithmetic (4.10.7): plain Lua `/`,
 -- not idiv. Placed after governor_priorities (calls it) -- Lua locals
 -- aren't hoisted, an earlier placement here errored live ("attempt to
@@ -797,9 +852,32 @@ local function select_build_prologue(base_id)
     local allow_ships = funcs.has_ships(faction_id)
         and funcs.adjacent_region(base.x, base.y, -1, game.map_area_sq_root(), E.TRIAD_SEA)
 
+    -- drone_riots/drones (build.cpp:877-878): select_build itself,
+    -- facility-branch catalog continued (IMPLEMENTATION_DETAILS.md
+    -- 4.10.18).
+    local drone_riots = base_api.drone_riots(base) or base_api.drone_riots_active(base)
+    local drones = base.drone_total + base.specialist_adjust
+
     local c = count_vehicles(base_id, sea_base)
     local wgov = governor_priorities(base_id)
     local defenders = idiv(c.defenders + 2, 8)
+
+    -- select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+    -- 4.10.27): need_ferry/allow_supply's own post-loop refinement
+    -- (build.cpp:948-950), applied to count_vehicles' raw loop-
+    -- accumulated values -- a real gap found while wiring FerryUnit/
+    -- CrawlerUnit, not present until now: `count_vehicles`'s own return
+    -- table only ever held the *unrefined* values (right for
+    -- `vehicle_counts_check`'s diagnostic comparison, which runs before
+    -- this refinement in the C++ source too, build.cpp:945 vs 948-950),
+    -- and nothing consumed the refined values until these two branches,
+    -- so the gap was invisible until now. Kept here, not inside
+    -- `count_vehicles` itself, to avoid changing what
+    -- `vehicle_counts_check` verifies.
+    local need_ferry = c.need_ferry ~= 0 and c.transports == 0
+        and funcs.adjacent_region(base.x, base.y, faction_id, 16, E.TRIAD_LAND)
+    local allow_supply = c.allow_supply
+        and c.all_crawlers < min(f.base_count, idiv(game.map_area_tiles(), 20))
 
     -- Wenergy (build.cpp:1044-1045): select_build step 3 sub-step 3
     -- (IMPLEMENTATION_DETAILS.md 4.10.9/4.10.14, resumed after the
@@ -837,6 +915,9 @@ local function select_build_prologue(base_id)
         enemy_mil_factor = enemy_mil_factor, wthreat = Wthreat,
         sea_base = sea_base, retool = retool, allow_ships = allow_ships,
         gov = gov, wgov = wgov, wenergy = wenergy, defend_range = defend_range,
+        drone_riots = drone_riots, drones = drones, base_reg = base_reg,
+        artifacts = c.artifacts, allow_supply = allow_supply,
+        need_ferry = need_ferry, near_formers = c.near_formers,
     }
 end
 
@@ -930,6 +1011,463 @@ local function combat_unit_early_return(base_id)
     return -1
 end
 
+-- select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+-- 4.10.27): find_satellite's own dependency chain (Satellites branch),
+-- ported directly rather than as opaque wrappers -- all three are plain
+-- BASE[]/Faction reads with no engine-mechanics content beyond what's
+-- already exposed, same "cheap enough once actually read" call as
+-- facility_count (4.10.25).
+local function prod_count(item_id, faction_id, base_skip_id)
+    local n = 0
+    for i = 0, base_api.count() - 1 do
+        local base = base_api.get(i)
+        if base.faction_id == faction_id and base_api.item(base) == item_id and i ~= base_skip_id then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- plan.cpp:409-419.
+local function satellite_count(faction_id, item_id)
+    local f = faction.get(faction_id)
+    if item_id == E.FAC_SKY_HYDRO_LAB then
+        return f.satellites_nutrient
+    elseif item_id == E.FAC_ORBITAL_POWER_TRANS then
+        return f.satellites_energy
+    elseif item_id == E.FAC_NESSUS_MINING_STATION then
+        return f.satellites_mineral
+    else
+        return f.satellites_ODP
+    end
+end
+
+-- plan.cpp:421-446. Named _calc (not satellite_goal) to avoid colliding
+-- with the AIPlans field of the same name (funcs.satellite_goal_setting
+-- reads that field; this function *consumes* it as an input).
+local function satellite_goal_calc(faction_id, item_id)
+    local f = faction.get(faction_id)
+    local goal = funcs.satellite_goal_setting(faction_id)
+    if item_id == E.FAC_ORBITAL_DEFENSE_POD then
+        local nukes = 0
+        for i = 1, C.MaxPlayerNum - 1 do
+            if faction_id ~= i and funcs.is_alive(i) ~= 0 and funcs.at_war(faction_id, i) ~= 0 then
+                nukes = max(nukes, faction.get(i).planet_busters)
+            end
+        end
+        if funcs.enemy_odp(faction_id) > 0 or funcs.enemy_sat(faction_id) > 0 or nukes > 2 then
+            goal = clamp(idiv(goal, 4), 0, 4) + clamp(idiv(f.base_count, 8) + idiv(nukes, 2), 2, 12)
+        else
+            goal = clamp(idiv(goal, 4), 0, 4) + clamp(idiv(f.base_count, 8), 2, 4)
+        end
+    elseif f.base_count <= 5 then
+        goal = idiv(goal, 2)
+    end
+    if f.base_count <= 10 then
+        goal = idiv(goal, 2)
+    end
+    return clamp(goal, 0, funcs.max_satellites())
+end
+
+-- build.cpp:286-330. Returns a unit_id/-facility_id choice, or
+-- C.MaxProtoNum (GOV_NONE's actual value, build.cpp:4) for "no
+-- candidate" -- matching the C++ sentinel exactly, not a Lua-only stand-in,
+-- since this return value is compared directly against GOV_NONE by the
+-- Satellites branch below (`~= GOV_NONE`), not just used as a boolean.
+local SATELLITE_ITEMS = {
+    E.FAC_ORBITAL_DEFENSE_POD, E.FAC_NESSUS_MINING_STATION,
+    E.FAC_ORBITAL_POWER_TRANS, E.FAC_SKY_HYDRO_LAB,
+}
+
+local function find_satellite(base_id)
+    local base = base_api.get(base_id)
+    local faction_id = base.faction_id
+    local has_complex = funcs.has_facility(E.FAC_AEROSPACE_COMPLEX, base_id) ~= 0
+        or faction.has_project(E.FAC_SPACE_ELEVATOR, faction_id)
+    local build_complex = not has_complex and funcs.can_build(base_id, E.FAC_AEROSPACE_COMPLEX)
+        and not skip_facility(base_id, E.FAC_AEROSPACE_COMPLEX)
+    if not has_complex and bit.band(idiv(base_id + game.turn(), 8), 1) ~= 0 then
+        return C.MaxProtoNum
+    end
+    if not has_complex and not build_complex then
+        return C.MaxProtoNum
+    end
+    local f = faction.get(faction_id)
+    local defense_only = clamp(funcs.enemy_odp(faction_id) - f.satellites_ODP + 7, 0, 14) > rand.map(0, 16)
+    for _, item_id in ipairs(SATELLITE_ITEMS) do
+        if funcs.has_tech(tech.facility(item_id).preq_tech, faction_id) ~= 0
+            and not (item_id ~= E.FAC_ORBITAL_DEFENSE_POD and defense_only) then
+            local prod_num = prod_count(-item_id, faction_id, base_id)
+            local built_num = satellite_count(faction_id, item_id)
+            local goal_num = satellite_goal_calc(faction_id, item_id)
+            if built_num + prod_num < goal_num then
+                if not has_complex and build_complex then
+                    return -E.FAC_AEROSPACE_COMPLEX
+                end
+                if has_complex then
+                    return -item_id
+                end
+            end
+        end
+    end
+    return C.MaxProtoNum
+end
+
+-- select_build itself, unit-branch catalog continued (IMPLEMENTATION_
+-- DETAILS.md 4.10.28): find_project's own dependency chain (SecretProject
+-- branch). find_missile reuses the already-ported unit_score (4.7)
+-- verbatim -- the same function build.cpp's own find_missile calls.
+local function find_missile(base_id)
+    local base = base_api.get(base_id)
+    local faction_id = base.faction_id
+    local best_id = -1
+    local best_val = -math.huge
+    for unit_id = 0, C.MaxProtoNum - 1 do
+        if (unit_id < C.MaxProtoFactionNum or idiv(unit_id, C.MaxProtoFactionNum) == faction_id)
+            and funcs.mod_veh_avail(unit_id, faction_id, -1) ~= 0
+            and tech.proto_is_planet_buster(unit_id) ~= 0 then
+            local val = unit_score(base_id, unit_id, 0, 1, 1, false)
+            if val > best_val then
+                best_id = unit_id
+                best_val = val
+            end
+        end
+    end
+    return best_id
+end
+
+-- plan.cpp:365-367.
+local function faction_might(faction_id)
+    return funcs.mil_strength(faction_id) + 8 * faction.get(faction_id).pop_total
+end
+
+-- faction.cpp:158-161.
+local function has_pact(faction_id_1, faction_id_2)
+    return faction_id_1 >= 0 and faction_id_2 >= 0
+        and bit.band(faction.get(faction_id_1).diplo_status[faction_id_2], E.DIPLO_PACT) ~= 0
+end
+
+-- build.cpp:252-283.
+local function redundant_project(faction_id, item_id)
+    local f = faction.get(faction_id)
+    if item_id == E.FAC_PLANETARY_DATALINKS then
+        local n = 0
+        for i = 0, C.MaxPlayerNum - 1 do
+            if faction.get(i).base_count > 0 then
+                n = n + 1
+            end
+        end
+        return n < 4
+    end
+    if item_id == E.FAC_CITIZENS_DEFENSE_FORCE then
+        return tech.facility(E.FAC_PERIMETER_DEFENSE).maint == 0
+            and facility_count(E.FAC_PERIMETER_DEFENSE, faction_id) > idiv(f.base_count, 2) + 2
+    end
+    if item_id == E.FAC_MARITIME_CONTROL_CENTER then
+        local n = 0
+        for i = veh.count() - 1, 0, -1 do
+            local v = veh.get(i)
+            if v.faction_id == faction_id and veh.triad(v) == E.TRIAD_SEA then
+                n = n + 1
+            end
+        end
+        return n < 8 and n < idiv(f.base_count, 3)
+    end
+    if item_id == E.FAC_HUNTER_SEEKER_ALGORITHM then
+        return f.SE_probe >= 3
+    end
+    if item_id == E.FAC_LIVING_REFINERY then
+        return f.SE_support >= 3
+    end
+    return false
+end
+
+-- build.cpp:351-463. Takes wgov (the same WItem-shaped plain table
+-- facility_score/governor_priorities already use) rather than
+-- recomputing it -- select_build already has one per base via
+-- governor_priorities, matching the C++ signature exactly (`WItem&
+-- Wgov`, passed in, not rebuilt).
+local function find_project(base_id, wgov)
+    local base = base_api.get(base_id)
+    local faction_id = base.faction_id
+    local f = faction.get(faction_id)
+    local gov = base_api.gov_config(base)
+    local bases = f.base_count
+    local projs, nukes, works, diplo = 0, 0, 0, 0
+    local unit_id = -1
+    if bit.band(gov, E.GOV_MAY_PROD_AIR_COMBAT) ~= 0 then
+        unit_id = find_missile(base_id)
+    end
+    local nuke_limit, nuke_score = 0, 0
+    local built_nukes, enemy_nukes = 0, 0
+    local defense = false
+
+    if unit_id >= 0 and bases >= 8 then
+        for i = veh.count() - 1, 0, -1 do
+            local v = veh.get(i)
+            if veh.is_planet_buster(v) ~= 0 then
+                if faction_id == v.faction_id then
+                    built_nukes = built_nukes + 1
+                elseif funcs.at_war(faction_id, v.faction_id) ~= 0 then
+                    enemy_nukes = enemy_nukes + 1
+                end
+            end
+        end
+        for i = 1, C.MaxPlayerNum - 1 do
+            if faction_id ~= i and funcs.is_alive(i) ~= 0 and not has_pact(faction_id, i) then
+                -- f->diplo_status[i]: the CURRENT faction's own array,
+                -- indexed by the OTHER faction -- not the other way
+                -- around (double-checked against build.cpp:381, not
+                -- assumed from the has_pact args' order above).
+                diplo = bit.bor(diplo, f.diplo_status[i])
+                if 4 * faction_might(i) > faction_might(faction_id)
+                    and funcs.has_tech(tech.facility(E.FAC_ORBITAL_DEFENSE_POD).preq_tech, i) ~= 0 then
+                    defense = true
+                end
+            end
+        end
+        local atrocity = not funcs.un_charter() or bit.band(diplo, E.DIPLO_MAJOR_ATROCITY_VICTIM) ~= 0
+        nuke_score = (atrocity and (defense and 4 or 8) or (f.AI_fight > 0 and 0 or -2))
+            + 2 * f.AI_power + 2 * f.AI_fight
+            + (bit.band(f.player_flags, E.PFLAG_COMMIT_ATROCITIES_WANTONLY) ~= 0 and 2 or 0)
+            + (funcs.defense_modifier(faction_id) > 2 and 2 or 0)
+            + clamp(enemy_nukes - f.satellites_ODP, -4, 4)
+            + (bit.band(diplo, E.DIPLO_MAJOR_ATROCITY_VICTIM) ~= 0 and 4 or 0)
+            + (bit.band(diplo, E.DIPLO_ATROCITY_VICTIM) ~= 0 and 4 or 0)
+            + (bit.band(diplo, E.DIPLO_WANT_REVENGE) ~= 0 and 4 or 0)
+            + min(4, idiv(base.mineral_surplus, 20))
+        if nuke_score > 5 then
+            nuke_limit = clamp(clamp(b2n(f.AI_fight > 0) + idiv(nuke_score, 8) + idiv(bases, 20), 1, 3)
+                + ((defense or not atrocity) and 0 or idiv(bases, 10)) - built_nukes, 0, 10)
+        end
+    end
+
+    for i = 0, base_api.count() - 1 do
+        local b = base_api.get(i)
+        if b.faction_id == faction_id and base_id ~= i then
+            local t = base_api.item(b)
+            if t <= -E.SP_ID_First or t == -E.FAC_SUBSPACE_GENERATOR then
+                projs = projs + 1
+            elseif t == -E.FAC_SKUNKWORKS then
+                works = works + 1
+            elseif t >= 0 and tech.proto_is_planet_buster(t) ~= 0 then
+                nukes = nukes + 1
+            end
+        end
+    end
+    if unit_id >= 0 and nukes < nuke_limit then
+        local extra_cost = proto_extra_cost(unit_id)
+        local has_works = funcs.has_fac_built(E.FAC_SKUNKWORKS, base_id) ~= 0
+        if rand.map(0, nuke_score > 10 and 2 or 4) == 0
+            or (nukes == 0 and extra_cost == 0) or (has_works and extra_cost ~= 0) then
+            if bit.band(gov, E.GOV_MAY_PROD_PROTOTYPE) ~= 0 or has_works or extra_cost == 0 then
+                if extra_cost >= 50 and bit.band(gov, E.GOV_MAY_PROD_FACILITIES) ~= 0
+                    and funcs.can_build(base_id, E.FAC_SKUNKWORKS) and works < 2
+                    and not skip_facility(base_id, E.FAC_SKUNKWORKS) then
+                    return -E.FAC_SKUNKWORKS
+                end
+                if has_works or works == 0 or extra_cost == 0 then
+                    return unit_id
+                end
+            end
+        end
+    end
+    local similar_limit = min(4, idiv(base.minerals_accumulated, 50))
+    if projs + b2n(nukes > 0) < min(3 + b2n(nuke_limit > 0) + similar_limit, idiv(bases, 4)) then
+        if funcs.can_build(base_id, E.FAC_SUBSPACE_GENERATOR)
+            and not skip_facility(base_id, E.FAC_SUBSPACE_GENERATOR) then
+            return -E.FAC_SUBSPACE_GENERATOR
+        end
+        local best_value = -math.huge
+        local choice = C.MaxProtoNum
+        local retool = check_retool(base)
+        for i = E.SP_ID_First, E.SP_ID_Last do
+            if funcs.can_build(base_id, i) and prod_count(-i, faction_id, base_id) <= similar_limit
+                and (similar_limit > 0 or not redundant_project(faction_id, i)) then
+                local value = facility_score(i, wgov)
+                if retool then
+                    value = value + (base.production_id_last == -i and 10 or 0)
+                end
+                if value > best_value then
+                    choice = -i
+                    best_value = value
+                end
+            end
+        end
+        if projs > 0 or best_value > 3 then
+            return choice
+        end
+    end
+    return C.MaxProtoNum
+end
+
+-- select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+-- 4.10.27): ColonyUnit/CrawlerUnit/FerryUnit/SeaProbeUnit (build.cpp:
+-- 1177-1210, plus ColonyUnit at 1202-1210). Unlike DefendUnit/CombatUnit
+-- (which `return choice` and end select_build outright), these push a
+-- *candidate* onto the priority queue and keep evaluating later
+-- build_order items, so each hook returns {choice, score} (out_count=2)
+-- rather than a single value -- `score` is the shared per-item base
+-- value (`random(32)` + Wgov contributions, build.cpp:1064-1067)
+-- **threaded through as a hook argument, not re-derived**: it's already
+-- computed once per loop iteration in C++ by the time any of these
+-- branches runs, so recomputing it here would double-draw rand.map(0,32)
+-- for no reason (same "don't re-derive an already-computed, order-
+-- sensitive value" principle as `allow_units`, 4.10.16 -- though here
+-- the concern is a redundant draw, not a divergence risk, since nothing
+-- else consumes RNG between C++'s own draw and this hook's snapshot).
+-- {-1, 0} is the shared "no candidate" sentinel; the C++ seam only calls
+-- lua_ai_shadow_check on its own success path (same accepted trade-off
+-- DefendUnit/CombatUnit already use -- "neither condition holds" isn't
+-- compared), so the sentinel's exact shape never actually gets diffed.
+local function colony_unit_branch(base_id, score)
+    local r = select_build_prologue(base_id)
+    if not (r.allow_pods and r.pods < 2 and bit.band(r.gov, E.GOV_MAY_PROD_COLONY_POD) ~= 0) then
+        return { -1, 0 }
+    end
+    local choice = select_colony(base_id, r.pods, r.allow_ships)
+    if choice < 0 then
+        return { -1, 0 }
+    end
+    local base = base_api.get(base_id)
+    local f = faction.get(base.faction_id)
+    score = score + clamp(2 * game.map_area_sq_root() - f.base_count, 0, 80)
+    score = score + clamp(f.SE_effic_pending + 4, 0, 4)
+        * (r.pods > 0 and 1 or 2) * max(0, 16 - f.base_count)
+    return { choice, score }
+end
+
+local function crawler_unit_branch(base_id, score)
+    local r = select_build_prologue(base_id)
+    local base = base_api.get(base_id)
+    if not (r.allow_supply and funcs.has_wmode(base.faction_id, E.WMODE_SUPPLY) ~= 0) then
+        return { -1, 0 }
+    end
+    local choice = find_proto(base_id, E.TRFLAG_LAND, E.WMODE_SUPPLY, true)
+    if choice < 0 then
+        return { -1, 0 }
+    end
+    local f = faction.get(base.faction_id)
+    score = score + max(0, 40 - base.mineral_surplus - base.nutrient_surplus)
+    score = score + (r.all_crawlers < 4 + idiv(f.base_count, 4) and 40 or 0)
+    return { choice, score }
+end
+
+local function ferry_unit_branch(base_id, score)
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_MAY_PROD_TRANSPORT) == 0 or not r.need_ferry then
+        return { -1, 0 }
+    end
+    local choice = find_proto(base_id, E.TRFLAG_SEA, E.WMODE_TRANSPORT, true)
+    if choice < 0 then
+        return { -1, 0 }
+    end
+    local base = base_api.get(base_id)
+    score = score + ((funcs.target_land_region(base.faction_id) > 0
+        or funcs.transport_units(base.faction_id) < 4) and 40 or 0)
+    return { choice, score }
+end
+
+local function sea_probe_unit_branch(base_id, score)
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_MAY_PROD_PROBES) == 0 then
+        return { -1, 0 }
+    end
+    local base = base_api.get(base_id)
+    local unknown_factions = funcs.unknown_factions(base.faction_id)
+    if not (r.allow_ships and funcs.has_wmode(base.faction_id, E.WMODE_PROBE) ~= 0
+        and unknown_factions > 1 and funcs.contacted_factions(base.faction_id) < 2
+        and funcs.adjacent_region(base.x, base.y, -1, idiv(game.map_area_tiles(), 16), E.TRIAD_SEA)) then
+        return { -1, 0 }
+    end
+    local choice = find_proto(base_id, E.TRFLAG_SEA, E.WMODE_PROBE, true)
+    if choice < 0 then
+        return { -1, 0 }
+    end
+    score = score + 32 * (unknown_factions - r.seaprobes) - 2 * funcs.probe_units(base.faction_id)
+    return { choice, score }
+end
+
+-- build.cpp:1069-1075. find_satellite returns C.MaxProtoNum (GOV_NONE)
+-- for "no candidate" -- same sentinel comparison as the C++ original
+-- (`!= GOV_NONE`), not a Lua-only stand-in.
+local function satellites_branch(base_id, score)
+    local r = select_build_prologue(base_id)
+    local base = base_api.get(base_id)
+    if bit.band(r.gov, E.GOV_MAY_PROD_FACILITIES) == 0
+        or r.minerals < funcs.median_limit(base.faction_id) then
+        return { -1, 0 }
+    end
+    local choice = find_satellite(base_id)
+    if choice == C.MaxProtoNum then
+        return { -1, 0 }
+    end
+    local f = faction.get(base.faction_id)
+    score = score + rand.map(0, 8 * clamp(f.base_count - 5, 0, 50))
+    return { choice, score }
+end
+
+-- build.cpp:1076-1084. find_project returns C.MaxProtoNum (GOV_NONE) for
+-- "no candidate", same sentinel as find_satellite above.
+local function secret_project_branch(base_id, score)
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_MAY_PROD_SP) == 0 or r.minerals < r.project_limit then
+        return { -1, 0 }
+    end
+    local choice = find_project(base_id, r.wgov)
+    if choice == C.MaxProtoNum then
+        return { -1, 0 }
+    end
+    local base = base_api.get(base_id)
+    local f = faction.get(base.faction_id)
+    if choice >= 0 or choice == -E.FAC_SKUNKWORKS then
+        score = score + 40 * funcs.defense_modifier(base.faction_id)
+    end
+    score = score + 4 * clamp(f.base_count - 5, 0, 50)
+    return { choice, score }
+end
+
+-- build.cpp:1152-1179. The tile-quality tally itself
+-- (`base_api.former_tile_tally`) is a single opaque host wrapper, not a
+-- Lua port of select_item -- see IMPLEMENTATION_DETAILS.md 4.10.29 for
+-- why (select_item's return value is only ever used here as a >=0
+-- eligibility check, never scored; porting its real terraform-choice
+-- logic belongs to Movement/former_move, where it's actually consumed as
+-- AI policy).
+local function former_unit_branch(base_id, score)
+    local r = select_build_prologue(base_id)
+    if bit.band(r.gov, E.GOV_MAY_PROD_TERRAFORMERS) == 0 then
+        return { -1, 0 }
+    end
+    local base = base_api.get(base_id)
+    local f = faction.get(base.faction_id)
+    local priority = base.pop_size >= 6 and r.minerals >= 8
+        and bit.band(f.player_flags_ext, E.PFLAG_EXT_STRAT_LOTS_TERRAFORMERS) ~= 0
+    if not (funcs.has_wmode(base.faction_id, E.WMODE_TERRAFORM) ~= 0
+        and r.formers + idiv(r.near_formers, 2) < (base.pop_size < 4 and 1 or 2 + b2n(priority))) then
+        return { -1, 0 }
+    end
+    local tally = base_api.former_tile_tally(base_id)
+    if tally.num < 4 then
+        return { -1, 0 }
+    end
+    score = score + 8 * (tally.num - 4)
+        + ((r.formers > 0 or r.near_formers > 0 or r.defend_range < 8) and 0 or 4 * tally.num)
+    if tally.sea * 2 >= tally.num or r.sea_base then
+        local choice = find_proto(base_id, bit.bor(E.TRFLAG_SEA, E.TRFLAG_AIR), E.WMODE_TERRAFORM, true)
+        if choice >= 0 then
+            return { choice, score }
+        end
+    end
+    if not r.sea_base then
+        local choice = find_proto(base_id, bit.bor(E.TRFLAG_LAND, E.TRFLAG_AIR), E.WMODE_TERRAFORM, true)
+        if choice >= 0 then
+            return { choice, score }
+        end
+    end
+    return { -1, 0 }
+end
+
 -- select_build itself, step 3 sub-step 3 (IMPLEMENTATION_DETAILS.md
 -- 4.10.9/4.10.14, resumed after the Consolidation gate): the
 -- build_order loop's per-item base score. 1:1 transcription of
@@ -1005,7 +1543,22 @@ local BUILD_ORDER = {
 -- Returns -1 for unit entries (item_id < 0) or unrecognized ids -- never
 -- reached for shadow-check purposes anyway (see src/build.cpp's call
 -- site placement).
-local function build_order_item_score(base_id, item_id)
+--
+-- allow_units arrives as a hook argument (raw 0/1 int, same trap as
+-- unit_score/find_proto's `defend` -- normalized below) rather than
+-- being re-derived from select_build_prologue. It's computed once by
+-- C++ (build.cpp:868-872), outside the build_order loop; deriving it
+-- here instead would mean calling can_build_unit(base_id, -1) -- which
+-- conditionally consumes RNG (random(32) when base_id's vehicle count is
+-- close to conf.max_veh_num) -- once per shadow-called item (up to 38x
+-- per real select_build call) instead of C++'s single real draw, and
+-- could disagree with itself across items within the same call. Same
+-- precedent as lua/ai/social.lua's pop_boom (IMPLEMENTATION_DETAILS.md
+-- 4.5 item 2): compute once in C++, thread the result through as a
+-- plain hook argument instead of re-deriving a value with RNG/ordering
+-- sensitivity.
+local function build_order_item_score(base_id, item_id, allow_units)
+    allow_units = not (allow_units == false or allow_units == 0)
     if item_id < 0 then
         return -1
     end
@@ -1032,6 +1585,79 @@ local function build_order_item_score(base_id, item_id)
         score = score - 2 * base.energy_inefficiency
     end
 
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.26): FAC_RECYCLING_TANKS's own
+    -- branch (build.cpp:1229-1233), the last of the original 15-block
+    -- catalog.
+    if item_id == E.FAC_RECYCLING_TANKS then
+        local base = base_api.get(base_id)
+        local rt = tech.recycling_tanks()
+        score = score + 16 * (rt.energy
+            + clamp(5 - base.nutrient_surplus, 1, 3) * rt.nutrient
+            + clamp(5 - base.mineral_surplus, 1, 3) * rt.mineral)
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.22): FAC_CHILDREN_CRECHE's own
+    -- branch (build.cpp:1234-1242).
+    if item_id == E.FAC_CHILDREN_CRECHE then
+        local base = base_api.get(base_id)
+        local f = faction.get(base.faction_id)
+        score = score + 4 * base.energy_inefficiency
+            + 16 * min(4, funcs.base_unused_space(base_id))
+        score = score + ((f.SE_growth_pending < -1
+            or f.SE_growth_pending + 2 == C.GrowthPopBoom) and 40 or 0)
+        score = score + ((f.SE_growth_pending >= C.GrowthPopBoom
+            or base.nutrient_surplus < 2
+            or faction.has_project(E.FAC_CLONING_VATS, base.faction_id))
+            and -40 or 0)
+        if funcs.has_fac_built(E.FAC_HEADQUARTERS, base_id) == 0 then
+            score = score + 40 * b2n(f.SE_effic_pending < 0)
+                + 40 * b2n(f.SE_effic_pending < -2)
+        end
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.21): the shared GOV_MAY_FORCE_PSYCH
+    -- gate (build.cpp:1224-1228), positioned here (after the energy gate,
+    -- before any facility-specific branch) to match C++ exactly -- also
+    -- gates FAC_GENEJACK_FACTORY, not ported yet, so this half of the
+    -- condition is dead code until that facility's own branch lands.
+    if bit.band(r.gov, E.GOV_MAY_FORCE_PSYCH) == 0
+        and (item_id == E.FAC_PUNISHMENT_SPHERE
+            or (item_id == E.FAC_GENEJACK_FACTORY and base_can_riot(base_id, false)
+                and tech.rules().drones_induced_genejack_factory > 0)) then
+        return -1
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.21): FAC_PUNISHMENT_SPHERE's own
+    -- branch (build.cpp:1229-1260 region, specifically 1243-1260).
+    -- drone_riots/drones already landed in select_build_prologue
+    -- (4.10.18) for this exact facility, unused until now.
+    if item_id == E.FAC_PUNISHMENT_SPHERE then
+        local base = base_api.get(base_id)
+        local turns = base.assimilation_turns_left
+        if not r.drone_riots and turns == 0 and r.drones < idiv(base.pop_size, 2) then
+            return -1
+        end
+        local f = faction.get(base.faction_id)
+        local gate = clamp(idiv(turns - 5, 10), 0, 3)
+            + clamp(idiv(r.drones - base.talent_total, 2), 0, 3)
+            + b2n(base.energy_surplus < 4 + 2 * base.pop_size)
+            + b2n(base.energy_inefficiency > base.energy_surplus)
+            + b2n(base.energy_inefficiency > 2 * base.energy_surplus)
+            - 2 * funcs.has_fac_built(E.FAC_RECREATION_COMMONS, base_id)
+            - 2 * funcs.has_fac_built(E.FAC_HOLOGRAM_THEATRE, base_id)
+            - 2 * funcs.has_fac_built(E.FAC_NETWORK_NODE, base_id)
+        if gate < 3 then
+            return -1
+        end
+        score = score + 80 * b2n(r.drone_riots) + 16 * r.drones + 4 * turns
+        score = score - 2 * ((f.SE_alloc_labs > 0)
+            and (base.energy_surplus - base.energy_inefficiency) or 0)
+    end
+
     -- select_build step 3 sub-step 4 (IMPLEMENTATION_DETAILS.md
     -- 4.10.9/4.10.15, resumed after the Consolidation gate):
     -- FAC_COMMAND_CENTER/FAC_NAVAL_YARD/FAC_BIOENHANCEMENT_CENTER
@@ -1050,6 +1676,180 @@ local function build_order_item_score(base_id, item_id)
         end
         score = score - 4 * (facility.cost + facility.maint)
         score = score - r.defend_range
+    end
+
+    -- select_build itself, facility-branch catalog (IMPLEMENTATION_
+    -- DETAILS.md 4.10.15): FAC_PERIMETER_DEFENSE/FAC_NAVAL_YARD's shared
+    -- -80 penalty, plus the MaxEnemyRange bonus shared by
+    -- FAC_PERIMETER_DEFENSE/FAC_TACHYON_FIELD/FAC_GEOSYNC_SURVEY_POD/
+    -- FAC_FLECHETTE_DEFENSE_SYS (build.cpp:1333-1345). No new engine
+    -- surface beyond queue_items[0]'s allow_units unblock above --
+    -- defend_goal/MaxEnemyRange/facility.maint/defend_range were all
+    -- already available.
+    if (item_id == E.FAC_PERIMETER_DEFENSE and r.sea_base)
+        or (item_id == E.FAC_NAVAL_YARD and not r.sea_base) then
+        score = score - 80
+    end
+    if item_id == E.FAC_PERIMETER_DEFENSE or item_id == E.FAC_TACHYON_FIELD
+        or item_id == E.FAC_GEOSYNC_SURVEY_POD or item_id == E.FAC_FLECHETTE_DEFENSE_SYS then
+        local facility = tech.facility(item_id)
+        score = score + 4 * (C.MaxEnemyRange - 4 * facility.maint - r.defend_range)
+    end
+    if item_id == E.FAC_TACHYON_FIELD or item_id == E.FAC_GEOSYNC_SURVEY_POD
+        or item_id == E.FAC_FLECHETTE_DEFENSE_SYS then
+        local base = base_api.get(base_id)
+        if allow_units and base.defend_goal < 3 and r.defend_range > idiv(C.MaxEnemyRange, 2) then
+            return -1
+        end
+        score = score + 16 * clamp(base.defend_goal - 3, -2, 2)
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.23): FAC_TREE_FARM/FAC_HYBRID_
+    -- FOREST's shared branch (build.cpp:1292-1301).
+    if item_id == E.FAC_TREE_FARM or item_id == E.FAC_HYBRID_FOREST then
+        local base = base_api.get(base_id)
+        local f = faction.get(base.faction_id)
+        local facility = tech.facility(item_id)
+        if base.eco_damage == 0 then
+            score = score - ((r.sea_base or r.wgov.AI_fight > 0) and 8 or 4) * facility.cost
+        end
+        score = score + ((r.wgov.AI_fight > 0 or r.wgov.AI_power > 1) and 2 or 4)
+            * min(40, base.eco_damage)
+        score = score + ((f.SE_alloc_psych > 0) and 8 * base.specialist_adjust or 0)
+        score = score + ((item_id == E.FAC_TREE_FARM and 16 or 4)
+            + 8 * b2n(base.nutrient_surplus < 2) - 8 * b2n(base.nutrient_surplus > 8))
+            * funcs.nearby_items(base.x, base.y, 1, 21, E.BIT_FOREST)
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.17): FAC_BIOLOGY_LAB's own branch
+    -- (build.cpp:1302-1306), plus the branch it shares with FAC_CENTAURI_
+    -- PRESERVE (build.cpp:1307-1310). Both must land together, not just
+    -- FAC_CENTAURI_PRESERVE alone -- FAC_BIOLOGY_LAB is gated by both
+    -- ifs, so implementing only the second would leave it silently
+    -- incomplete, the same split-block trap 4.10.16 hit with FAC_NAVAL_
+    -- YARD. r.wenergy is build.cpp:1044-1045's Wenergy local, already
+    -- computed by select_build_prologue for the energy gate above.
+    if item_id == E.FAC_BIOLOGY_LAB then
+        local base = base_api.get(base_id)
+        local f = faction.get(base.faction_id)
+        score = score + 2 * r.wenergy * funcs.biology_lab_bonus()
+        score = score - (f.SE_planet_pending <= 0 and 4 or 2) * base.energy_surplus
+        score = score - (base.energy_surplus <= base.energy_inefficiency and 40 or 0)
+    end
+    if item_id == E.FAC_BIOLOGY_LAB or item_id == E.FAC_CENTAURI_PRESERVE then
+        local base = base_api.get(base_id)
+        score = score + 8 * min(4, funcs.psi_score(base.faction_id))
+        score = score - 40 * (b2n(base.eco_damage == 0)
+            + b2n(r.wgov.AI_fight > 0) + b2n(r.wgov.AI_power > 1))
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.24): the FAC_GENEJACK_FACTORY
+    -- group's shared branch (build.cpp:1311-1321). GOV_MAY_FORCE_PSYCH's
+    -- FAC_GENEJACK_FACTORY half (4.10.21) becomes live now that this
+    -- facility has its own scoring branch too.
+    if item_id == E.FAC_GENEJACK_FACTORY or item_id == E.FAC_ROBOTIC_ASSEMBLY_PLANT
+        or item_id == E.FAC_NANOREPLICATOR or item_id == E.FAC_QUANTUM_CONVERTER then
+        local base = base_api.get(base_id)
+        local f = faction.get(base.faction_id)
+        local modifier = funcs.mineral_output_modifier(base_id)
+        if modifier > b2n(base.defend_goal > 2) + b2n(r.wgov.AI_wealth > 1) + b2n(r.wgov.AI_power > 1)
+            or idiv(base.mineral_intake * (modifier + 3), 2)
+                > funcs.clean_minerals() + f.clean_minerals_modifier then
+            score = score - 100
+        end
+        score = score + 2 * max(-80, (r.minerals >= r.project_limit and 80 or 60) - base.mineral_intake_2)
+        score = score + 8 * min(0, base.mineral_intake_2 - 16)
+        score = score - ((r.wgov.AI_fight > 0 or r.wgov.AI_power > 1) and 4 or 8) * base.eco_damage
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.18): the shared FAC_RECREATION_
+    -- COMMONS/FAC_HOLOGRAM_THEATRE/FAC_RESEARCH_HOSPITAL/FAC_PARADISE_
+    -- GARDEN branch (build.cpp:1261-1275). mod_psych_check is pure and
+    -- RNG-free (a diff_level table lookup + a fixed formula -- no
+    -- random() anywhere in it) and its inputs (faction_id, diff_level,
+    -- SE_effic_pending, MapAreaSqRoot) don't change within one
+    -- select_build call for a given base -- unlike allow_units (4.10.16),
+    -- re-deriving it fresh on every shadow-called item is safe: same
+    -- result every time, just redundant work C++'s own `!base_limit`
+    -- memoization (a local, not ported -- see 4.10.8's note on skipped
+    -- select_build locals) avoids.
+    if item_id == E.FAC_RECREATION_COMMONS or item_id == E.FAC_HOLOGRAM_THEATRE
+        or item_id == E.FAC_RESEARCH_HOSPITAL or item_id == E.FAC_PARADISE_GARDEN then
+        local base = base_api.get(base_id)
+        local f = faction.get(base.faction_id)
+        local psych = faction.psych_check(base.faction_id)
+        if base.drone_total == 0 and base.specialist_total == 0
+            and (base.talent_total > 0
+                or (base.pop_size <= psych.content_pop and f.base_count <= 2 * psych.base_limit)) then
+            return -1
+        end
+        local facility = tech.facility(item_id)
+        if facility.cost + 2 * facility.maint < 10 then
+            score = score + ((base.specialist_adjust > 0 and base.pop_size > 3) and 40 or 0)
+        end
+        score = score + 80 * b2n(r.drone_riots) + max(16, 16 * (5 - facility.maint)) * r.drones
+        score = score + 8 * clamp(r.drones - base.talent_total, -4, 4)
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.25): FAC_NETWORK_NODE's own branch
+    -- (build.cpp:1276-1291). r.artifacts is count_vehicles' own local
+    -- (step 1, 4.10.10), threaded through select_build_prologue's return
+    -- table for the first time here.
+    if item_id == E.FAC_NETWORK_NODE then
+        local base = base_api.get(base_id)
+        local f = faction.get(base.faction_id)
+        if faction.has_project(E.FAC_VIRTUAL_WORLD, base.faction_id) then
+            if base_can_riot(base_id, false) then
+                score = score + 80 * b2n(r.drone_riots) + 16 * r.drones
+            end
+        elseif r.artifacts == 0 and (base.energy_surplus < 4
+            or bit.band(game.rules(), E.RULES_SCN_NO_TECH_ADVANCES) ~= 0) then
+            return -1
+        end
+        if facility_count(E.FAC_NETWORK_NODE, base.faction_id) < idiv(f.base_count, 8) then
+            score = score + 40
+        end
+        if r.artifacts ~= 0 then
+            score = score + 40
+        end
+    end
+
+    -- select_build itself, facility-branch catalog continued
+    -- (IMPLEMENTATION_DETAILS.md 4.10.19): FAC_PSI_GATE's own branch
+    -- (build.cpp:1346-1358), the last special-cased facility branch.
+    -- map_range(BASE*, BASE*) (map.h:33-36) is a template that just
+    -- forwards to map_range(a->x, a->y, b->x, b->y) -- confirmed by
+    -- reading it, not assumed -- so the existing funcs.map_range(x1, y1,
+    -- x2, y2) wrapper (4.8) is already the right call, no new wrapper
+    -- needed. main_region/target_land_region are re-read here via the
+    -- same funcs.* calls select_build_prologue itself uses for Wbase,
+    -- rather than added to its return table, since no other branch needs
+    -- them yet -- both are pure AIPlans reads, safe to call twice.
+    if item_id == E.FAC_PSI_GATE then
+        local base = base_api.get(base_id)
+        local dist = 40
+        for i = 0, base_api.count() - 1 do
+            if i ~= base_id then
+                local b = base_api.get(i)
+                if b.faction_id == base.faction_id
+                    and (funcs.has_fac_built(E.FAC_PSI_GATE, i) ~= 0
+                        or base_api.item(b) == -E.FAC_PSI_GATE) then
+                    local mult = (r.base_reg == funcs.region_at(b.x, b.y)) and 1 or 2
+                    dist = min(dist, mult * funcs.map_range(base.x, base.y, b.x, b.y))
+                end
+            end
+        end
+        local main_region = funcs.main_region(base.faction_id)
+        local target_land_region = funcs.target_land_region(base.faction_id)
+        score = score + (r.sea_base and 2 or 8) * max(0, dist - 4)
+            * ((main_region ~= target_land_region and r.base_reg == target_land_region) and 4 or 1)
+        score = score + ((base.x == funcs.naval_start_x(base.faction_id)
+            and base.y == funcs.naval_start_y(base.faction_id)) and 160 or 0)
     end
 
     return score
@@ -1083,5 +1883,21 @@ port.push_item_check = push_item_check
 port.defend_unit_land_defense = defend_unit_land_defense
 port.defend_unit_explore_veh = defend_unit_explore_veh
 port.combat_unit_early_return = combat_unit_early_return
+port.colony_unit_branch = colony_unit_branch
+port.crawler_unit_branch = crawler_unit_branch
+port.ferry_unit_branch = ferry_unit_branch
+port.sea_probe_unit_branch = sea_probe_unit_branch
+port.prod_count = prod_count
+port.satellite_count = satellite_count
+port.satellite_goal_calc = satellite_goal_calc
+port.find_satellite = find_satellite
+port.satellites_branch = satellites_branch
+port.find_missile = find_missile
+port.faction_might = faction_might
+port.has_pact = has_pact
+port.redundant_project = redundant_project
+port.find_project = find_project
+port.secret_project_branch = secret_project_branch
+port.former_unit_branch = former_unit_branch
 port.build_order_item_score = build_order_item_score
 return port

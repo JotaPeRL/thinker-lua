@@ -50,4 +50,15 @@ return {
     -- build_order loop's per-item base score. Real shadow hook (consumes
     -- RNG via random(32)), same reasoning as sub-step 2.
     build_order_item_score = build.build_order_item_score,
+    -- select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
+    -- 4.10.27): ColonyUnit/CrawlerUnit/FerryUnit/SeaProbeUnit. All consume
+    -- RNG (find_proto/select_colony's own internal draws), same
+    -- shadow_call/check treatment as the branches above.
+    colony_unit_branch = build.colony_unit_branch,
+    crawler_unit_branch = build.crawler_unit_branch,
+    ferry_unit_branch = build.ferry_unit_branch,
+    sea_probe_unit_branch = build.sea_probe_unit_branch,
+    satellites_branch = build.satellites_branch,
+    secret_project_branch = build.secret_project_branch,
+    former_unit_branch = build.former_unit_branch,
 }

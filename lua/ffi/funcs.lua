@@ -89,10 +89,27 @@ typedef struct {
     int32_t (*adjacent_region)(int32_t x, int32_t y, int32_t owner, int32_t threshold, int32_t ocean);
     int32_t (*can_build)(int32_t base_id, int32_t item_id);
     int32_t (*energy_limit)(int32_t faction_id);
+    int32_t (*biology_lab_bonus)();
+    void (*mod_psych_check)(int32_t faction_id, int32_t* content_pop, int32_t* base_limit);
+    int32_t (*naval_start_x)(int32_t faction_id);
+    int32_t (*naval_start_y)(int32_t faction_id);
+    int32_t (*base_unused_space)(int32_t base_id);
+    int32_t (*nearby_items)(int32_t x, int32_t y, int32_t start_index, int32_t end_index, uint32_t item);
+    int32_t (*mineral_output_modifier)(int32_t base_id);
+    int32_t (*clean_minerals)();
+    int32_t (*unknown_factions)(int32_t faction_id);
+    int32_t (*has_facility)(int32_t item_id, int32_t base_id);
+    int32_t (*is_alive)(int32_t faction_id);
+    int32_t (*enemy_odp)(int32_t faction_id);
+    int32_t (*enemy_sat)(int32_t faction_id);
+    int32_t (*satellite_goal_setting)(int32_t faction_id);
+    int32_t (*max_satellites)();
+    int32_t (*mil_strength)(int32_t faction_id);
+    void (*former_tile_tally)(int32_t base_id, int32_t* num, int32_t* sea);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 13
+local HOST_API_VERSION = 22
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -180,4 +197,27 @@ return {
     end,
     can_build = function(base_id, item_id) return api.can_build(base_id, item_id) ~= 0 end,
     energy_limit = function(faction_id) return api.energy_limit(faction_id) end,
+    biology_lab_bonus = function() return api.biology_lab_bonus() end,
+    mod_psych_check = function(faction_id, content_pop, base_limit)
+        return api.mod_psych_check(faction_id, content_pop, base_limit)
+    end,
+    naval_start_x = function(faction_id) return api.naval_start_x(faction_id) end,
+    naval_start_y = function(faction_id) return api.naval_start_y(faction_id) end,
+    base_unused_space = function(base_id) return api.base_unused_space(base_id) end,
+    nearby_items = function(x, y, start_index, end_index, item)
+        return api.nearby_items(x, y, start_index, end_index, item)
+    end,
+    mineral_output_modifier = function(base_id) return api.mineral_output_modifier(base_id) end,
+    clean_minerals = function() return api.clean_minerals() end,
+    unknown_factions = function(faction_id) return api.unknown_factions(faction_id) end,
+    has_facility = function(item_id, base_id) return api.has_facility(item_id, base_id) end,
+    is_alive = function(faction_id) return api.is_alive(faction_id) end,
+    enemy_odp = function(faction_id) return api.enemy_odp(faction_id) end,
+    enemy_sat = function(faction_id) return api.enemy_sat(faction_id) end,
+    satellite_goal_setting = function(faction_id) return api.satellite_goal_setting(faction_id) end,
+    max_satellites = function() return api.max_satellites() end,
+    mil_strength = function(faction_id) return api.mil_strength(faction_id) end,
+    former_tile_tally = function(base_id, num, sea)
+        return api.former_tile_tally(base_id, num, sea)
+    end,
 }

@@ -1060,25 +1060,31 @@ int select_build(int base_id) {
         // call every iteration regardless of whether the check later
         // fires (3.2's lesson: the snapshot must sit before the real
         // draw it's meant to align with, not after).
-        LuaShadowCall shadow_item_score = lua_ai_shadow_call("build_order_item_score", 1, {base_id, t});
+        LuaShadowCall shadow_item_score = lua_ai_shadow_call("build_order_item_score", 1, {base_id, t, allow_units});
         int choice = 0;
         int score = random(32)
             + 4*(Wgov.AI_growth * item.explore + Wgov.AI_tech * item.discover
             + Wgov.AI_wealth * item.build + Wgov.AI_power * item.conquer);
 
         if (t == Satellites && gov & GOV_MAY_PROD_FACILITIES && minerals >= p->median_limit) {
+            LuaShadowCall shadow8 = lua_ai_shadow_call("satellites_branch", 2, {base_id, score});
             if ((choice = find_satellite(base_id)) != GOV_NONE) {
                 score += random(8*clamp(f->base_count - 5, 0, 50));
+                int cpp_out8[2] = {choice, score};
+                lua_ai_shadow_check("satellites_branch", shadow8, cpp_out8, 2);
                 push_item(builds, base_id, choice, retool, score, --Wt);
                 continue;
             }
         }
         if (t == SecretProject && gov & GOV_MAY_PROD_SP && minerals >= p->project_limit) {
+            LuaShadowCall shadow9 = lua_ai_shadow_call("secret_project_branch", 2, {base_id, score});
             if ((choice = find_project(base_id, Wgov)) != GOV_NONE) {
                 if (choice >= 0 || choice == -FAC_SKUNKWORKS) {
                     score += 40*p->defense_modifier;
                 }
                 score += 4*clamp(f->base_count - 5, 0, 50);
+                int cpp_out9[2] = {choice, score};
+                lua_ai_shadow_check("secret_project_branch", shadow9, cpp_out9, 2);
                 push_item(builds, base_id, choice, retool, score, --Wt);
                 continue;
             }
@@ -1144,6 +1150,14 @@ int select_build(int base_id) {
             }
         }
         if (t == FormerUnit && gov & GOV_MAY_PROD_TERRAFORMERS) {
+            // select_build itself, unit-branch catalog continued
+            // (IMPLEMENTATION_DETAILS.md 4.10.29): one shadow_call covers
+            // this whole branch (Lua computes both potential find_proto
+            // attempts internally and returns whichever succeeds, or
+            // {-1, 0}); shadow_check fires at whichever of the two
+            // push_item sites C++ actually reaches, same shared shadow
+            // object either way.
+            LuaShadowCall shadow10 = lua_ai_shadow_call("former_unit_branch", 2, {base_id, score});
             bool priority = base->pop_size >= 6 && minerals >= 8
                 && f->player_flags_ext & PFLAG_EXT_STRAT_LOTS_TERRAFORMERS;
             if (has_wmode(faction_id, WMODE_TERRAFORM)
@@ -1164,46 +1178,67 @@ int select_build(int base_id) {
                 score += 8 * (num - 4) + (formers || near_formers || defend_range < 8 ? 0 : 4 * num);
                 if ((sea*2 >= num || sea_base)
                 && (choice = find_proto(base_id, TRFLAG_SEA|TRFLAG_AIR, WMODE_TERRAFORM, DEF)) >= 0) {
+                    int cpp_out10[2] = {choice, score};
+                    lua_ai_shadow_check("former_unit_branch", shadow10, cpp_out10, 2);
                     push_item(builds, base_id, choice, retool, score, --Wt);
                     continue;
                 }
                 if (!sea_base
                 && (choice = find_proto(base_id, TRFLAG_LAND|TRFLAG_AIR, WMODE_TERRAFORM, DEF)) >= 0) {
+                    int cpp_out10[2] = {choice, score};
+                    lua_ai_shadow_check("former_unit_branch", shadow10, cpp_out10, 2);
                     push_item(builds, base_id, choice, retool, score, --Wt);
                     continue;
                 }
             }
         }
         if (t == SeaProbeUnit && gov & GOV_MAY_PROD_PROBES) {
+            // select_build itself, unit-branch catalog (IMPLEMENTATION_
+            // DETAILS.md 4.10.27): score is already-computed base value
+            // for this iteration (random(32) + Wgov contributions above)
+            // -- passed in, not re-derived, so Lua doesn't double-draw
+            // rand.map(0,32) for no reason.
+            LuaShadowCall shadow4 = lua_ai_shadow_call("sea_probe_unit_branch", 2, {base_id, score});
             if (allow_ships && has_wmode(faction_id, WMODE_PROBE)
             && p->unknown_factions > 1 && p->contacted_factions < 2
             && adjacent_region(base->x, base->y, -1, *MapAreaTiles/16, TRIAD_SEA)
             && (choice = find_proto(base_id, TRFLAG_SEA, WMODE_PROBE, DEF)) >= 0) {
                 score += 32*(p->unknown_factions - seaprobes) - 2*p->probe_units;
+                int cpp_out4[2] = {choice, score};
+                lua_ai_shadow_check("sea_probe_unit_branch", shadow4, cpp_out4, 2);
                 push_item(builds, base_id, choice, retool, score, --Wt);
                 continue;
             }
         }
         if (t == CrawlerUnit && allow_supply && has_wmode(faction_id, WMODE_SUPPLY)) {
+            LuaShadowCall shadow5 = lua_ai_shadow_call("crawler_unit_branch", 2, {base_id, score});
             if ((choice = find_proto(base_id, TRFLAG_LAND, WMODE_SUPPLY, DEF)) >= 0) {
                 score += max(0, 40 - base->mineral_surplus - base->nutrient_surplus);
                 score += 40*(all_crawlers < 4 + f->base_count/4);
+                int cpp_out5[2] = {choice, score};
+                lua_ai_shadow_check("crawler_unit_branch", shadow5, cpp_out5, 2);
                 push_item(builds, base_id, choice, retool, score, --Wt);
                 continue;
             }
         }
         if (t == FerryUnit && gov & GOV_MAY_PROD_TRANSPORT && need_ferry) {
+            LuaShadowCall shadow6 = lua_ai_shadow_call("ferry_unit_branch", 2, {base_id, score});
             if ((choice = find_proto(base_id, TRFLAG_SEA, WMODE_TRANSPORT, DEF)) >= 0) {
                 score += (p->target_land_region > 0 || p->transport_units < 4 ? 40 : 0);
+                int cpp_out6[2] = {choice, score};
+                lua_ai_shadow_check("ferry_unit_branch", shadow6, cpp_out6, 2);
                 push_item(builds, base_id, choice, retool, score, --Wt);
                 continue;
             }
         }
         if (t == ColonyUnit && allow_pods && pods < 2 && gov & GOV_MAY_PROD_COLONY_POD) {
+            LuaShadowCall shadow7 = lua_ai_shadow_call("colony_unit_branch", 2, {base_id, score});
             if ((choice = select_colony(base_id, pods, allow_ships)) >= 0) {
                 score += clamp(*MapAreaSqRoot*2 - f->base_count, 0, 80);
                 score += clamp(f->SE_effic_pending + 4, 0, 4)
                     * (pods ? 1 : 2) * (max(0, 16 - f->base_count));
+                int cpp_out7[2] = {choice, score};
+                lua_ai_shadow_check("colony_unit_branch", shadow7, cpp_out7, 2);
                 push_item(builds, base_id, choice, retool, score, --Wt);
                 continue;
             }
