@@ -86,6 +86,17 @@ local function at_target(veh)
         or (veh.x == veh.waypoint_x[0] and veh.y == veh.waypoint_y[0] and veh.waypoint_count == 0)
 end
 
+-- Movement port, route_score sub-stage B (IMPLEMENTATION_DETAILS.md
+-- 4.12): search_route's own dependencies. engine_veh.h:652-654/608-610 --
+-- pure delegation to already-exposed fields, no host wrapper needed.
+local function in_transit(veh)
+    return veh.order == types.enums.ORDER_SENTRY_BOARD and veh.waypoint_x[0] >= 0
+end
+
+local function is_native_unit(veh)
+    return veh.unit_id < types.counts.MaxProtoFactionNum and tech.proto_offense_value(veh.unit_id) < 0
+end
+
 return {
     count = count,
     get = get,
@@ -101,4 +112,6 @@ return {
     is_garrison_unit = is_garrison_unit,
     eval_garrison = eval_garrison,
     at_target = at_target,
+    in_transit = in_transit,
+    is_native_unit = is_native_unit,
 }

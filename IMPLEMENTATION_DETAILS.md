@@ -2112,9 +2112,172 @@ path-node parent chain (`ts.get_prev()`/`node.prev`) — deeper coupling
 to `TileSearch` internals than `crawler_move`'s simple per-tile scan, so
 the start/next iterator pattern doesn't drop in as-is. Comparable in
 size to `nuclear_move`/`find_project`, not a quick formula swap.
-Deferred to its own stage (placement TBD — likely alongside or after
-`nuclear_move`, given similar weight) rather than rushed; `escape_score`/
-`base_tile_score` are more contained and come first.
+Deferred to its own stage rather than rushed; `escape_score`/
+`base_tile_score` are more contained and came first (stage 3).
+**Resolved before stage 4 (`former_move`), per explicit user direction
+(2026-07-22): work is split into sub-stage A (done, this entry) and
+sub-stage B (TileSearch scans + full reassembly + hook wiring, not yet
+started).**
+
+**Sub-stage A: `route_score` itself + both plain `Bases[]` scans it
+feeds. ✅ done, build-verified; not yet live-verified (nothing calls
+these functions yet — see sub-stage B).** `route_score` (`path.cpp:
+659-673`) ported in full to `lua/ai/move.lua` — the real scoring formula
+(continent size, home-region bonus, distance penalty, artifact-linking
+bonus, pod-density bonus) that was sitting opaque inside the C++-only
+`search_route`/`path.search_route` wrapper, the same defect class
+`want_convoy`/`base_tile_score` already had fixed. Two more Lua
+functions consume it, mirroring `path.cpp:743-756` and `794-816`
+exactly: `route_best_home_base` (a plain `Bases[]` scan for the best
+home-base candidate plus whether the vehicle stands on a Psi-Gate-
+connected base) and `route_gate_teleport` (the target-base scan among
+gate-connected bases, then the teleport action itself). Neither of
+these two is a standalone named C++ function, so neither gets its own
+`port.source` provenance entry — both are fragments of `search_route`'s
+own body, folded under `search_route`'s provenance once sub-stage B
+assembles and wires in the whole function. New engine surface: one
+missing `Continent` field (`pods`; `tile_count` was already exposed),
+one enum (`NODE_NAVAL_START = 7`, hand-transcribed same as the other
+`NODE_*` values — `path.h` pulls in `windows.h` transitively), and three
+new `LuaHostApi` entries (`api_version` bumped 29→30): `tile_is_ocean`
+(coordinate overload, pure read — distinct from the existing
+BASE-overload `is_ocean` wrapper of the same C++ name), `can_use_teleport`
+(pure read, Psi Gate charge-availability gate), and `net_action_gate`
+(the first mutating wrapper this sub-stage needs, the teleport action).
+`main_region`, `region_at`, `map_range`, `has_fac_built`, `map_target`,
+`can_link_artifact`, `base_at` and the `Bases[]`/`base_api` iteration
+idiom were all already exposed from earlier stages — no other new
+surface needed. Both presets build clean; the generated `types.lua`
+carries the new field/enum and loads clean under native `luajit`
+(`loadfile`, not just `-bl`); every touched Lua file passes a native-
+`luajit` bytecode compile.
+
+**Sub-stage B: the three `TileSearch`-driven scans, full reassembly and
+hook wiring. ✅ done, build-verified; live verification pending (next
+action for `former_move` to unblock).**
+
+The three scans (sea-triad branch, general territory-pact branch, the
+naval-pickup-point search) are new `LuaHostApi` iterator pairs
+(`api_version` bumped 30→31), following the same "mechanical facts stay
+host-side, real judgment crosses to Lua" split as every earlier stage:
+
+- `route_search_sea_start`/`_next` (`path.cpp:707-732`): the
+  `TS_SEA_AND_SHORE` scan for the vehicle's own transport-route bases.
+  The is_base+owner / `safe_path` (when `dist<8`) / map-range-to-
+  `naval_end` filters are mechanical facts with no scoring, folded
+  host-side exactly like `search_escape_next`/`search_base_next` already
+  do (equivalent to computing `route_score` and discarding, since none
+  of these filters have side effects) — `route_score` itself, the
+  invade-adjustment, best-tracking and the `dist>=25` break stay in Lua.
+- `route_search_pact_start`/`_next` (`path.cpp:757-793`): the general
+  `TS_TERRITORY_PACT` scan. Unlike the sea scan, **two genuinely
+  different candidate kinds can apply to the same tile** — a
+  naval-pick early-exit-with-RNG special case, and a scoreable base
+  candidate — and the original's own fallthrough (when the naval-pick
+  RNG check doesn't force a return) re-checks the *same* tile for the
+  base case. Rather than collapsing this into one mutually-exclusive
+  "kind" (which would silently drop the fallthrough), the wrapper
+  reports both facts (`naval_pick`, `is_base_safe`) together per tile;
+  Lua checks both independently, same control flow as the original.
+  `combat`/`scout` are passed in from Lua (already computed once for the
+  outer function) rather than recomputed host-side, so there's one
+  source of truth.
+- `route_search_naval_seed` (`path.cpp:817-835`): the seed-building
+  scan — a "does the search reach my own position" mechanic (first-match
+  wins, no scoring) that also collects ocean tiles into the point list
+  the next scan seeds from. Kept as one opaque wrapper (same tier as
+  `has_base_sites`/`colony_transport_check`), including its own early
+  "already close enough by land, go straight there" return
+  (`redirect=1`, `tx/ty` = the caller's own `px/py`, matching the
+  original's `*tx=px;*ty=py` exactly, not the search position).
+- `route_search_naval_pickup_start`/`_next` (`path.cpp:838-860`): the
+  real scoring scan, walking the search tree's parent chain
+  (`ts.get_prev()`) — the one place in this sub-stage `TileSearch`-
+  internal state has no Lua-side substitute. Bare walk plus the one fact
+  Lua can't get any other way (`prev_x`/`prev_y`); every other input to
+  the scoring formula (`tile_region`, `tile_is_base`, `allow_civ_move`,
+  `has_map_node`, `map.safety`, `map_range`) was already exposed as an
+  atomic tile fact from earlier stages.
+
+New engine surface beyond the iterators themselves: `main_region_x`/
+`main_region_y` (TRIAD_AIR branch) and `naval_end_x`/`naval_end_y`
+(TRIAD_SEA branch's score adjustment), same `AIPlans`-accessor tier as
+`main_region`/`naval_start_x`; `tile_is_fungus` (a `MAP` method, not a
+bare `items&` check — it also gates on `alt_level()`, same tier as
+`tile_is_rocky`); `cargo_capacity` (aggregates `veh_cargo`/
+`veh_cargo_loaded`, genuine chassis/cargo engine formulas, not AI
+policy, kept opaque like `mineral_output_modifier`); `add_goal` (generic
+AI goal creation, needed here for `AI_GOAL_NAVAL_PICK`, ahead of
+`goal.cpp`'s own movement stage 7 — reused there later); enums
+`NODE_NAVAL_PICK` (hand-transcribed, same reason as `NODE_NAVAL_START`)
+and `AI_GOAL_NAVAL_PICK` (compiler-read from `engine_enums.h`, already
+included). `veh.in_transit()`/`veh.is_native_unit()` ported directly to
+Lua (`lua/api/veh.lua`, pure delegation to already-exposed fields —
+`is_native_unit` also needed `MaxProtoFactionNum`, already in
+`types.counts`), no host wrapper needed for either.
+
+**A real fidelity bug found while assembling the full function, fixed
+before it ever ran:** `path.cpp:760` — `route_score(veh, veh->x, veh->y,
+1, sq)`, the artifact-at-home-base baseline before the territory-pact
+scan — passes `x,y = veh->x,veh->y` but a **stale** `sq` left over from
+the `Bases[]` scan just above it (whichever base that loop last
+matched, in array-index order, not `mapsq(veh->x, veh->y)`). This is a
+genuine inconsistency in the original, not a formatting quirk: `sq` is
+only ever reassigned inside that loop, so by the time it's reused here
+it refers to some other base's tile, not the vehicle's own — the sub-
+stage A `route_score`'s first draft always recomputed `region`/`sea`
+fresh from its `x,y` args, so it did not reproduce this. Fixed by giving
+`route_score` an optional `sq_x, sq_y` override (defaulting to `x, y`
+when omitted, so every other call site is unaffected) and having
+`route_best_home_base` additionally return the last faction-owned base
+its own scan matched (`last_x`/`last_y`) for `search_route`'s assembly
+to pass through at this one call site. Per this project's 1:1-before-
+improvement rule, the bug is replicated, not fixed.
+
+**Wiring:** `artifact_move` and `colony_move` (`lua/ai/move.lua`) now
+call the new `search_route(veh_id)` (returns `tx, ty` or `nil`) instead
+of the opaque `path.search_route(veh_id, x, y)`; the now-unused `local
+path = dofile("lua/api/path.lua")` was removed from `move.lua` (the
+underlying `lua/api/path.lua` module, its host wrapper, and the
+original C++ `search_route`/`route_score` are all left in place,
+unused, until this port is live-verified — same caution as every prior
+stage's retirement of its own opaque predecessor). `search_route` is
+defined late in the file (next to `route_score`/`route_best_home_base`/
+`route_gate_teleport`, its own dependencies) but `artifact_move` is
+defined near the top and calls it — bridged with a forward-declared
+`local search_route` upvalue at file scope, assigned later without the
+`local` keyword, rather than reordering the whole file.
+
+Both presets build clean; the generated `types.lua` carries the new
+field/enum/globals and loads clean under native `luajit` (`loadfile`,
+not just `-bl`); every file under `lua/` passes a native-`luajit`
+bytecode compile, not just the touched ones.
+
+**Live-verified (2026-07-22).** First attempt found a real gap in this
+port's own instrumentation, not the port itself: the ordinary success
+path (`same_reg`) had no `log.debug` call at all, unlike every other
+exit point (`route_load`/`route_skip`/`route_redirect`/`route_gate`/
+`route_pickup_load`/`route_pickup_wait`) — so a clean run with zero of
+those six lines firing would have been indistinguishable from
+"never reached." Fixed by adding a `route_move` line to that branch
+before re-running, per the same "absence of a line is not evidence"
+discipline this file's Phase 5 intro already states. Second run, ~80
+turns: **885 real `search_route` decision lines** (883 `route_move`, 2
+`route_pickup_wait`), 0 errors, 0 mismatches, `lua.log`'s 885 exactly
+matching `debug.txt`'s `lua: route_*` count — every one Lua-handled, no
+stray C++-side duplicate (same cross-check as stage 3's `colony_move`
+verification). Notably, `route_pickup_wait` fired **twice at the same
+coordinates on consecutive turns** — the deepest, riskiest new
+primitive in this sub-stage (the `TileSearch` parent-chain walk via
+`get_prev()`) exercised for real, and the repeated identical coordinate
+is the original's own intended "wait for the ferry to arrive" behavior,
+not a stuck loop. `route_load`/`route_skip`/`route_redirect`/
+`route_gate` did not fire this run — not concerning, same "revisit
+opportunistically, not a blocker" precedent as every prior stage's
+unexercised branches (`artifact_move`'s `artifact_link`, `colony_move`'s
+`colony_drop`, etc.). **The `route_score`/`search_route` pending item is
+now fully closed** — sub-stages A and B both done, build-verified and
+live-verified. `former_move` (movement stage 4) can now start.
 
 - **Stage 3 — `colony_move`, plus a real port of `base_tile_score`
   and `escape_score`/`search_escape`/`search_base` (both consumed by

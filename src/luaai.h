@@ -404,6 +404,87 @@ struct LuaHostApi {
     void (*colony_transport_check)(int32_t veh_id, int32_t* has_transport,
         int32_t* tx, int32_t* ty);
     int32_t (*tile_is_visible)(int32_t x, int32_t y, int32_t faction_id);
+    // Movement port, route_score sub-stage (IMPLEMENTATION_DETAILS.md
+    // 4.12): resolving the "route_score baked into an opaque search_route
+    // wrapper" defect flagged when colony_move was audited. route_score
+    // itself and both plain Bases[] scans that consume it move to Lua
+    // (lua/ai/move.lua) this sub-stage; the three TileSearch-driven scans
+    // (sea-triad branch, general territory-pact branch, naval-pickup-point
+    // search) are deferred to a following sub-stage. tile_is_ocean mirrors
+    // the tile_is_base/tile_owner tier (MAP* can't cross the FFI boundary,
+    // this is the coordinate overload of is_ocean, distinct from the
+    // existing BASE-overload wrapper of the same C++ name); can_use_teleport
+    // is a boolean gate (Psi Gate charge availability), same tier as
+    // has_fac_built; net_action_gate is the actual teleport action.
+    int32_t (*tile_is_ocean)(int32_t x, int32_t y);
+    int32_t (*can_use_teleport)(int32_t base_id);
+    int32_t (*net_action_gate)(int32_t veh_id, int32_t base_id);
+    // Movement port, route_score sub-stage B (IMPLEMENTATION_DETAILS.md
+    // 4.12): the three TileSearch-driven scans deferred from sub-stage A,
+    // assembling the full search_route replacement. main_region_x/y (the
+    // TRIAD_AIR branch) and naval_end_x/y (the TRIAD_SEA branch's score
+    // adjustment) are AIPlans accessors, same tier as main_region/
+    // naval_start_x. tile_is_fungus is a MAP method (not a bare items&
+    // check -- it also gates on alt_level()), same tier as tile_is_rocky.
+    // cargo_capacity aggregates veh_cargo/veh_cargo_loaded (genuine
+    // chassis/cargo engine formulas, not AI policy), kept opaque like
+    // mineral_output_modifier.
+    int32_t (*main_region_x)(int32_t faction_id);
+    int32_t (*main_region_y)(int32_t faction_id);
+    int32_t (*naval_end_x)(int32_t faction_id);
+    int32_t (*naval_end_y)(int32_t faction_id);
+    int32_t (*tile_is_fungus)(int32_t x, int32_t y);
+    int32_t (*cargo_capacity)(int32_t x, int32_t y, int32_t faction_id);
+    // route_search_sea_*: TRIAD_SEA branch's own-base scan (path.cpp:
+    // 707-732). The original's is_base+owner / safe_path(dist<8) /
+    // map_range-to-naval_end filters are mechanical facts with no scoring
+    // (equivalent to computing route_score and discarding, since none
+    // have side effects) -- folded host-side exactly like
+    // search_escape_next/search_base_next already do. route_score itself
+    // and the invade-adjustment/best-tracking/dist>=25 break stay in Lua.
+    void (*route_search_sea_start)(int32_t veh_id);
+    void (*route_search_sea_next)(int32_t faction_id,
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
+    // route_search_pact_*: the general territory-pact scan (path.cpp:
+    // 757-793). Unlike the sea scan, this one has two genuinely different
+    // candidate kinds per tile (a naval-pick early-exit-with-RNG special
+    // case, and a scoreable base candidate) that can BOTH apply to the
+    // same tile (the original's own fallthrough when the naval-pick
+    // RNG check doesn't fire) -- so both facts are reported every time a
+    // tile matches either, rather than collapsing to one mutually-
+    // exclusive "kind". naval_pick/is_base_safe are 0/1; combat/scout are
+    // passed in (Lua already computed them for the outer function) rather
+    // than recomputed host-side, so there is one source of truth.
+    void (*route_search_pact_start)(int32_t veh_id);
+    void (*route_search_pact_next)(int32_t faction_id, int32_t combat, int32_t scout,
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* naval_pick, int32_t* is_base_safe);
+    // route_search_naval_seed: the naval-pickup-point search's own seed-
+    // building scan (path.cpp:817-835) -- a "does the search reach my own
+    // position" mechanic (first-match wins, no scoring) that also
+    // collects ocean tiles into the point list the next scan seeds from.
+    // Kept as one opaque wrapper, same tier as has_base_sites/
+    // colony_transport_check. redirect=1 means the original's own early
+    // "already close enough by land, go straight there" return fired;
+    // tx/ty are px/py themselves in that case (not the search position),
+    // matching the original's own *tx=px;*ty=py.
+    void (*route_search_naval_seed)(int32_t veh_id, int32_t px, int32_t py,
+        int32_t* redirect, int32_t* tx, int32_t* ty);
+    // route_search_naval_pickup_*: the real scoring scan (path.cpp:
+    // 838-860) that walks the search tree's parent chain -- the one place
+    // in this sub-stage TileSearch-internal state (get_prev()) has no
+    // Lua-side substitute. Bare walk plus the one fact Lua can't get any
+    // other way (prev_x/prev_y); every other input to the scoring formula
+    // is already exposed as an atomic tile fact.
+    void (*route_search_naval_pickup_start)();
+    void (*route_search_naval_pickup_next)(
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* prev_x, int32_t* prev_y);
+    // add_goal: generic AI goal creation (src/goal.cpp), needed here for
+    // the naval-pickup branch's AI_GOAL_NAVAL_PICK -- ahead of goal.cpp's
+    // own stage (Movement stage 7), reused there later. Mutating.
+    void (*add_goal)(int32_t faction_id, int32_t type, int32_t priority,
+        int32_t x, int32_t y, int32_t base_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

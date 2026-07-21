@@ -248,6 +248,9 @@ int main() {
 
     emit_struct(stdout, {"Continent", sizeof(Continent), alignof(Continent), {
         FIELD(Continent, tile_count),
+        // Movement port, route_score sub-stage (IMPLEMENTATION_DETAILS.md
+        // 4.12): route_score's own pod-density bonus term.
+        FIELD(Continent, pods),
     }});
 
     emit_struct(stdout, {"MFaction", sizeof(MFaction), alignof(MFaction), {
@@ -850,6 +853,16 @@ int main() {
     printf("    NODE_NEED_FERRY = %d,\n", 3);
     printf("    NODE_BASE_SITE = %d,\n", 4);
     printf("    NODE_PATROL = %d,\n", 12);
+    // Movement port, route_score sub-stage (IMPLEMENTATION_DETAILS.md
+    // 4.12): route_score's artifact-linking special case (path.h:71).
+    printf("    NODE_NAVAL_START = %d,\n", 7);
+    // Movement port, route_score sub-stage B (IMPLEMENTATION_DETAILS.md
+    // 4.12): the naval-pickup-point search's own marker (path.h:74).
+    printf("    NODE_NAVAL_PICK = %d,\n", 10);
+    // Movement port, route_score sub-stage B (IMPLEMENTATION_DETAILS.md
+    // 4.12): add_goal's own goal-type constant (engine_enums.h, already
+    // included above) -- compiler-read, not hand-typed.
+    printf("    AI_GOAL_NAVAL_PICK = %d,\n", AI_GOAL_NAVAL_PICK);
     // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
     // escape_score/base_tile_score/colony_move's own item/landmark/
     // altitude/order constants. All come straight from engine_enums.h/

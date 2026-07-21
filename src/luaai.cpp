@@ -1063,11 +1063,213 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
     return false;
 }
 
+// Movement port, route_score sub-stage (IMPLEMENTATION_DETAILS.md 4.12):
+// route_score's own dependencies. tile_is_ocean mirrors the tile_is_base/
+// tile_owner tier (MAP* can't cross the FFI boundary); can_use_teleport is
+// a boolean gate (Psi Gate charge availability), same tier as
+// has_fac_built. net_action_gate is the actual teleport action -- the
+// first mutating wrapper this sub-stage needs.
+static int32_t host_tile_is_ocean(int32_t x, int32_t y) {
+    return is_ocean(x, y);
+}
+
+static int32_t host_can_use_teleport(int32_t base_id) {
+    return can_use_teleport(base_id);
+}
+
+static int32_t host_net_action_gate(int32_t veh_id, int32_t base_id) {
+    g_mutation_issued = true;
+    return net_action_gate(veh_id, base_id);
+}
+
+// Movement port, route_score sub-stage B (IMPLEMENTATION_DETAILS.md 4.12):
+// search_route's own AIPlans fields, not yet exposed. Same accessor tier
+// as main_region/naval_start_x.
+static int32_t host_main_region_x(int32_t faction_id) {
+    return plans[faction_id].main_region_x;
+}
+
+static int32_t host_main_region_y(int32_t faction_id) {
+    return plans[faction_id].main_region_y;
+}
+
+static int32_t host_naval_end_x(int32_t faction_id) {
+    return plans[faction_id].naval_end_x;
+}
+
+static int32_t host_naval_end_y(int32_t faction_id) {
+    return plans[faction_id].naval_end_y;
+}
+
+// MAP::is_fungus() (engine_types.h:77-79): items&BIT_FUNGUS plus an
+// alt_level() gate, needed by the naval-pickup-point scoring formula
+// below -- same single-field tier as tile_is_rocky.
+static int32_t host_tile_is_fungus(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_fungus();
+}
+
+// cargo_capacity (path.cpp:515-525): aggregates veh_cargo/
+// veh_cargo_loaded, both genuine chassis/cargo engine formulas, not AI
+// policy -- kept as one opaque wrapper, same precedent as
+// mineral_output_modifier.
+static int32_t host_cargo_capacity(int32_t x, int32_t y, int32_t faction_id) {
+    return cargo_capacity(x, y, faction_id);
+}
+
+// The three TileSearch-driven scans inside search_route (path.cpp:
+// 675-885), deferred from sub-stage A. One shared static TileSearch,
+// reused sequentially by all of them and by the seed list below -- safe
+// under the same "one vehicle moves at a time, no reentrant Lua calls
+// mid-mover" assumption g_colony_ts/g_crawler_ts already rely on; within
+// a single assembled search_route call these scans never run
+// concurrently, only one after another.
+static TileSearch g_route_ts;
+static PointList g_route_naval_seed;
+
+// TRIAD_SEA branch (path.cpp:707-732): own-base candidates. The is_base+
+// owner / safe_path(dist<8) / map_range-to-naval_end filters are
+// mechanical facts with no scoring, folded host-side exactly like
+// search_escape_next/search_base_next already do (equivalent to
+// computing route_score and discarding, since none have side effects).
+static void host_route_search_sea_start(int32_t veh_id) {
+    VEH* veh = &Vehs[veh_id];
+    g_route_ts.init(veh->x, veh->y, TS_SEA_AND_SHORE);
+}
+
+static void host_route_search_sea_next(int32_t faction_id,
+int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist) {
+    MAP* sq;
+    AIPlans& plan = plans[faction_id];
+    while ((sq = g_route_ts.get_next()) != NULL) {
+        if (!sq->is_base() || sq->owner != faction_id) {
+            continue;
+        }
+        if (g_route_ts.dist < 8 && !safe_path(g_route_ts, faction_id, true)) {
+            continue;
+        }
+        if (map_range(g_route_ts.rx, g_route_ts.ry, plan.naval_end_x, plan.naval_end_y) < 4) {
+            continue;
+        }
+        *valid = 1;
+        *tx = g_route_ts.rx;
+        *ty = g_route_ts.ry;
+        *dist = g_route_ts.dist;
+        return;
+    }
+    *valid = 0;
+}
+
+// route_search_pact_*: the general territory-pact scan (path.cpp:
+// 757-793). Two genuinely different candidate kinds can apply to the
+// SAME tile (a naval-pick early-exit-with-RNG special case, and a
+// scoreable base candidate) -- the original's own fallthrough when the
+// naval-pick RNG check doesn't fire re-checks the same tile for the base
+// case, so both facts are reported together rather than collapsed into
+// one mutually-exclusive "kind". combat/scout are passed in (Lua already
+// computed them for the outer function) rather than recomputed here, so
+// there is one source of truth.
+static void host_route_search_pact_start(int32_t veh_id) {
+    VEH* veh = &Vehs[veh_id];
+    g_route_ts.init(veh->x, veh->y, TS_TERRITORY_PACT);
+}
+
+static void host_route_search_pact_next(int32_t faction_id, int32_t combat, int32_t scout,
+int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+int32_t* naval_pick, int32_t* is_base_safe) {
+    MAP* sq;
+    while ((sq = g_route_ts.get_next()) != NULL) {
+        int cx = g_route_ts.rx;
+        int cy = g_route_ts.ry;
+        int cdist = g_route_ts.dist;
+        bool np = (cdist == 1 && (!combat || !scout)
+            && mapnodes.count({cx, cy, NODE_NAVAL_PICK})
+            && allow_move(cx, cy, faction_id, TRIAD_SEA));
+        bool ibs = (sq->is_base() && sq->owner == faction_id
+            && (combat || safe_path(g_route_ts, faction_id, true)));
+        if (np || ibs) {
+            *valid = 1;
+            *tx = cx;
+            *ty = cy;
+            *dist = cdist;
+            *naval_pick = np ? 1 : 0;
+            *is_base_safe = ibs ? 1 : 0;
+            return;
+        }
+    }
+    *valid = 0;
+}
+
+// The naval-pickup-point search's own seed-building scan (path.cpp:
+// 817-835): a "does the search reach my own position" mechanic (first-
+// match wins, no scoring) that also collects ocean tiles into the point
+// list route_search_naval_pickup_start seeds from. Kept as one opaque
+// wrapper, same tier as has_base_sites/colony_transport_check.
+static void host_route_search_naval_seed(int32_t veh_id, int32_t px, int32_t py,
+int32_t* redirect, int32_t* tx, int32_t* ty) {
+    VEH* veh = &Vehs[veh_id];
+    g_route_naval_seed.clear();
+    g_route_naval_seed.push_back({px, py});
+    g_route_ts.init(px, py, TS_TERRITORY_PACT);
+    MAP* sq;
+    while ((sq = g_route_ts.get_next()) != NULL) {
+        if (is_ocean(sq)) {
+            g_route_naval_seed.push_back({g_route_ts.rx, g_route_ts.ry});
+        }
+        if (veh->x == g_route_ts.rx && veh->y == g_route_ts.ry
+        && g_route_ts.dist < 8 + 2*map_range(veh->x, veh->y, px, py)) {
+            *redirect = 1;
+            *tx = px;
+            *ty = py;
+            return;
+        }
+        if (g_route_ts.dist >= 16 && (int)g_route_naval_seed.size() >= 32) {
+            break;
+        }
+    }
+    *redirect = 0;
+    *tx = -1;
+    *ty = -1;
+}
+
+// route_search_naval_pickup_*: the real scoring scan (path.cpp:838-860)
+// that walks the search tree's parent chain -- the one place in this
+// sub-stage TileSearch-internal state (get_prev()) has no Lua-side
+// substitute. Bare walk plus the one fact Lua can't get any other way
+// (prev_x/prev_y); every other input to the scoring formula is already
+// exposed as an atomic tile fact.
+static void host_route_search_naval_pickup_start() {
+    g_route_ts.init(g_route_naval_seed, TS_SEA_AND_SHORE, 1);
+}
+
+static void host_route_search_naval_pickup_next(
+int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+int32_t* prev_x, int32_t* prev_y) {
+    if (g_route_ts.get_next() == NULL) {
+        *valid = 0;
+        return;
+    }
+    assert(g_route_ts.current > g_route_ts.paths[g_route_ts.current].prev);
+    PathNode& p = g_route_ts.get_prev();
+    *valid = 1;
+    *tx = g_route_ts.rx;
+    *ty = g_route_ts.ry;
+    *dist = g_route_ts.dist;
+    *prev_x = p.x;
+    *prev_y = p.y;
+}
+
+static void host_add_goal(int32_t faction_id, int32_t type, int32_t priority,
+int32_t x, int32_t y, int32_t base_id) {
+    g_mutation_issued = true;
+    add_goal(faction_id, type, priority, x, y, base_id);
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 29,
+    /* api_version          */ 31,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1231,6 +1433,23 @@ static LuaHostApi g_host_api = {
     /* set_colony_automation_flags */ host_set_colony_automation_flags,
     /* colony_transport_check      */ host_colony_transport_check,
     /* tile_is_visible             */ host_tile_is_visible,
+    /* tile_is_ocean               */ host_tile_is_ocean,
+    /* can_use_teleport            */ host_can_use_teleport,
+    /* net_action_gate             */ host_net_action_gate,
+    /* main_region_x               */ host_main_region_x,
+    /* main_region_y               */ host_main_region_y,
+    /* naval_end_x                 */ host_naval_end_x,
+    /* naval_end_y                 */ host_naval_end_y,
+    /* tile_is_fungus              */ host_tile_is_fungus,
+    /* cargo_capacity              */ host_cargo_capacity,
+    /* route_search_sea_start      */ host_route_search_sea_start,
+    /* route_search_sea_next       */ host_route_search_sea_next,
+    /* route_search_pact_start     */ host_route_search_pact_start,
+    /* route_search_pact_next      */ host_route_search_pact_next,
+    /* route_search_naval_seed     */ host_route_search_naval_seed,
+    /* route_search_naval_pickup_start */ host_route_search_naval_pickup_start,
+    /* route_search_naval_pickup_next  */ host_route_search_naval_pickup_next,
+    /* add_goal                    */ host_add_goal,
 };
 
 static lua_State* L = NULL;

@@ -8,8 +8,13 @@
 -- code (VEH_SYNC/VEH_SKIP) the C++ caller uses as-is -- no separate
 -- commit step, unlike select_build's Class 2 propose-then-commit.
 --
--- TileSearch stays entirely in C++ (Phase 4.3) -- path.search_route
--- constructs and discards its own local TileSearch on the host side.
+-- TileSearch stays entirely in C++ (Phase 4.3), exposed only via the
+-- incremental start/next iterator primitives each mover's own scoring
+-- needs (crawler_search_*/search_escape_*/search_base_*/route_search_*).
+-- The old opaque path.search_route (a whole-scan host wrapper with no
+-- iterator) is superseded by this file's own search_route (below,
+-- IMPLEMENTATION_DETAILS.md 4.12's route_score sub-stage) but kept
+-- around, unused, until that port is live-verified.
 local port = {
     source = {
         artifact_move = { file = "src/move.cpp", func = "artifact_move",
@@ -32,6 +37,10 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         colony_move = { file = "src/move.cpp", func = "colony_move",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        route_score = { file = "src/path.cpp", func = "route_score",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        search_route = { file = "src/path.cpp", func = "search_route",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -40,7 +49,6 @@ local funcs = dofile_once("lua/ffi/funcs.lua")
 local veh = dofile("lua/api/veh.lua")
 local base_api = dofile("lua/api/base.lua")
 local map = dofile("lua/api/map.lua")
-local path = dofile("lua/api/path.lua")
 local log = dofile("lua/api/log.lua")
 local cmath = dofile("lua/api/cmath.lua")
 local game = dofile("lua/api/game.lua")
@@ -52,6 +60,12 @@ local idiv = cmath.idiv
 local clamp = cmath.clamp
 local min = math.min
 local max = math.max
+
+-- Forward declaration: artifact_move (below) calls the fully-assembled
+-- search_route (IMPLEMENTATION_DETAILS.md 4.12, route_score sub-stage B),
+-- defined later in this file next to the route_score/route_best_home_base/
+-- route_gate_teleport pieces it's built from.
+local search_route
 
 -- move.cpp:2204-2225.
 local function artifact_move(veh_id)
@@ -66,10 +80,10 @@ local function artifact_move(veh_id)
     if not veh.at_target(v) and v.iter_count < 2 and map.safety(v.x, v.y) >= E.PM_SAFE then
         return E.VEH_SYNC
     end
-    local route = path.search_route(veh_id, v.x, v.y)
-    if route.found then
-        log.debug("artifact_move %2d %2d -> %2d %2d", v.x, v.y, route.tx, route.ty)
-        return funcs.set_move_to(veh_id, route.tx, route.ty)
+    local tx, ty = search_route(veh_id)
+    if tx then
+        log.debug("artifact_move %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+        return funcs.set_move_to(veh_id, tx, ty)
     end
     return funcs.mod_veh_skip(veh_id)
 end
@@ -439,11 +453,290 @@ local function defender_count(x, y, veh_skip_id)
     return idiv(num + 1, 4)
 end
 
--- move.cpp:1405-1528. search_route's own defect (route_score is real
--- scoring baked into an opaque host wrapper, IMPLEMENTATION_DETAILS.md
--- 4.12) is deferred to its own future stage -- colony_move keeps the
--- existing path.search_route call for its one fallback call site until
--- that stage lands.
+-- path.cpp:659-673, route_score -- search_route's own scoring formula
+-- (continent size, home-region bonus, distance penalty, artifact-linking
+-- bonus, pod-density bonus), the real AI judgment that was flagged baked
+-- into the opaque path.search_route host wrapper (IMPLEMENTATION_DETAILS.md
+-- 4.12's "search + score" audit, same defect class want_convoy/
+-- base_tile_score already had fixed). Ported now as its own sub-stage; the
+-- two plain Bases[] scans below consume it directly, the three
+-- TileSearch-driven scans (sea-triad branch, general territory-pact
+-- branch, naval-pickup-point search) are deferred to a following
+-- sub-stage that assembles the full search_route replacement. `sq` in the
+-- original is mapsq(x, y) -- the candidate tile -- at every call site
+-- except one: path.cpp:760 passes x,y=veh->x,veh->y but a *stale* `sq`
+-- left over from the Bases[] scan just above it (whatever base the loop
+-- last matched, not mapsq(veh->x, veh->y)) -- a genuine inconsistency in
+-- the original, not a formatting quirk, replicated here (not "fixed") via
+-- the optional sq_x/sq_y override, per this project's 1:1-before-
+-- improvement rule. Every other call site omits them, so sq matches x,y
+-- as usual.
+local function route_score(veh_id, x, y, modifier, sq_x, sq_y)
+    sq_x = sq_x or x
+    sq_y = sq_y or y
+    local v = veh.get(veh_id)
+    local region = funcs.tile_region(sq_x, sq_y)
+    local sea = funcs.tile_is_ocean(sq_x, sq_y)
+    local continent = map.continent(region)
+    local score = (sea and 0 or min(16, idiv(continent.tile_count, 32)))
+        + (region == funcs.main_region(v.faction_id) and 32 or 0)
+        - modifier * (sea and 2 or 1) * funcs.map_range(v.x, v.y, x, y)
+        - 4 * funcs.map_target(x, y)
+    if veh.is_artifact(v) and not funcs.has_map_node(x, y, E.NODE_NAVAL_START) then
+        score = score + 64 * (funcs.can_link_artifact(map.base_at(x, y)) and 1 or 0)
+    end
+    if veh.is_combat_unit(v) and not sea then
+        score = score + 2 * max(0, continent.pods - idiv(continent.tile_count, 32))
+    end
+    return score
+end
+
+-- path.cpp:743-756, search_route's first Bases[] scan: the best "home
+-- base" candidate by route_score, plus whether the vehicle is currently
+-- standing on a base with an available Psi Gate connection (has_gate).
+-- Pure Bases[] iteration, no TileSearch involved -- same direct-loop
+-- style as select_colony/select_combat's own Bases[] scans
+-- (IMPLEMENTATION_DETAILS.md 4.8). mapsq(base->x, base->y)'s null check
+-- is dropped: a founded base always sits on a valid map tile. Also
+-- returns the last faction-owned base matched by the scan (last_x/
+-- last_y, in array-index order, regardless of its score) -- this is the
+-- stale `sq` route_score's own comment documents; a real match is
+-- guaranteed whenever the caller needs it (at_base implies the vehicle's
+-- own faction owns at least one base, so the scan below always matches
+-- at least once in that case).
+local function route_best_home_base(veh_id)
+    local v = veh.get(veh_id)
+    local px, py, has_gate = -1, -1, false
+    local best_score = -math.huge
+    local last_x, last_y = nil, nil
+    for i = 0, base_api.count() - 1 do
+        local base = base_api.get(i)
+        if base.faction_id == v.faction_id then
+            last_x, last_y = base.x, base.y
+            local score = route_score(veh_id, base.x, base.y, 4)
+            if score > best_score then
+                px, py = base.x, base.y
+                best_score = score
+            end
+            if v.x == base.x and v.y == base.y and funcs.can_use_teleport(i) then
+                has_gate = true
+            end
+        end
+    end
+    return px, py, has_gate, last_x, last_y
+end
+
+-- path.cpp:794-816, search_route's Psi-Gate target-base scan and the
+-- teleport action itself -- only reached when the vehicle stands on a
+-- gate-connected home base (has_gate, from route_best_home_base above).
+-- Returns tx, ty (equal to px, py) if the teleport action fired, or nil
+-- if no eligible target base was found. best_score's floor of literal
+-- -20 is the original's own exact value (not the scan's usual "no
+-- candidate yet" sentinel), kept as-is.
+local function route_gate_teleport(veh_id, px, py)
+    local v = veh.get(veh_id)
+    local target_region = funcs.region_at(px, py)
+    local tgt_id = -1
+    local best_score = -20
+    for i = 0, base_api.count() - 1 do
+        local base = base_api.get(i)
+        if base.faction_id == v.faction_id and funcs.has_fac_built(E.FAC_PSI_GATE, i)
+            and funcs.region_at(base.x, base.y) == target_region then
+            local score = base.pop_size - funcs.map_range(px, py, base.x, base.y)
+            if score > best_score then
+                tgt_id = i
+                best_score = score
+            end
+        end
+    end
+    if tgt_id >= 0 then
+        log.debug("route_gate %2d %2d -> %2d %2d base: %d", v.x, v.y, px, py, tgt_id)
+        funcs.net_action_gate(veh_id, tgt_id)
+        return px, py
+    end
+    return nil
+end
+
+-- path.cpp:675-885, search_route in full -- assembles route_score and
+-- both plain Bases[] scans (above) with the three TileSearch-driven
+-- scans below, resolving the pending item flagged in IMPLEMENTATION_
+-- DETAILS.md 4.12 (route_score baked into an opaque host wrapper), the
+-- whole reason this sub-stage exists. Returns tx, ty on success, nil on
+-- failure. Note the original's own final `return *tx >= 0`: `*tx`/`*ty`
+-- are only ever set by the same_reg branch at the very end or by one of
+-- the two early returns in between -- finding a candidate px/py that is
+-- neither same_reg nor resolved by gate-teleport/naval-pickup is a real
+-- "not found" outcome in the original (not a bug), so no fallback to
+-- `px, py` is added here. mapsq(veh->x, veh->y)'s null check at the top
+-- is dropped: a dispatched vehicle always sits on a valid map tile.
+search_route = function(veh_id)
+    local v = veh.get(veh_id)
+    local faction_id = v.faction_id
+    local veh_reg = funcs.tile_region(v.x, v.y)
+    local combat = veh.is_combat_unit(v)
+    local continent = map.continent(veh_reg)
+    local scout = combat and not funcs.bad_reg(veh_reg)
+        and continent.pods > idiv(continent.tile_count, 32)
+    local at_base = funcs.tile_is_base(v.x, v.y) and funcs.tile_owner(v.x, v.y) == faction_id
+    local triad = veh.triad(v)
+
+    if triad == E.TRIAD_AIR then
+        local tx, ty = funcs.main_region_x(faction_id), funcs.main_region_y(faction_id)
+        if tx >= 0 and (tx ~= v.x or ty ~= v.y) then
+            return tx, ty
+        end
+        return nil
+    end
+
+    if triad == E.TRIAD_SEA then
+        if not veh.is_transport(v) then
+            return nil
+        end
+        local naval_start_x, naval_start_y = funcs.naval_start_x(faction_id), funcs.naval_start_y(faction_id)
+        local naval_end_x, naval_end_y = funcs.naval_end_x(faction_id), funcs.naval_end_y(faction_id)
+        local invade = naval_start_x >= 0 and funcs.invasion_unit(veh_id)
+        local tx, ty, best_score = -1, -1, -math.huge
+        funcs.route_search_sea_start(veh_id)
+        local out = ffi.new("int32_t[4]")
+        while true do
+            funcs.route_search_sea_next(faction_id, out, out + 1, out + 2, out + 3)
+            if out[0] == 0 then
+                break
+            end
+            local cx, cy, dist = out[1], out[2], out[3]
+            local score = route_score(veh_id, cx, cy, 1)
+            if invade then
+                score = score - 4 * min(funcs.map_range(cx, cy, naval_start_x, naval_start_y),
+                    funcs.map_range(cx, cy, naval_end_x, naval_end_y))
+            end
+            if score > best_score then
+                tx, ty = cx, cy
+                best_score = score
+            end
+            if tx >= 0 and dist >= 25 then
+                break
+            end
+        end
+        if tx >= 0 then
+            return tx, ty
+        end
+        return nil
+    end
+
+    if not combat then
+        if veh.in_transit(v) or (at_base and faction.get(faction_id).base_count < 2) then
+            return nil
+        end
+        if map.safety(v.x, v.y) < E.PM_SAFE then
+            local ex, ey = search_escape(veh_id)
+            if ex >= 0 then
+                return ex, ey
+            end
+        end
+    end
+
+    local px, py, has_gate, last_base_x, last_base_y = route_best_home_base(veh_id)
+
+    local best_score = -math.huge
+    if at_base and veh.is_artifact(v) then
+        best_score = route_score(veh_id, v.x, v.y, 1, last_base_x, last_base_y)
+    end
+    local same_reg = false
+    funcs.route_search_pact_start(veh_id)
+    local out2 = ffi.new("int32_t[6]")
+    while true do
+        funcs.route_search_pact_next(faction_id, combat and 1 or 0, scout and 1 or 0,
+            out2, out2 + 1, out2 + 2, out2 + 3, out2 + 4, out2 + 5)
+        if out2[0] == 0 then
+            break
+        end
+        local cx, cy, dist, naval_pick, is_base_safe = out2[1], out2[2], out2[3], out2[4], out2[5]
+        if naval_pick ~= 0 then
+            if funcs.cargo_capacity(cx, cy, faction_id) > 0 then
+                log.debug("route_load %2d %2d", cx, cy)
+                return cx, cy
+            end
+            if v.iter_count == 0 or rand.map(0, 4) ~= 0 then
+                log.debug("route_skip %2d %2d", cx, cy)
+                return nil
+            end
+        end
+        if is_base_safe ~= 0 then
+            local score = route_score(veh_id, cx, cy, 1)
+            if score > best_score then
+                px, py = cx, cy
+                best_score = score
+                same_reg = funcs.tile_region(cx, cy) == veh_reg
+                    and dist < 8 + 2 * funcs.map_range(v.x, v.y, cx, cy)
+            end
+            if px >= 0 and dist >= 25 then
+                break
+            end
+        end
+    end
+
+    if px >= 0 and has_gate then
+        local tx, ty = route_gate_teleport(veh_id, px, py)
+        if tx then
+            return tx, ty
+        end
+    end
+
+    if px >= 0 and not same_reg and (not at_base or not veh.is_artifact(v)) then
+        local seed_out = ffi.new("int32_t[3]")
+        funcs.route_search_naval_seed(veh_id, px, py, seed_out, seed_out + 1, seed_out + 2)
+        if seed_out[0] ~= 0 then
+            log.debug("route_redirect %2d %2d", seed_out[1], seed_out[2])
+            return seed_out[1], seed_out[2]
+        end
+
+        funcs.route_search_naval_pickup_start()
+        local best_tx, best_ty, best_prev_x, best_prev_y = nil, nil, nil, nil
+        local best_route_score = -math.huge
+        local out3 = ffi.new("int32_t[6]")
+        while true do
+            funcs.route_search_naval_pickup_next(out3, out3 + 1, out3 + 2, out3 + 3, out3 + 4, out3 + 5)
+            if out3[0] == 0 then
+                break
+            end
+            local cx, cy, dist, prev_x, prev_y = out3[1], out3[2], out3[3], out3[4], out3[5]
+            if funcs.tile_region(cx, cy) == veh_reg and dist > 3
+                and not funcs.tile_is_base(cx, cy) and not funcs.tile_is_base(prev_x, prev_y)
+                and funcs.allow_civ_move(cx, cy, faction_id, E.TRIAD_LAND)
+                and funcs.allow_civ_move(prev_x, prev_y, faction_id, E.TRIAD_SEA) then
+                local d2 = funcs.map_range(v.x, v.y, cx, cy)
+                local score = 16 * (funcs.has_map_node(prev_x, prev_y, E.NODE_NAVAL_PICK) and 1 or 0)
+                    + 8 * ((funcs.tile_is_fungus(cx, cy) == veh.is_native_unit(v)) and 1 or 0)
+                    + min(0, idiv(map.safety(cx, cy), 32))
+                    - dist - 2 * d2
+                if score > best_route_score then
+                    best_tx, best_ty = cx, cy
+                    best_prev_x, best_prev_y = prev_x, prev_y
+                    best_route_score = score
+                end
+            end
+        end
+        if best_tx then
+            funcs.mark_map_node(best_prev_x, best_prev_y, E.NODE_NAVAL_PICK)
+            funcs.mark_map_node(best_prev_x, best_prev_y, E.NODE_NEED_FERRY)
+            funcs.add_goal(faction_id, E.AI_GOAL_NAVAL_PICK, 3, best_prev_x, best_prev_y, -1)
+            if funcs.cargo_capacity(best_prev_x, best_prev_y, faction_id) > 0 then
+                log.debug("route_pickup_load %2d %2d", best_prev_x, best_prev_y)
+                return best_prev_x, best_prev_y
+            end
+            log.debug("route_pickup_wait %2d %2d", best_tx, best_ty)
+            return best_tx, best_ty
+        end
+    end
+
+    if same_reg then
+        log.debug("route_move %2d %2d -> %2d %2d", v.x, v.y, px, py)
+        return px, py
+    end
+    return nil
+end
+
+-- move.cpp:1405-1528.
 local function colony_move(veh_id)
     local v = veh.get(veh_id)
     local faction_id = v.faction_id
@@ -556,9 +849,9 @@ local function colony_move(veh_id)
             log.debug("colony_naval %2d %2d -> %2d %2d", v.x, v.y, naval_x, naval_y)
             return funcs.set_move_to(veh_id, naval_x, naval_y)
         end
-        local route = path.search_route(veh_id, v.x, v.y)
-        if route.found then
-            return funcs.set_move_to(veh_id, route.tx, route.ty)
+        local rtx, rty = search_route(veh_id)
+        if rtx then
+            return funcs.set_move_to(veh_id, rtx, rty)
         end
         if game.turn() > E.VEH_REMOVE_TURNS
             and (game.base_count() < types.counts.MaxBaseNum or faction.get(faction_id).base_count >= 2)

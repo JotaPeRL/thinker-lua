@@ -184,10 +184,34 @@ typedef struct {
     void (*colony_transport_check)(int32_t veh_id, int32_t* has_transport,
         int32_t* tx, int32_t* ty);
     int32_t (*tile_is_visible)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*tile_is_ocean)(int32_t x, int32_t y);
+    int32_t (*can_use_teleport)(int32_t base_id);
+    int32_t (*net_action_gate)(int32_t veh_id, int32_t base_id);
+    int32_t (*main_region_x)(int32_t faction_id);
+    int32_t (*main_region_y)(int32_t faction_id);
+    int32_t (*naval_end_x)(int32_t faction_id);
+    int32_t (*naval_end_y)(int32_t faction_id);
+    int32_t (*tile_is_fungus)(int32_t x, int32_t y);
+    int32_t (*cargo_capacity)(int32_t x, int32_t y, int32_t faction_id);
+    void (*route_search_sea_start)(int32_t veh_id);
+    void (*route_search_sea_next)(int32_t faction_id,
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
+    void (*route_search_pact_start)(int32_t veh_id);
+    void (*route_search_pact_next)(int32_t faction_id, int32_t combat, int32_t scout,
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* naval_pick, int32_t* is_base_safe);
+    void (*route_search_naval_seed)(int32_t veh_id, int32_t px, int32_t py,
+        int32_t* redirect, int32_t* tx, int32_t* ty);
+    void (*route_search_naval_pickup_start)();
+    void (*route_search_naval_pickup_next)(
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* prev_x, int32_t* prev_y);
+    void (*add_goal)(int32_t faction_id, int32_t type, int32_t priority,
+        int32_t x, int32_t y, int32_t base_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 29
+local HOST_API_VERSION = 31
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -396,4 +420,31 @@ return {
         return api.colony_transport_check(veh_id, has_transport, tx, ty)
     end,
     tile_is_visible = function(x, y, faction_id) return api.tile_is_visible(x, y, faction_id) ~= 0 end,
+    tile_is_ocean = function(x, y) return api.tile_is_ocean(x, y) ~= 0 end,
+    can_use_teleport = function(base_id) return api.can_use_teleport(base_id) ~= 0 end,
+    net_action_gate = function(veh_id, base_id) return api.net_action_gate(veh_id, base_id) end,
+    main_region_x = function(faction_id) return api.main_region_x(faction_id) end,
+    main_region_y = function(faction_id) return api.main_region_y(faction_id) end,
+    naval_end_x = function(faction_id) return api.naval_end_x(faction_id) end,
+    naval_end_y = function(faction_id) return api.naval_end_y(faction_id) end,
+    tile_is_fungus = function(x, y) return api.tile_is_fungus(x, y) ~= 0 end,
+    cargo_capacity = function(x, y, faction_id) return api.cargo_capacity(x, y, faction_id) end,
+    route_search_sea_start = function(veh_id) return api.route_search_sea_start(veh_id) end,
+    route_search_sea_next = function(faction_id, valid, tx, ty, dist)
+        return api.route_search_sea_next(faction_id, valid, tx, ty, dist)
+    end,
+    route_search_pact_start = function(veh_id) return api.route_search_pact_start(veh_id) end,
+    route_search_pact_next = function(faction_id, combat, scout, valid, tx, ty, dist, naval_pick, is_base_safe)
+        return api.route_search_pact_next(faction_id, combat, scout, valid, tx, ty, dist, naval_pick, is_base_safe)
+    end,
+    route_search_naval_seed = function(veh_id, px, py, redirect, tx, ty)
+        return api.route_search_naval_seed(veh_id, px, py, redirect, tx, ty)
+    end,
+    route_search_naval_pickup_start = function() return api.route_search_naval_pickup_start() end,
+    route_search_naval_pickup_next = function(valid, tx, ty, dist, prev_x, prev_y)
+        return api.route_search_naval_pickup_next(valid, tx, ty, dist, prev_x, prev_y)
+    end,
+    add_goal = function(faction_id, type, priority, x, y, base_id)
+        return api.add_goal(faction_id, type, priority, x, y, base_id)
+    end,
 }

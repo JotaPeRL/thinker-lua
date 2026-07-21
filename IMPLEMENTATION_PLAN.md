@@ -547,8 +547,22 @@ enable Lua by default on the branch → next.
    territory: largest, most performance-sensitive, ported last with the
    C++ baseline already measured.
 
-   **Status: 🔨 stages 0-3 done and live-verified; next up is stage 4
-   (`former_move`).** Stage 3 (`colony_move`, plus its own `escape_score`/
+   **Status: 🔨 stages 0-3 done and live-verified; the `route_score`/
+   `search_route` pending item (below) is now fully resolved and closed
+   (2026-07-22) — sub-stage A (`route_score` + its two `Bases[]` scans)
+   and sub-stage B (the three `TileSearch` scans, full reassembly, hook
+   wiring into `artifact_move`/`colony_move`) both done, build-verified
+   and live-verified: 885 real decision lines over an 80-turn run (883
+   the ordinary path, 2 the deepest/riskiest new primitive — the
+   `TileSearch` parent-chain walk), 0 errors, 0 mismatches; see
+   `IMPLEMENTATION_DETAILS.md` 4.12's sub-stage A/B entries (sub-stage
+   B's entry also records a real 1:1-fidelity bug found and fixed while
+   assembling the full function — a stale-`sq` reuse in the original's
+   own artifact-at-home-base baseline, `path.cpp:760` — and a live-
+   verification instrumentation gap found and fixed on the first
+   attempt: the ordinary success path had no log line at all). Next up:
+   stage 4 (`former_move`).**
+   Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across
    an 80-turn run, 0 errors, 0 fallback, base count climbing 7→142 — see
