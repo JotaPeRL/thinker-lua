@@ -1893,10 +1893,9 @@ trade-off as this file's own session-record structure.
 
 ---
 
-### 4.12 Movement port (porting-order item 4) — stages 0-2 done and live-verified, stage 3 (colony_move) implemented, live verification pending
+### 4.12 Movement port (porting-order item 4) — stages 0-3 done and live-verified, stage 4 (former_move) next
 
-**Status: ✅ stages 0-2 done, live-verified. Stage 3 implemented,
-build-verified, live verification pending.** Real function sizes
+**Status: ✅ stages 0-3 done, live-verified.** Real function sizes
 read directly from `move.cpp`/`veh_turn.cpp`/`goal.cpp` (3657/887/183
 loc) rather than estimated — the one-liner in `IMPLEMENTATION_PLAN.md`
 predates this pass. Complements 4.4's earlier high-level notes
@@ -2225,15 +2224,32 @@ at 29). Both presets build clean, every touched file passes a native-
 `base_tile_score`/`defender_count`/`colony_move`), `lua/ai/init.lua`
 (registration).
 
-**Live verification: pending** — hand-off to the user for an in-game run,
-same "check `lua.log`/`debug.txt` for real decision-trace evidence, not
-just absence of errors" discipline stage 2 established. `colony_move`
-carries its own decision-trace `log.debug` lines at all five of the
-original's `debug()` call sites (`colony_trans`/`colony_drop`/
-`colony_move`/`colony_base`/`colony_naval`, `move.cpp:1414/1492/1496/
-1505/1513`) plus `search_escape`'s own `escape_score` line — a clean run
-with zero of these firing would not be sufficient evidence, per the
-crawler_move lesson.
+**Live-verified (2026-07-22).** An 80-turn run: **613 real colony-family
+decision lines** (347 `colony_move`, 235 `colony_base`, 30 `colony_naval`,
+1 `colony_trans`, 0 `colony_drop`), **44 `escape_score` lines**, 0 errors,
+0 asserts/crashes, 0 fallback to the C++ body — confirmed two ways:
+`lua_ai_command_hook`'s dedup'd "invoked and handled" line fired once for
+`colony_move` (as designed, first-call-only), and independently, `grep -c
+"^lua: colony_"` on `debug.txt` (613) exactly matches the total decision
+line count from `lua.log`, meaning every single one of the 613 was
+Lua-handled, none a stray C++-side duplicate. Base count climbed 7→142
+over the run (real colonization happening end to end, not just
+error-free noise), across 202 distinct starting coordinates (broad, not
+one repeating unit). A coherent multi-turn story for one unit: `colony_base
+14 26 -> 15 21` (twice — walked to the nearest friendly base, no new site
+found), then from `15 21`: `colony_naval 15 21 -> 12 26` and `-> 22 12`
+(redirected toward the faction's naval departure point, consistent with
+a sea-triad pod stuck without a land region to found on), then later
+`colony_move 15 21 -> 18 32` and `-> 79 19` (real sites found once reached,
+at increasing range — plausible for an overseas expansion pod). `colony_drop`
+never firing this run isn't concerning (airdrop needs specific tech/
+conditions that may not have arisen), same "revisit opportunistically,
+not a blocker" precedent as `artifact_move`'s never-fired `artifact_link`
+branch. `crawler_move` logged 0 decision lines this run — a fact about
+this run's game state (no supply crawler ever became eligible to move),
+not a regression: the hook registration is untouched by this stage's
+diff, and `crawler_move`'s own code path shares nothing with
+`colony_move`'s. **Stage 3 closed.**
 
 - **Stage 4 — `former_move`** (~157 loc). The one stage where a real,
   substantial new port is unavoidable: `select_item`

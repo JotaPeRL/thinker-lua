@@ -547,10 +547,12 @@ enable Lua by default on the branch → next.
    territory: largest, most performance-sensitive, ported last with the
    C++ baseline already measured.
 
-   **Status: 🔨 stages 0-2 done and live-verified; stage 3 (`colony_move`,
-   plus its own `escape_score`/`search_escape`/`search_base`/
-   `escape_move`/`base_tile_score` dependencies) is implemented and
-   build-verified, live verification pending.** Before starting stage 3, a
+   **Status: 🔨 stages 0-3 done and live-verified; next up is stage 4
+   (`former_move`).** Stage 3 (`colony_move`, plus its own `escape_score`/
+   `search_escape`/`search_base`/`escape_move`/`base_tile_score`
+   dependencies) closed 2026-07-22: 613 real decision-trace lines across
+   an 80-turn run, 0 errors, 0 fallback, base count climbing 7→142 — see
+   `IMPLEMENTATION_DETAILS.md` 4.12. Before starting stage 3, a
    user-directed audit of `move.cpp`/`path.cpp` found the `want_convoy`
    mistake already shipped in stage 1 too: `search_route` (used by
    `artifact_move`) wraps `route_score`, a real scoring formula, opaquely
