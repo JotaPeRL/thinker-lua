@@ -2699,14 +2699,52 @@ expected, all three portable struct headers are `#pragma pack(1)`, same
 as every other exposed struct) and loads clean under native `luajit`;
 every file under `lua/` passes a bytecode compile.
 
-**Not yet true — live verification.** Nothing has exercised this hook
-in-game yet. `former_move` fires for every former unit every turn it's
-dispatched (not a rare fallback branch like `search_route`'s own tail
-end), so this should be easy to exercise with any former in play — but
-per this project's own repeated discipline, exercise evidence is
-needed, not assumed. **This closes the whole `former_move` port
-(movement stage 4) once verified** — the next movement stage is
-`trans_move` (stage 5).
+**First live attempt: crashed twice, both times.** `former_move` fires
+for every former unit every turn, so it got exercised immediately —
+and immediately hit a real gap in this whole sub-stage's own testing:
+`select_item`'s Lua port (sub-stage 2) had been carrying **two enum
+values that were used but never actually added** to the generated
+table: `FORMER_NONE` (`engine_veh.h:232`, the "no terraform needed"
+sentinel select_item returns from most of its branches — the *single
+most common* outcome) and `FORMER_RAISE_LAND` (the `can_bridge`
+branch's own action). Both were silently `nil` the whole time, not `-1`
+and not `16` — exactly the same class of gap as `FormerMode` (found and
+fixed earlier in this same sub-stage). Since `FORMER_NONE` is the
+overwhelmingly common case, nearly every real `select_item` call
+(`item >= 0` in `lua/ai/move.lua`) raised `attempt to compare number
+with nil` — caught safely by `lua_ai_command_hook`'s pcall (no mutation
+had occurred yet at that point, so it correctly fell back to C++'s own
+`former_move` every time), visible in `lua.log` as repeated `error in
+'former_move' (turn N)` lines. That part of the failure was contained,
+not the crash itself.
+
+The crash itself was a genuine native access violation
+(`ExceptionCode c0000005`), disassembling to a NULL-pointer write —
+something `pcall` cannot catch, since it protects the Lua VM, not
+native code reached through FFI. It happened turns after the pattern of
+contained Lua errors began, immediately after dispatching a Formers
+unit, with no preceding `error in 'former_move'` line for that turn —
+meaning that specific call *didn't* hit the nil-comparison error, i.e.
+it took a different path than the ones already shown safe. The most
+likely explanation, given the sheer frequency of the contained errors
+this bug caused (`FORMER_NONE` on nearly every dispatch, across every
+former, every turn): forcing the Lua↔C pcall/error path this hard,
+this often, is new territory no prior hook's testing ever exercised at
+this volume, and is the prime remaining suspect now that the two
+confirmed enum gaps are fixed.
+
+**Both fixed**, and verified with a systematic sweep (not just manual
+rereading) across every file under `lua/`, not only `move.lua`: every
+`E.<NAME>` and `types.counts.<NAME>` reference cross-checked
+programmatically against the generated `types.lua` tables. Zero
+remaining gaps found anywhere in the codebase. Both presets rebuilt
+clean, `types.lua` reloads clean, every `lua/` file still passes a
+bytecode compile. Redeployed; a second live attempt is needed before
+this sub-stage — and the whole `former_move` port, movement stage 4 —
+can close. If the crash recurs with these two fixes in place, the
+signal will be much cleaner (the Lua path will actually be running
+instead of erroring out on nearly every call), which should narrow
+down whatever remains.
 
 ---
 

@@ -984,6 +984,16 @@ int main() {
     printf("    FORMER_THERMAL_BORE = %d,\n", FORMER_THERMAL_BORE);
     printf("    FORMER_AQUIFER = %d,\n", FORMER_AQUIFER);
     printf("    FORMER_LEVEL_TERRAIN = %d,\n", FORMER_LEVEL_TERRAIN);
+    // Bug fix (found live, IMPLEMENTATION_DETAILS.md 4.13): FORMER_NONE
+    // (engine_veh.h:232, `-1 // Thinker variable` -- the "no terraform
+    // needed" sentinel select_item returns from most of its branches)
+    // was never added here despite being used throughout select_item's
+    // Lua port since sub-stage 2 -- every one of those returns was
+    // silently nil instead of -1, since select_item's FormerMode values
+    // themselves were the first instance of this exact gap (fixed
+    // above). Caught only once select_item started actually running via
+    // former_move's own dispatch (sub-stage 4), live.
+    printf("    FORMER_NONE = %d,\n", FORMER_NONE);
     // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
     // select_item's own dependencies, same "compiler-read" discipline.
     printf("    TECH_EcoEng2 = %d,\n", TECH_EcoEng2);
@@ -991,6 +1001,11 @@ int main() {
     printf("    FORMER_REMOVE_FUNGUS = %d,\n", FORMER_REMOVE_FUNGUS);
     printf("    FORMER_CONDENSER = %d,\n", FORMER_CONDENSER);
     printf("    FORMER_SOIL_ENR = %d,\n", FORMER_SOIL_ENR);
+    // Bug fix (found by a systematic sweep after the FORMER_NONE bug
+    // above, IMPLEMENTATION_DETAILS.md 4.13): FORMER_RAISE_LAND (the
+    // can_bridge branch's own action) had the exact same gap -- used in
+    // select_item's Lua port since sub-stage 2, never added.
+    printf("    FORMER_RAISE_LAND = %d,\n", FORMER_RAISE_LAND);
     printf("    BIT_SOIL_ENRICHER = %d,\n", BIT_SOIL_ENRICHER);
     printf("    ALT_ONE_ABOVE_SEA = %d,\n", ALT_ONE_ABOVE_SEA);
     // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
