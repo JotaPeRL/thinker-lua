@@ -2451,7 +2451,7 @@ diff, and `crawler_move`'s own code path shares nothing with
 
 ---
 
-### 4.13 `former_move` port (movement stage 4) — sub-stage 1 done, build-verified
+### 4.13 `former_move` port (movement stage 4) — sub-stages 1-2 done, build-verified
 
 **Real size, read in full before touching any code:** `former_move`
 itself ~155 loc (`move.cpp:2047-2202`), `select_item` ~200 loc
@@ -2550,12 +2550,56 @@ called from `luaai.cpp`, so no declarations were needed for them),
 32), `lua/ffi/funcs.lua`, `lua/ai/move.lua` (the 12 ported functions +
 provenance entries).
 
-**Next: sub-stage 2 — `select_item`** (the ~200-line decision tree
-combining these 12 helpers' results), **then sub-stage 3 —
-`former_tile_score`**, **then sub-stage 4 — `former_move` itself**
-(dispatch + the `TileSearch` scan, reusing the already-ported
-`search_base`/`search_route` for its own tail-end fallback — no new
-work needed there), **then live verification.**
+**Sub-stage 2: `select_item`. ✅ done, build-verified; not yet live-
+verified (nothing calls it yet — `former_move`, sub-stage 4, is what
+will).** The ~200-line terraform-choice decision tree combining the 12
+helpers above — real AI policy, ported in full to `lua/ai/move.lua`.
+`sea` in the original (`alt < ALT_SHORE_LINE`) is identical to
+`is_ocean`'s own check (`climate>>5 < ALT_SHORE_LINE`, the same
+`alt_level()`), so `tile_is_ocean` is reused directly rather than
+recomputing `alt < ALT_OCEAN_SHELF`-style comparisons a second way.
+
+**Classification: `item_yield`/`bonus_yield`/`terraform_cost` stay
+opaque, same tier as the already-opaque `mod_crop_yield`/`mod_mine_
+yield`/`mod_energy_yield`.** Read `item_yield` in full (`map.cpp:
+1530-...`): a long landmark/social-engineering-dependent yield formula —
+genuine engine mechanics, not the AI judgment. `select_item`'s own
+policy is *which* terraform action to pick given these already-
+computed values, not how the values themselves are calculated —
+exactly the same line `mod_crop_yield` etc. were already on the opaque
+side of. `total_yield` needed no new wrapper at all: it's just
+`mod_crop_yield + mod_mine_yield + mod_energy_yield`, all three already
+exposed, summed directly in Lua. `bonus_at` needed no new wrapper
+either — already exposed as `tile_bonus` since stage 3's
+`base_tile_score`.
+
+**New engine surface** (`api_version` bumped 32→33): one more `CRules`
+field (`tech_preq_mining_platform_bonus`), two more single-`ResValue`-
+member globals (`ResInfoBoreholeSq`, `ResInfoImprovedSea`, same
+technique as `ResInfoForestSq`), four new host wrappers
+(`tile_is_volcano_center` — a `MAP` method, same tier as
+`tile_is_fungus` — `terraform_cost`, `item_yield`, `bonus_yield`, the
+last three opaque per the classification above), and enums
+`TECH_EcoEng2`, `NODE_RAISE_LAND` (hand-transcribed, same reason as the
+other `NodesetType` values), `MPREF_AUTO_FORMER_REMOVE_FUNGUS`,
+`FORMER_REMOVE_FUNGUS`/`CONDENSER`/`SOIL_ENR`, `BIT_SOIL_ENRICHER`,
+`ALT_ONE_ABOVE_SEA` — all compiler-read except the one hand-transcribed
+`NODE_*` value. `MFaction::is_aquatic()` needed no new surface either —
+ported as its own local one-liner in `move.lua` (`bit.band(faction.
+meta(faction_id).rule_flags, E.RFLAG_AQUATIC) ~= 0`), same tier as
+`build.lua`'s and `war.lua`'s own local copies of the identical check
+(each kept local rather than centralized, per that precedent).
+
+**Files touched:** `tools/gen_ffi.cpp`, `src/luaai.h`/`.cpp` (4 new
+`LuaHostApi` entries, `api_version` bump to 33), `lua/ffi/funcs.lua`,
+`lua/ai/move.lua` (`select_item` + its `ResInfoBoreholeSq`/
+`ResInfoImprovedSea`/`is_aquatic` dependencies + provenance entry).
+
+**Next: sub-stage 3 — `former_tile_score`** (the ~42-line site-scoring
+formula, smaller than `select_item`), **then sub-stage 4 —
+`former_move` itself** (dispatch + the `TileSearch` scan, reusing the
+already-ported `search_base`/`search_route` for its own tail-end
+fallback — no new work needed there), **then live verification.**
 
 ---
 

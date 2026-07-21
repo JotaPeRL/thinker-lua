@@ -521,6 +521,22 @@ struct LuaHostApi {
     // colliding with lua/ai/move.lua's own ported plant_fungus function).
     int32_t (*plant_fungus_flag)(int32_t faction_id);
     int32_t (*build_tubes)(int32_t faction_id);
+    // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+    // select_item's own remaining dependencies, beyond the 12 can_*
+    // helpers it combines. tile_is_volcano_center is a MAP method, same
+    // tier as tile_is_fungus. terraform_cost/item_yield/bonus_yield are
+    // real engine yield-calculation formulas (item_yield especially --
+    // a long landmark/social-engineering-dependent computation), same
+    // "engine mechanics, not AI policy" tier as the already-opaque
+    // mod_crop_yield/mod_mine_yield/mod_energy_yield -- select_item's own
+    // judgment is which terraform action to pick given these values, not
+    // how the values themselves are computed. total_yield needs no new
+    // wrapper: it's just mod_crop_yield+mod_mine_yield+mod_energy_yield,
+    // all three already exposed, summed directly in Lua.
+    int32_t (*tile_is_volcano_center)(int32_t x, int32_t y);
+    int32_t (*terraform_cost)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*item_yield)(int32_t x, int32_t y, int32_t faction_id, int32_t bonus, int32_t item);
+    int32_t (*bonus_yield)(int32_t res_type);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

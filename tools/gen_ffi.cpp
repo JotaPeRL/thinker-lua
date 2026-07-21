@@ -290,6 +290,9 @@ int main() {
         // can_sensor/can_magtube's fungus-tech gate and can_road's own.
         FIELD(CRules, tech_preq_improv_fungus),
         FIELD(CRules, tech_preq_build_road_fungus),
+        // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+        // select_item's own sea solar_need branch.
+        FIELD(CRules, tech_preq_mining_platform_bonus),
     }});
 
     emit_struct(stdout, {"Faction", sizeof(Faction), alignof(Faction), {
@@ -555,6 +558,13 @@ int main() {
     // above, not a whole-CResourceInfo emit_struct.
     printf("    ResInfoForestSq = 0x%08X,\n",
         (unsigned)(0x945F50 + offsetof(CResourceInfo, forest_sq)));
+    // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+    // select_item's own borehole/sea-solar branches. Same one-ResValue-
+    // member-address technique as ResInfoForestSq above.
+    printf("    ResInfoBoreholeSq = 0x%08X,\n",
+        (unsigned)(0x945F50 + offsetof(CResourceInfo, borehole_sq)));
+    printf("    ResInfoImprovedSea = 0x%08X,\n",
+        (unsigned)(0x945F50 + offsetof(CResourceInfo, improved_sea)));
     // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13):
     // int* const, fixed addresses (src/engine.cpp), same tier as
     // MultiplayerActive above.
@@ -873,6 +883,9 @@ int main() {
     printf("    NODE_BOREHOLE = %d,\n", 0);
     printf("    NODE_SENSOR_ARRAY = %d,\n", 2);
     printf("    NODE_GOAL_RAISE_LAND = %d,\n", 6);
+    // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+    // select_item's own bridge/raise-land branch marker.
+    printf("    NODE_RAISE_LAND = %d,\n", 1);
     // Movement port, route_score sub-stage (IMPLEMENTATION_DETAILS.md
     // 4.12): route_score's artifact-linking special case (path.h:71).
     printf("    NODE_NAVAL_START = %d,\n", 7);
@@ -947,6 +960,15 @@ int main() {
     printf("    FORMER_THERMAL_BORE = %d,\n", FORMER_THERMAL_BORE);
     printf("    FORMER_AQUIFER = %d,\n", FORMER_AQUIFER);
     printf("    FORMER_LEVEL_TERRAIN = %d,\n", FORMER_LEVEL_TERRAIN);
+    // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+    // select_item's own dependencies, same "compiler-read" discipline.
+    printf("    TECH_EcoEng2 = %d,\n", TECH_EcoEng2);
+    printf("    MPREF_AUTO_FORMER_REMOVE_FUNGUS = %d,\n", MPREF_AUTO_FORMER_REMOVE_FUNGUS);
+    printf("    FORMER_REMOVE_FUNGUS = %d,\n", FORMER_REMOVE_FUNGUS);
+    printf("    FORMER_CONDENSER = %d,\n", FORMER_CONDENSER);
+    printf("    FORMER_SOIL_ENR = %d,\n", FORMER_SOIL_ENR);
+    printf("    BIT_SOIL_ENRICHER = %d,\n", BIT_SOIL_ENRICHER);
+    printf("    ALT_ONE_ABOVE_SEA = %d,\n", ALT_ONE_ABOVE_SEA);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

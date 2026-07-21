@@ -218,10 +218,14 @@ typedef struct {
     int32_t (*can_bridge)(int32_t x, int32_t y, int32_t faction_id);
     int32_t (*plant_fungus_flag)(int32_t faction_id);
     int32_t (*build_tubes)(int32_t faction_id);
+    int32_t (*tile_is_volcano_center)(int32_t x, int32_t y);
+    int32_t (*terraform_cost)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*item_yield)(int32_t x, int32_t y, int32_t faction_id, int32_t bonus, int32_t item);
+    int32_t (*bonus_yield)(int32_t res_type);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 32
+local HOST_API_VERSION = 33
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -467,4 +471,8 @@ return {
     can_bridge = function(x, y, faction_id) return api.can_bridge(x, y, faction_id) ~= 0 end,
     plant_fungus_flag = function(faction_id) return api.plant_fungus_flag(faction_id) end,
     build_tubes = function(faction_id) return api.build_tubes(faction_id) end,
+    tile_is_volcano_center = function(x, y) return api.tile_is_volcano_center(x, y) ~= 0 end,
+    terraform_cost = function(x, y, faction_id) return api.terraform_cost(x, y, faction_id) end,
+    item_yield = function(x, y, faction_id, bonus, item) return api.item_yield(x, y, faction_id, bonus, item) end,
+    bonus_yield = function(res_type) return api.bonus_yield(res_type) end,
 }

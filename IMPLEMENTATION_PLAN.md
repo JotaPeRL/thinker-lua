@@ -562,10 +562,12 @@ enable Lua by default on the branch → next.
    verification instrumentation gap found and fixed on the first
    attempt: the ordinary success path had no log line at all). Stage 4
    (`former_move`) under way: sub-stage 1 (the 12 `can_*`/`keep_fungus`/
-   `plant_fungus` tile-eligibility helpers, ~670 loc total scope for the
-   whole stage) done and build-verified; sub-stages 2-4 (`select_item`,
-   `former_tile_score`, `former_move` itself + live verification) not
-   yet started — see `IMPLEMENTATION_DETAILS.md` 4.13.**
+   `plant_fungus` tile-eligibility helpers) and sub-stage 2
+   (`select_item`, the ~200-line terraform-choice decision tree) done
+   and build-verified — ~670 loc total scope for the whole stage;
+   sub-stages 3-4 (`former_tile_score`, `former_move` itself + live
+   verification) not yet started — see `IMPLEMENTATION_DETAILS.md`
+   4.13.**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across

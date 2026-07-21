@@ -65,6 +65,8 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         can_magtube = { file = "src/move.cpp", func = "can_magtube",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        select_item = { file = "src/move.cpp", func = "select_item",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -96,6 +98,19 @@ local max = math.max
 local GamePreferences = ffi.cast("int32_t*", types.globals.GamePreferences)
 local GameMorePreferences = ffi.cast("int32_t*", types.globals.GameMorePreferences)
 local ResInfoForestSq = ffi.cast("int32_t*", types.globals.ResInfoForestSq)
+-- former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+-- select_item's own borehole/sea-solar branches, same technique/index
+-- convention as ResInfoForestSq above.
+local ResInfoBoreholeSq = ffi.cast("int32_t*", types.globals.ResInfoBoreholeSq)
+local ResInfoImprovedSea = ffi.cast("int32_t*", types.globals.ResInfoImprovedSea)
+
+-- engine_types.h:287-289's MFaction::is_aquatic() (rule_flags &
+-- RFLAG_AQUATIC) -- same tier as war.lua's/build.lua's own local
+-- is_aquatic/is_alien helpers, kept local here too rather than added to
+-- faction.lua's shared surface.
+local function is_aquatic(faction_id)
+    return bit.band(faction.meta(faction_id).rule_flags, E.RFLAG_AQUATIC) ~= 0
+end
 
 -- Forward declaration: artifact_move (below) calls the fully-assembled
 -- search_route (IMPLEMENTATION_DETAILS.md 4.12, route_score sub-stage B),
@@ -418,6 +433,236 @@ local function can_magtube(x, y, faction_id)
     end
     return funcs.map_roads(x, y) > 0 and bit.band(items, E.BIT_ROAD) ~= 0
         and (not funcs.tile_is_fungus(x, y) or funcs.has_tech(tech.rules().tech_preq_improv_fungus, faction_id))
+end
+
+-- former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+-- select_item, the terraform-choice decision tree combining the 12
+-- can_*/keep_fungus/plant_fungus results above -- the real AI policy
+-- select_build's own former_tile_tally (4.10.29) deferred to this exact
+-- port. mode is one of the FormerMode enums (E.FM_Auto_Full etc.), same
+-- as the C++ original. mapsq(x, y)'s null check at the top is dropped:
+-- a former's own tile, or a candidate already surfaced by former_move's
+-- TileSearch scan (sub-stage 4), is always a valid map tile. `sea` here
+-- is alt < ALT_SHORE_LINE in the original, identical to tile_is_ocean
+-- (is_ocean checks the same climate>>5 < ALT_SHORE_LINE condition), so
+-- tile_is_ocean is reused directly rather than recomputed from alt.
+local function select_item(x, y, faction_id, mode)
+    local items = funcs.tile_items(x, y)
+    local alt = funcs.tile_alt_level(x, y)
+    local sea = funcs.tile_is_ocean(x, y)
+    local road = can_road(x, y, faction_id)
+    local is_fungus_tile = funcs.tile_is_fungus(x, y)
+    local rem_fungus = funcs.has_terra(E.FORMER_REMOVE_FUNGUS, sea and 1 or 0, faction_id)
+        and (not funcs.is_human(faction_id)
+            or bit.band(GameMorePreferences[0], E.MPREF_AUTO_FORMER_REMOVE_FUNGUS) ~= 0)
+
+    if funcs.tile_is_base(x, y) or funcs.tile_is_volcano_center(x, y) then
+        return E.FORMER_NONE
+    end
+    -- Improvements on ocean possible for aquatic factions after Adv. Ecological Engineering
+    if alt < E.ALT_OCEAN_SHELF and (not is_aquatic(faction_id) or not funcs.has_tech(E.TECH_EcoEng2, faction_id)) then
+        return E.FORMER_NONE
+    end
+    if mode == E.FM_Auto_Sensors then
+        if can_sensor(x, y, faction_id) then
+            return E.FORMER_SENSOR
+        end
+        return E.FORMER_NONE
+    end
+    if mode == E.FM_Remove_Fungus then
+        if is_fungus_tile and rem_fungus then
+            return E.FORMER_REMOVE_FUNGUS
+        end
+        return E.FORMER_NONE
+    end
+    if (mode == E.FM_Auto_Full or mode == E.FM_Auto_Tubes) and can_magtube(x, y, faction_id) then
+        return E.FORMER_MAGTUBE
+    end
+    if mode == E.FM_Auto_Full and funcs.can_bridge(x, y, faction_id) then
+        if funcs.has_map_node(x, y, E.NODE_RAISE_LAND)
+            or funcs.terraform_cost(x, y, faction_id) < idiv(faction.get(faction_id).energy_credits, 8) then
+            return (road and E.FORMER_ROAD or E.FORMER_RAISE_LAND)
+        end
+    end
+    if road or funcs.tile_owner(x, y) ~= faction_id or not funcs.tile_is_base_radius(x, y)
+        or bit.band(items, E.BIT_MONOLITH) ~= 0 then
+        return (road and E.FORMER_ROAD or E.FORMER_NONE)
+    end
+    if mode == E.FM_Farm_Road or mode == E.FM_Mine_Road then
+        if is_fungus_tile then
+            if funcs.has_terra(E.FORMER_REMOVE_FUNGUS, sea and 1 or 0, faction_id) then
+                return E.FORMER_REMOVE_FUNGUS
+            end
+            return E.FORMER_NONE
+        end
+        if bit.band(items, E.BIT_ROAD) == 0 and funcs.has_terra(E.FORMER_ROAD, sea and 1 or 0, faction_id) then
+            return E.FORMER_ROAD
+        end
+        if bit.band(items, E.BIT_MONOLITH) ~= 0 then
+            return E.FORMER_NONE
+        end
+    end
+    if mode == E.FM_Farm_Road then
+        if (sea or not funcs.tile_is_rocky(x, y)) and bit.band(items, E.BIT_FARM) == 0
+            and funcs.has_terra(E.FORMER_FARM, sea and 1 or 0, faction_id) then
+            return E.FORMER_FARM
+        end
+        if bit.band(items, E.BIT_SOLAR) == 0 and funcs.has_terra(E.FORMER_SOLAR, sea and 1 or 0, faction_id) then
+            return E.FORMER_SOLAR
+        end
+    end
+    if mode == E.FM_Mine_Road then
+        if bit.band(items, E.BIT_MINE) == 0 and funcs.has_terra(E.FORMER_MINE, sea and 1 or 0, faction_id) then
+            return E.FORMER_MINE
+        end
+    end
+    if mode ~= E.FM_Auto_Full then -- Skip non-automated player formers
+        return E.FORMER_NONE
+    end
+    if can_river(x, y, faction_id) then
+        return E.FORMER_AQUIFER
+    end
+
+    local bonus = funcs.tile_bonus(x, y)
+    local current = funcs.mod_crop_yield(faction_id, -1, x, y, 0)
+        + funcs.mod_mine_yield(faction_id, -1, x, y, 0)
+        + funcs.mod_energy_yield(faction_id, -1, x, y, 0)
+
+    local forest = funcs.has_terra(E.FORMER_FOREST, sea and 1 or 0, faction_id) and ResInfoForestSq[2] > 0
+    local borehole = funcs.has_terra(E.FORMER_THERMAL_BORE, sea and 1 or 0, faction_id) and ResInfoBoreholeSq[2] > 2
+    local condenser = funcs.has_terra(E.FORMER_CONDENSER, sea and 1 or 0, faction_id)
+    local use_sensor = bit.band(items, E.BIT_SENSOR) ~= 0 and funcs.nearby_items(x, y, 0, 9, E.BIT_SENSOR) < 2
+    local allow_farm = bit.band(items, E.BIT_FARM) ~= 0 or can_farm(x, y, faction_id, bonus)
+    local allow_forest = bit.band(items, E.BIT_FOREST) ~= 0 or can_forest(x, y, faction_id)
+    local allow_fungus = is_fungus_tile or former_plant_fungus(x, y, faction_id)
+    local allow_borehole = bit.band(items, E.BIT_THERMAL_BORE) ~= 0 or can_borehole(x, y, faction_id, bonus)
+
+    local farm_val = (sea and allow_farm)
+        and (2 * funcs.item_yield(x, y, faction_id, bonus, E.BIT_FARM)
+            + (bit.band(items, E.BIT_FARM) ~= 0 and 1 or 0))
+        or 0
+    local forest_val = allow_forest
+        and (2 * funcs.item_yield(x, y, faction_id, bonus, E.BIT_FOREST)
+            + (bit.band(items, E.BIT_FOREST) ~= 0 and 1 or 0))
+        or 0
+    local fungus_val = allow_fungus
+        and (2 * funcs.item_yield(x, y, faction_id, bonus, E.BIT_FUNGUS)
+            - min(4, 2 * funcs.bonus_yield(bonus)) + (is_fungus_tile and 1 or 0))
+        or 0
+    local borehole_val = allow_borehole
+        and (2 * funcs.item_yield(x, y, faction_id, bonus, E.BIT_THERMAL_BORE)
+            + (bit.band(items, E.BIT_THERMAL_BORE) ~= 0 and 1 or 0))
+        or 0
+
+    local max_val = 0
+    for _, v in ipairs({farm_val, forest_val, fungus_val, borehole_val}) do
+        max_val = max(v, max_val)
+    end
+    local skip_val = (current > 7) and 1 or 0
+    local crop_val = (bonus == E.RES_NUTRIENT and 1 or 0) + skip_val
+        + ((bit.band(items, E.BIT_CONDENSER) == 0 and allow_farm
+            and (funcs.tile_is_rainy(x, y) or funcs.tile_is_moist(x, y)) and funcs.tile_is_rolling(x, y))
+            and 1 or 0)
+
+    if farm_val == max_val and sea and max_val > 0 then
+        if is_fungus_tile then
+            return (rem_fungus and E.FORMER_REMOVE_FUNGUS or E.FORMER_NONE)
+        end
+        if idiv(farm_val, 2) > current and bit.band(items, E.BIT_FARM) == 0 and allow_farm then
+            return E.FORMER_FARM
+        end
+    end
+    if forest_val == max_val and max_val > 0 then
+        if is_fungus_tile then
+            return (rem_fungus and E.FORMER_REMOVE_FUNGUS or E.FORMER_NONE)
+        end
+        if bit.band(items, E.BIT_FOREST) ~= 0 then
+            return (can_sensor(x, y, faction_id) and E.FORMER_SENSOR or E.FORMER_NONE)
+        end
+        if idiv(forest_val, 2) > current + crop_val and allow_forest then
+            return E.FORMER_FOREST
+        end
+    end
+    if fungus_val == max_val and max_val > 0 then
+        if is_fungus_tile then
+            return (can_sensor(x, y, faction_id) and E.FORMER_SENSOR or E.FORMER_NONE)
+        end
+        if idiv(fungus_val, 2) > current + (bonus ~= E.RES_NONE and 1 or 0) and allow_fungus then
+            return E.FORMER_PLANT_FUNGUS
+        end
+    end
+    if borehole_val == max_val and max_val > 0 then
+        if is_fungus_tile then
+            return (rem_fungus and E.FORMER_REMOVE_FUNGUS or E.FORMER_NONE)
+        end
+        if bit.band(items, E.BIT_THERMAL_BORE) ~= 0 then
+            return E.FORMER_NONE
+        end
+        if idiv(borehole_val, 2) > current and allow_borehole then
+            return E.FORMER_THERMAL_BORE
+        end
+    end
+    if is_fungus_tile then
+        if former_keep_fungus(x, y, faction_id) then
+            return (can_sensor(x, y, faction_id) and E.FORMER_SENSOR or E.FORMER_NONE)
+        end
+        return (rem_fungus and E.FORMER_REMOVE_FUNGUS or E.FORMER_NONE)
+    end
+    if can_level(x, y, faction_id, bonus) then
+        return E.FORMER_LEVEL_TERRAIN
+    end
+    if sea and bonus == E.RES_NONE and can_sensor(x, y, faction_id) then
+        return E.FORMER_SENSOR
+    end
+
+    local solar_need = (condenser and 0 or 1) + (forest and 0 or 2) + (borehole and 0 or 3)
+        + 2 * max(0, funcs.tile_alt_level(x, y) - E.ALT_ONE_ABOVE_SEA)
+        - funcs.nearby_items(x, y, 0, 25, E.BIT_SOLAR)
+    if sea then
+        local base
+        if funcs.has_terra(E.FORMER_MINE, 1, faction_id) then
+            base = (ResInfoImprovedSea[2] - ResInfoImprovedSea[1])
+                - (funcs.has_tech(tech.rules().tech_preq_mining_platform_bonus, faction_id) and 1 or 0)
+        else
+            base = 6
+        end
+        solar_need = base + funcs.nearby_items(x, y, 0, 25, E.BIT_MINE) - funcs.nearby_items(x, y, 0, 25, E.BIT_SOLAR)
+    end
+
+    if can_solar(x, y, faction_id, bonus) and solar_need > 0 then
+        if allow_farm and bit.band(items, E.BIT_FARM) == 0 then
+            return E.FORMER_FARM
+        end
+        return E.FORMER_SOLAR
+    end
+    if can_mine(x, y, faction_id, bonus) then
+        if sea and allow_farm and bit.band(items, E.BIT_FARM) == 0 then
+            return E.FORMER_FARM
+        end
+        return E.FORMER_MINE
+    end
+    if bit.band(items, E.BIT_SOLAR) ~= 0 and solar_need >= 0 then
+        return E.FORMER_NONE
+    end
+    if allow_farm and bit.band(items, E.BIT_FARM) == 0 then
+        return E.FORMER_FARM
+    end
+    if not use_sensor and bit.band(items, E.BIT_FARM) ~= 0 and bit.band(items, E.BIT_CONDENSER) == 0
+        and funcs.has_terra(E.FORMER_CONDENSER, sea and 1 or 0, faction_id)
+        and (not funcs.is_human(faction_id) or bit.band(GamePreferences[0], E.PREF_AUTO_FORMER_BUILD_ADV) ~= 0) then
+        return E.FORMER_CONDENSER
+    end
+    if not use_sensor and bit.band(items, E.BIT_FARM) ~= 0 and bit.band(items, E.BIT_SOIL_ENRICHER) == 0
+        and funcs.has_terra(E.FORMER_SOIL_ENR, sea and 1 or 0, faction_id) then
+        return E.FORMER_SOIL_ENR
+    end
+    if can_sensor(x, y, faction_id) then
+        return E.FORMER_SENSOR
+    end
+    if forest_val > current + skip_val and can_forest(x, y, faction_id) then
+        return E.FORMER_FOREST
+    end
+    return E.FORMER_NONE
 end
 
 -- move.cpp:2204-2225.

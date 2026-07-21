@@ -1325,11 +1325,32 @@ static int32_t host_build_tubes(int32_t faction_id) {
     return plans[faction_id].build_tubes;
 }
 
+// former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
+// select_item's own remaining dependencies (item_yield/bonus_yield/
+// terraform_cost are real engine yield formulas, same tier as
+// mod_crop_yield -- kept opaque, not AI policy).
+static int32_t host_tile_is_volcano_center(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->volcano_center();
+}
+
+static int32_t host_terraform_cost(int32_t x, int32_t y, int32_t faction_id) {
+    return terraform_cost(x, y, faction_id);
+}
+
+static int32_t host_item_yield(int32_t x, int32_t y, int32_t faction_id, int32_t bonus, int32_t item) {
+    return item_yield(x, y, faction_id, bonus, (MapItem)item);
+}
+
+static int32_t host_bonus_yield(int32_t res_type) {
+    return bonus_yield(res_type);
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 32,
+    /* api_version          */ 33,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1520,6 +1541,10 @@ static LuaHostApi g_host_api = {
     /* can_bridge                  */ host_can_bridge,
     /* plant_fungus_flag           */ host_plant_fungus_flag,
     /* build_tubes                 */ host_build_tubes,
+    /* tile_is_volcano_center      */ host_tile_is_volcano_center,
+    /* terraform_cost              */ host_terraform_cost,
+    /* item_yield                  */ host_item_yield,
+    /* bonus_yield                 */ host_bonus_yield,
 };
 
 static lua_State* L = NULL;
