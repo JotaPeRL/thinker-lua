@@ -151,6 +151,7 @@ local function crawler_move(veh_id)
     local best_score = wc.score
 
     if best_choice ~= E.RES_NONE and cmath.imod(game.turn() + veh_id, 4) ~= 0 then
+        log.debug("crawl_convoy %2d %2d res: %2d score: %2d", v.x, v.y, best_choice, best_score)
         funcs.mark_convoy_site(v.x, v.y)
         return funcs.set_convoy(veh_id, best_choice)
     end
@@ -169,14 +170,17 @@ local function crawler_move(veh_id)
         if cand.choice ~= E.RES_NONE and (cand.score - dist) > best_score then
             best_score = cand.score - dist
             tx, ty = cand_x, cand_y
+            log.debug("crawl_score %2d %2d res: %2d score: %2d", cand_x, cand_y, cand.choice, best_score)
         end
     end
 
     if tx >= 0 then
+        log.debug("crawl_move %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
         funcs.mark_convoy_site(tx, ty)
         return funcs.set_move_to(veh_id, tx, ty)
     end
     if best_choice ~= E.RES_NONE then
+        log.debug("crawl_convoy %2d %2d res: %2d score: %2d", v.x, v.y, best_choice, best_score)
         funcs.mark_convoy_site(v.x, v.y)
         return funcs.set_convoy(veh_id, best_choice)
     end
