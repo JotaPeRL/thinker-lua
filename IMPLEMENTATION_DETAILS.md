@@ -2737,14 +2737,60 @@ confirmed enum gaps are fixed.
 rereading) across every file under `lua/`, not only `move.lua`: every
 `E.<NAME>` and `types.counts.<NAME>` reference cross-checked
 programmatically against the generated `types.lua` tables. Zero
-remaining gaps found anywhere in the codebase. Both presets rebuilt
-clean, `types.lua` reloads clean, every `lua/` file still passes a
-bytecode compile. Redeployed; a second live attempt is needed before
-this sub-stage — and the whole `former_move` port, movement stage 4 —
-can close. If the crash recurs with these two fixes in place, the
-signal will be much cleaner (the Lua path will actually be running
-instead of erroring out on nearly every call), which should narrow
-down whatever remains.
+remaining gaps found anywhere in the codebase. Redeployed for a second
+live attempt — **crashed again**, same signature, now with no
+preceding Lua error at all (confirming the enum fixes were real but
+not the crash's cause). Diagnostic `log.debug` checkpoints were added
+at every step of `former_move`'s scan loop and `select_item`'s own
+control flow (temporary, since removed) to localize it precisely,
+since `pcall` cannot catch a native access violation and the crash
+carried no Lua-level traceback. Two more live attempts, each with
+finer-grained checkpoints, narrowed the crash to inside `can_road`,
+called with a scan-found tile (never the vehicle's own position, which
+had always exited `can_road` via an earlier branch in every prior test)
+— specifically inside its `tile_near8` ring loop, the one piece of
+`can_road` no earlier test had ever reached.
+
+**Root cause, found by re-reading `lua/ffi/funcs.lua`'s actual wrapper
+signature: an argument-count bug, not an enum gap.**
+`tile_near8`/`tile_neighbor`'s wrapper does not return 3 values via
+Lua's multiple-return — it takes caller-provided output pointers as
+its 4th/5th parameters and returns one boolean:
+
+```lua
+tile_near8 = function(x, y, i, tx, ty) return api.tile_near8(x, y, i, tx, ty) ~= 0 end,
+```
+
+The correct call site (already established since stage 3, e.g.
+`base_tile_score`) pre-allocates a small buffer and passes it in:
+`local coord = ffi.new("int32_t[2]"); if funcs.tile_neighbor(x, y, i,
+coord, coord + 1) then local tx, ty = coord[0], coord[1] ...`. Four
+call sites written for this sub-stage instead called it the *other*
+way — `local valid, nx, ny = funcs.tile_neighbor(x, y, i)`, three args
+only — in `can_borehole`, `can_sensor`, `former_move`'s own ocean-
+transport branch, and `can_road`'s new `tile_near8` ring (which was
+designed by copying this same wrong pattern). With only 3 arguments,
+the wrapper's `tx`/`ty` parameters are Lua `nil`; LuaJIT's FFI
+converts `nil` to a NULL pointer for any pointer-typed argument
+(rather than erroring); the host function then unconditionally writes
+`*tx = x2; *ty = y2;` whenever the neighbor tile is on-map — a NULL
+pointer write, exactly matching the crash's own disassembly (`mov
+[eax], esi` with `eax=0`). This is why `tile_neighbor` itself was never
+implicated despite being called the same wrong way in three places:
+none of those three call sites had ever been reached live before this
+sub-stage (all gated behind the `FORMER_NONE` bug, then behind
+`can_road`'s own early-return branches once that was fixed) — the bug
+had been sitting there since it was written, waiting for the first
+tile that actually reached it.
+
+Fixed at all four call sites to the established caller-allocates-the-
+buffer pattern. Verified beyond rereading: a small script cross-checked
+every `funcs.X(...)` call site's argument count against `funcs.lua`'s
+own wrapper arity, across all of `lua/ai/` and `lua/api/`, not just
+`move.lua` — zero remaining mismatches anywhere. Diagnostic logging
+removed (its job was done); the shipped logging is back to one
+decision-trace line per real outcome, matching every other mover.
+Redeployed for a third live attempt.
 
 ---
 

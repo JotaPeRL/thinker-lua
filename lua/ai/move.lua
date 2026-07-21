@@ -160,9 +160,10 @@ local function can_borehole(x, y, faction_id, bonus)
         return false
     end
     local level = funcs.tile_alt_level(x, y)
+    local coord = ffi.new("int32_t[2]")
     for i = 1, 8 do
-        local valid, nx, ny = funcs.tile_neighbor(x, y, i)
-        if valid then
+        if funcs.tile_neighbor(x, y, i, coord, coord + 1) then
+            local nx, ny = coord[0], coord[1]
             if bit.band(funcs.tile_items(nx, ny), E.BIT_THERMAL_BORE) ~= 0
                 or funcs.has_map_node(nx, ny, E.NODE_BOREHOLE) then
                 return false
@@ -290,12 +291,15 @@ local function can_sensor(x, y, faction_id)
     if funcs.tile_is_fungus(x, y) and not funcs.has_tech(tech.rules().tech_preq_improv_fungus, faction_id) then
         return false
     end
+    local coord = ffi.new("int32_t[2]")
     for i = 1, 24 do
-        local valid, nx, ny = funcs.tile_neighbor(x, y, i)
-        if valid and funcs.tile_owner(nx, ny) == faction_id
-            and (bit.band(funcs.tile_items(nx, ny), E.BIT_SENSOR) ~= 0
-                or funcs.has_map_node(nx, ny, E.NODE_SENSOR_ARRAY)) then
-            return false
+        if funcs.tile_neighbor(x, y, i, coord, coord + 1) then
+            local nx, ny = coord[0], coord[1]
+            if funcs.tile_owner(nx, ny) == faction_id
+                and (bit.band(funcs.tile_items(nx, ny), E.BIT_SENSOR) ~= 0
+                    or funcs.has_map_node(nx, ny, E.NODE_SENSOR_ARRAY)) then
+                return false
+            end
         end
     end
     if funcs.is_human(faction_id) and bit.band(GameMorePreferences[0], E.MPREF_AUTO_FORMER_BUILD_SENSORS) == 0 then
@@ -410,12 +414,15 @@ local function can_road(x, y, faction_id)
         return true
     end
     local r = {}
+    local coord = ffi.new("int32_t[2]")
     for i = 0, 7 do
-        local valid, nx, ny = funcs.tile_near8(x, y, i)
         r[i] = 0
-        if valid and not funcs.tile_is_ocean(nx, ny) and funcs.tile_owner(nx, ny) == faction_id
-            and bit.band(funcs.tile_items(nx, ny), bit.bor(E.BIT_ROAD, E.BIT_BASE_IN_TILE)) ~= 0 then
-            r[i] = 1
+        if funcs.tile_near8(x, y, i, coord, coord + 1) then
+            local nx, ny = coord[0], coord[1]
+            if not funcs.tile_is_ocean(nx, ny) and funcs.tile_owner(nx, ny) == faction_id
+                and bit.band(funcs.tile_items(nx, ny), bit.bor(E.BIT_ROAD, E.BIT_BASE_IN_TILE)) ~= 0 then
+                r[i] = 1
+            end
         end
     end
     if (r[0] == 1 and r[4] == 1 and r[2] == 0 and r[6] == 0)
@@ -761,11 +768,14 @@ local function former_move(veh_id)
             funcs.mark_map_node(v.x, v.y, E.NODE_NEED_FERRY)
             return funcs.mod_veh_skip(veh_id)
         end
+        local coord = ffi.new("int32_t[2]")
         for i = 1, 8 do
-            local valid, nx, ny = funcs.tile_neighbor(v.x, v.y, i)
-            if valid and funcs.allow_civ_move(nx, ny, faction_id, E.TRIAD_LAND) and rand.map(0, 2) == 0 then
-                log.debug("former_trans %2d %2d -> %2d %2d", v.x, v.y, nx, ny)
-                return funcs.set_move_to(veh_id, nx, ny)
+            if funcs.tile_neighbor(v.x, v.y, i, coord, coord + 1) then
+                local nx, ny = coord[0], coord[1]
+                if funcs.allow_civ_move(nx, ny, faction_id, E.TRIAD_LAND) and rand.map(0, 2) == 0 then
+                    log.debug("former_trans %2d %2d -> %2d %2d", v.x, v.y, nx, ny)
+                    return funcs.set_move_to(veh_id, nx, ny)
+                end
             end
         end
         return funcs.mod_veh_skip(veh_id)
