@@ -735,6 +735,10 @@ int main() {
     printf("    RES_NUTRIENT = %d,\n", RES_NUTRIENT);
     printf("    RES_MINERAL = %d,\n", RES_MINERAL);
     printf("    RES_ENERGY = %d,\n", RES_ENERGY);
+    // Movement port, stage 2 rework (IMPLEMENTATION_DETAILS.md 4.12):
+    // want_convoy's own energy-choice gate.
+    printf("    FAC_SUPERCOLLIDER = %d,\n", FAC_SUPERCOLLIDER);
+    printf("    FAC_THEORY_OF_EVERYTHING = %d,\n", FAC_THEORY_OF_EVERYTHING);
     // select_build itself, step 2 (push_item + has_retool/skip_facility,
     // IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9 resumed after the
     // Consolidation gate).

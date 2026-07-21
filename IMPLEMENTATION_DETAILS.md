@@ -2016,22 +2016,48 @@ closed.**
 `{applicable, action}`) rather than exposing the individual MAP-tile/
 VEH-field touches they need (`sq->is_base()`/`->owner`, a direct
 `veh->order` write) — same "no real judgment in the block" reasoning as
-`former_tile_tally`. `want_convoy` (`move.cpp:1167-1221`) is its own
-opaque wrapper (pure tile-yield scoring, real engine mechanics, mutates
-`mapnodes` on one path so still flags the mutation tracker) — exposed
-both directly (for the current-tile check) and reused internally, in
-plain C++, by a second wrapper covering the whole `TileSearch` scan
-(`crawler_find_convoy_site`, `move.cpp:1253-1275`) that stays opaque per
-Phase 4.3. New mutating wrappers: `mark_convoy_site` (marks `mapnodes`),
-`set_convoy`, `move_to_base`. `ResType` (`RES_NONE`/`RES_MINERAL`/
-`RES_NUTRIENT`/`RES_ENERGY`) and `ORDER_MOVE_TO` newly exposed enums,
-both already visible via existing `#include`s (no hand-transcription
-needed this time). One new upstream declaration:
-`want_convoy` had no header declaration at all (file-local to
-`move.cpp` but not `static`) — added to `move.h` next to
-`crawler_move`, a genuine 1-line upstream touch, smallest possible.
-`LuaHostApi` bumped to `api_version=25`. Both presets build clean, every
-touched file passes a native-`luajit` syntax check. **Next: live
+`former_tile_tally`. New mutating wrappers: `mark_convoy_site` (marks
+`mapnodes`), `set_convoy`, `move_to_base`.
+
+**Reworked same day, before live verification, per explicit user
+direction:** the first pass wrapped `want_convoy` (`move.cpp:1167-1221`)
+and the whole `TileSearch` scan as opaque calls, on the same "engine
+mechanics, not AI policy" reasoning used for `former_tile_tally`/
+`has_base_sites` elsewhere. The user flagged this as wrong for this
+specific case — crawlers are the single biggest economic lever in the
+game and this project's stated priority area, so `want_convoy`'s scoring
+*formula* (which resource to harvest, how good a tile is) is real AI
+policy, not engine mechanics, even though it consumes engine yield
+calculators as inputs. Reworked: `want_convoy`'s full formula now lives
+in Lua (`lua/ai/move.lua`); only the three yield calculators
+(`mod_crop_yield`/`mod_mine_yield`/`mod_energy_yield`, genuine engine
+mechanics) and single-field tile reads (`tile_is_base`/`tile_owner`/
+`tile_is_base_radius` — `MAP*` still can't cross the FFI boundary) stay
+as host wrappers. The `TileSearch` scan itself still can't cross into
+Lua (Phase 4.3), but instead of one opaque "whole scan" call, it's now
+an **incremental iterator** (`crawler_search_start`/`crawler_search_next`,
+a file-local static `TileSearch` between calls — safe because movement
+dispatch is strictly sequential, same assumption `g_mutation_issued`
+already relies on): Lua drives the loop and scores every candidate with
+the real Lua `want_convoy`, so the "which tile is the best crawl target"
+judgment is genuinely in Lua now, not baked into a host wrapper. This is
+a new pattern for the project — the first host primitive exposed as a
+start/next pair rather than one bounded call — worth reusing if a future
+mover needs the same shape (a C++-side search whose per-candidate
+judgment should live in Lua). Two small new pieces: `project_base`
+(`faction.cpp:70-74`, a one-line array lookup) and `base_growth_goal`
+ported directly to Lua instead of wrapped (`clamp(24 - pop_size, 0,
+base_unused_space(base_id))`, cheap enough once actually read, same
+precedent as `facility_count`). `ResType`/`ORDER_MOVE_TO`/
+`FAC_SUPERCOLLIDER`/`FAC_THEORY_OF_EVERYTHING` newly exposed enums, all
+already visible via existing `#include`s. `want_convoy` had no header
+declaration at all (file-local to `move.cpp` but not `static`) — added
+to `move.h` next to `crawler_move`, then removed again once the C++-side
+`want_convoy` wrapper it was needed for was itself removed; the C++
+fallback body still calls the real `want_convoy` internally, which
+needs no forward declaration since it's defined earlier in the same
+file. `LuaHostApi` bumped to `api_version=26`. Both presets build clean,
+every touched file passes a native-`luajit` syntax check. **Next: live
 verification.**
 
 - **Stage 2b — `nuclear_move`** (~163 loc), split out from stage 2 after

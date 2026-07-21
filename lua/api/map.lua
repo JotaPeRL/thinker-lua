@@ -23,4 +23,10 @@ return {
     -- exposed only as this one-field read.
     base_at = funcs.base_at,
     safety = funcs.map_safety,
+    -- Movement port, stage 2 rework (IMPLEMENTATION_DETAILS.md 4.12):
+    -- want_convoy's own dependencies. MAP* can't cross into Lua, so
+    -- these substitute single-field reads for it, same tier as safety.
+    tile_is_base = funcs.tile_is_base,
+    tile_owner = funcs.tile_owner,
+    tile_is_base_radius = funcs.tile_is_base_radius,
 }

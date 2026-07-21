@@ -460,58 +460,78 @@ static void host_crawler_at_target_check(int32_t veh_id, int32_t* applicable, in
     *applicable = 0;
 }
 
-// move.cpp:1167-1221, reproduced via the real want_convoy verbatim. Pure
-// tile-yield scoring (mod_crop_yield/mod_mine_yield/mod_energy_yield) --
-// real engine mechanics, not AI choice. Flags g_mutation_issued
-// unconditionally since want_convoy's own body can insert into mapnodes
-// on one early-return path (a dedup marker, not a "decision").
-static void host_want_convoy(int32_t veh_id, int32_t x, int32_t y, int32_t* choice, int32_t* score) {
-    g_mutation_issued = true;
-    MAP* sq = mapsq(x, y);
-    if (!sq) {
-        *choice = RES_NONE;
-        *score = 0;
-        return;
-    }
-    *choice = (int32_t)want_convoy(veh_id, x, y, score, sq);
+// Movement port, stage 2 rework (IMPLEMENTATION_DETAILS.md 4.12,
+// 2026-07-21): want_convoy's own scoring formula moved to Lua (crawlers
+// are the project's stated priority area) -- these are the thin
+// engine-mechanics wrappers it depends on. Pure reads, no mutation.
+static int32_t host_mod_crop_yield(int32_t faction_id, int32_t base_id, int32_t x, int32_t y, int32_t flag) {
+    return mod_crop_yield(faction_id, base_id, x, y, flag);
 }
 
-// move.cpp:1253-1275, the TileSearch scan itself. TileSearch never
-// crosses into Lua (Phase 4.3) -- same "wrap the whole scan+pick-best"
-// precedent as has_base_sites/former_tile_tally, reusing the real
-// want_convoy internally per candidate tile (not the Lua-facing wrapper
-// above -- this stays a plain in-process C++ call).
-static void host_crawler_find_convoy_site(int32_t veh_id, int32_t best_score, int32_t limit,
-int32_t* found, int32_t* tx_out, int32_t* ty_out, int32_t* score_out) {
+static int32_t host_mod_mine_yield(int32_t faction_id, int32_t base_id, int32_t x, int32_t y, int32_t flag) {
+    return mod_mine_yield(faction_id, base_id, x, y, flag);
+}
+
+static int32_t host_mod_energy_yield(int32_t faction_id, int32_t base_id, int32_t x, int32_t y, int32_t flag) {
+    return mod_energy_yield(faction_id, base_id, x, y, flag);
+}
+
+static int32_t host_tile_is_base(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_base();
+}
+
+static int32_t host_tile_owner(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq ? sq->owner : -1;
+}
+
+static int32_t host_tile_is_base_radius(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_base_radius();
+}
+
+static int32_t host_project_base(int32_t item_id) {
+    return project_base((FacilityId)item_id);
+}
+
+// move.cpp:1253-1275, the TileSearch scan as an incremental iterator.
+// TileSearch still never crosses into Lua (Phase 4.3) -- it lives here,
+// in file-local static state valid only between one crawler_search_start
+// and its matching sequence of crawler_search_next calls (movement
+// dispatch is strictly sequential, no reentrancy risk, same assumption
+// g_mutation_issued already relies on). Lua drives the loop and scores
+// each candidate with the real (now-Lua) want_convoy -- this wrapper
+// only applies the original loop's own filters (safety/ally/existing
+// convoy site) and its `limit` bound, exactly as move.cpp did.
+static TileSearch g_crawler_ts;
+static int g_crawler_search_i;
+static int g_crawler_search_limit;
+
+static void host_crawler_search_start(int32_t veh_id, int32_t limit) {
     VEH* veh = &Vehs[veh_id];
-    int i = 0;
-    int tx = -1;
-    int ty = -1;
-    int score = 0;
-    int best = best_score;
-    TileSearch ts;
-    ts.init(veh->x, veh->y, veh->triad());
+    g_crawler_ts.init(veh->x, veh->y, veh->triad());
+    g_crawler_search_i = 0;
+    g_crawler_search_limit = limit;
+}
+
+static void host_crawler_search_next(int32_t faction_id, int32_t* valid,
+int32_t* tx, int32_t* ty, int32_t* dist) {
     MAP* sq;
-    while (++i <= limit && (sq = ts.get_next()) != NULL) {
-        if (mapdata[{ts.rx, ts.ry}].safety < PM_SAFE
-        || non_ally_in_tile(ts.rx, ts.ry, veh->faction_id)
-        || mapnodes.count({ts.rx, ts.ry, NODE_CONVOY_SITE})) {
+    while (++g_crawler_search_i <= g_crawler_search_limit
+    && (sq = g_crawler_ts.get_next()) != NULL) {
+        if (mapdata[{g_crawler_ts.rx, g_crawler_ts.ry}].safety < PM_SAFE
+        || non_ally_in_tile(g_crawler_ts.rx, g_crawler_ts.ry, faction_id)
+        || mapnodes.count({g_crawler_ts.rx, g_crawler_ts.ry, NODE_CONVOY_SITE})) {
             continue;
         }
-        int choice = want_convoy(veh_id, ts.rx, ts.ry, &score, sq);
-        if (choice != RES_NONE && score - ts.dist > best) {
-            best = score - ts.dist;
-            tx = ts.rx;
-            ty = ts.ry;
-            debug("crawl_score %2d %2d res: %2d score: %2d %s\n",
-                ts.rx, ts.ry, choice, best, Bases[veh->home_base_id].name);
-        }
+        *valid = 1;
+        *tx = g_crawler_ts.rx;
+        *ty = g_crawler_ts.ry;
+        *dist = g_crawler_ts.dist;
+        return;
     }
-    g_mutation_issued = true;
-    *found = (tx >= 0) ? 1 : 0;
-    *tx_out = tx;
-    *ty_out = ty;
-    *score_out = best;
+    *valid = 0;
 }
 
 static void host_mark_convoy_site(int32_t x, int32_t y) {
@@ -662,7 +682,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 25,
+    /* api_version          */ 26,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -768,11 +788,18 @@ static LuaHostApi g_host_api = {
     /* mod_veh_skip         */ host_mod_veh_skip,
     /* crawler_home_base_check */ host_crawler_home_base_check,
     /* crawler_at_target_check */ host_crawler_at_target_check,
-    /* want_convoy          */ host_want_convoy,
-    /* crawler_find_convoy_site */ host_crawler_find_convoy_site,
     /* mark_convoy_site     */ host_mark_convoy_site,
     /* set_convoy           */ host_set_convoy,
     /* move_to_base         */ host_move_to_base,
+    /* mod_crop_yield       */ host_mod_crop_yield,
+    /* mod_mine_yield       */ host_mod_mine_yield,
+    /* mod_energy_yield     */ host_mod_energy_yield,
+    /* tile_is_base         */ host_tile_is_base,
+    /* tile_owner           */ host_tile_owner,
+    /* tile_is_base_radius  */ host_tile_is_base_radius,
+    /* project_base         */ host_project_base,
+    /* crawler_search_start */ host_crawler_search_start,
+    /* crawler_search_next  */ host_crawler_search_next,
 };
 
 static lua_State* L = NULL;

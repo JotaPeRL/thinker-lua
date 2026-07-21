@@ -267,23 +267,41 @@ struct LuaHostApi {
     // means the whole block ran and `action` is the final return value.
     void (*crawler_home_base_check)(int32_t veh_id, int32_t* applicable, int32_t* action);
     void (*crawler_at_target_check)(int32_t veh_id, int32_t* applicable, int32_t* action);
-    // want_convoy (move.cpp:1167-1221): pure scoring formula over tile
-    // yields (mod_crop_yield/mod_mine_yield/mod_energy_yield) and base
-    // state -- real engine mechanics, not AI choice (the choice itself
-    // is a simple threshold comparison already inside the formula).
-    // Mutates mapnodes in one early-return path (a dedup marker, not a
-    // "decision"), so still flags g_mutation_issued like every other
-    // wrapper that touches engine state.
-    void (*want_convoy)(int32_t veh_id, int32_t x, int32_t y, int32_t* choice, int32_t* score);
-    // The TileSearch scan itself (move.cpp:1253-1275) -- stays opaque
-    // per Phase 4.3 (TileSearch never crosses into Lua), calls the real
-    // C++ want_convoy internally per candidate tile, same "wrap the
-    // whole scan+pick-best" precedent as has_base_sites/former_tile_tally.
-    void (*crawler_find_convoy_site)(int32_t veh_id, int32_t best_score, int32_t limit,
-        int32_t* found, int32_t* tx, int32_t* ty, int32_t* score);
     void (*mark_convoy_site)(int32_t x, int32_t y);
     int32_t (*set_convoy)(int32_t veh_id, int32_t res);
     int32_t (*move_to_base)(int32_t veh_id, int32_t ally);
+    // Movement port, stage 2 rework (IMPLEMENTATION_DETAILS.md 4.12,
+    // 2026-07-21): want_convoy's scoring formula is real AI policy --
+    // crawlers are the game's single biggest economic lever and the
+    // project's stated priority area, so the formula itself now lives
+    // in Lua (lua/ai/move.lua), not behind an opaque wrapper. Only the
+    // genuine engine mechanics it depends on stay as thin wrappers:
+    // the three yield calculators, and single-field tile reads (MAP*
+    // can't cross the FFI boundary, so these substitute for it, same
+    // tier as map_safety/base_at).
+    int32_t (*mod_crop_yield)(int32_t faction_id, int32_t base_id, int32_t x, int32_t y, int32_t flag);
+    int32_t (*mod_mine_yield)(int32_t faction_id, int32_t base_id, int32_t x, int32_t y, int32_t flag);
+    int32_t (*mod_energy_yield)(int32_t faction_id, int32_t base_id, int32_t x, int32_t y, int32_t flag);
+    int32_t (*tile_is_base)(int32_t x, int32_t y);
+    int32_t (*tile_owner)(int32_t x, int32_t y); // -1 if unowned
+    int32_t (*tile_is_base_radius)(int32_t x, int32_t y);
+    // faction.cpp:70-74, a one-line SecretProjects[] array lookup -- the
+    // array itself isn't otherwise worth exposing for one call site.
+    int32_t (*project_base)(int32_t item_id);
+    // The TileSearch scan (move.cpp:1253-1275) as an incremental
+    // iterator instead of one opaque "whole scan" call: TileSearch still
+    // never crosses into Lua (Phase 4.3, it lives in a static C++ local
+    // between calls), but Lua now drives the loop and scores each
+    // candidate itself via the real (Lua) want_convoy, so the "which
+    // tile is best" judgment is genuinely in Lua, not baked into the
+    // host wrapper. crawler_search_next applies the same safety/ally/
+    // convoy-site filters the original loop's `continue` did, and
+    // respects the original `limit` bound internally (a static counter,
+    // reset by crawler_search_start) -- it only ever returns candidates
+    // that passed those filters, one per call, until exhausted.
+    void (*crawler_search_start)(int32_t veh_id, int32_t limit);
+    void (*crawler_search_next)(int32_t faction_id, int32_t* valid,
+        int32_t* tx, int32_t* ty, int32_t* dist);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3
