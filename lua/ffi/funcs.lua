@@ -227,10 +227,11 @@ typedef struct {
     void (*former_consume)(int32_t x, int32_t y);
     int32_t (*former_apply_action)(int32_t veh_id, int32_t item);
     void (*former_request_new_orders)(int32_t veh_id);
+    int32_t (*reg_enemy_at)(int32_t region, int32_t is_probe);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 34
+local HOST_API_VERSION = 35
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -485,4 +486,5 @@ return {
     former_consume = function(x, y) return api.former_consume(x, y) end,
     former_apply_action = function(veh_id, item) return api.former_apply_action(veh_id, item) end,
     former_request_new_orders = function(veh_id) return api.former_request_new_orders(veh_id) end,
+    reg_enemy_at = function(region, is_probe) return api.reg_enemy_at(region, is_probe) ~= 0 end,
 }

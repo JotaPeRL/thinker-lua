@@ -2843,6 +2843,77 @@ forward-reference gap). Next movement stage: `trans_move` (stage 5).
 
 ---
 
+### 4.14 `trans_move` port (movement stage 5) — sub-stage 1 done, build-verified
+
+**Real size, read in full:** `trans_move` itself ~253 loc
+(`move.cpp:2448-2699`), `make_landing` ~34 loc (`move.cpp:2413-2446`,
+where an invading unit should disembark — real AI policy),
+`near_landing` ~9 loc (`move.cpp:2403-2411`, a plain fact). ~296 loc
+total — smaller than `former_move`'s ~670, comparable to `select_item`
+alone; a single mover, not a family of dependent pieces spread across
+several C++ functions like `former_move`'s were.
+
+**Classification: `choose_defender`/`battle_priority` stay opaque.**
+`trans_move` uses both to decide whether an invading transport should
+attack. Read their call sites across the whole codebase: 6 total, in
+`trans_move` and clearly `combat_move`-family code (`move.cpp:3115,
+3128, 3176, 3185, 3234, 3237, 3580-3581`) — confirming the classification
+`IMPLEMENTATION_DETAILS.md` 4.12 already made for this exact pair
+(Group B: "belongs to movers not yet scoped, deferred to their own
+stage" — `combat_move`, movement stage 6). Not a new call, just
+respecting the existing one; porting them now would mean re-deriving
+half of `combat_move`'s own battle-scoring machinery before that stage
+is even scoped.
+
+**Reuse, no new work needed:** `search_route` and `escape_move` (both
+already fully ported) are called directly from `trans_move`'s own
+body — 3 and 1 times respectively. Also already exposed: `cargo_capacity`,
+`can_link_artifact`, `base_at`, `map_range`, `allow_move`, `has_pact`,
+`at_war`, `region_at`, `has_abil`, `veh_speed`, `allow_scout`,
+`tile_is_land_region`, `tile_owner`, `map_target`/`map_safety`,
+`has_map_node`/`mark_map_node`, `tile_neighbor`, every `AIPlans`
+accessor `trans_move` needs (`naval_start_x/y`, `naval_end_x/y`,
+`enemy_bases`, `transport_units`, `sea_combat_units`), and
+`Faction.region_total_bases` (already exposed since the war-decision
+port, 4.6). `Continent.pods` (already exposed, route_score sub-stage
+A) covers `make_landing`'s own needs via `map.continent(region)`.
+
+**Sub-stage 1: engine surface + `near_landing` + `make_landing`. ✅
+done, build-verified; not yet live-verified (nothing calls them yet —
+`trans_move`, sub-stage 2, is what will).**
+
+**New engine surface** (`api_version` bumped 34→35): three
+hand-transcribed `NodesetType` enums `near_landing`/`make_landing`
+needed (`NODE_NAVAL_BEACH`, `NODE_NAVAL_END`, `NODE_SCOUT_SITE` — same
+tier and reason as `NODE_NAVAL_START`/`PICK`), and one new host
+wrapper: `reg_enemy_at(region, is_probe)`, querying `region_probe`/
+`region_enemy` — two `move.cpp`-internal containers populated by
+`move_upkeep` (not yet ported, movement stage 7) — a pure precomputed-
+fact lookup, not AI policy, kept opaque. `reg_enemy_at` itself lost its
+`static` in `move.cpp` to be reachable from `luaai.cpp`, same
+precedent as `build.cpp`'s `check_probe` (4.8). `UNIT.chassis_id` was
+already exposed (needed only by `trans_move` itself, sub-stage 2, for
+`chassis_type()` — a one-line delegation, no new wrapper needed there
+either).
+
+**Verified beyond the usual syntax/build checks**, given the bug hunt
+this same file's stage 4 section just went through: the same three
+scripted sweeps run again on the current tree — arg-count matching for
+every `funcs.X(...)` call site, forward-reference checking for every
+locally-defined Lua function call, and enum/count coverage — all three
+clean across every file under `lua/`, not just `move.lua`.
+
+**Files touched:** `tools/gen_ffi.cpp` (3 enums), `src/move.cpp`/`.h`
+(`reg_enemy_at` un-`static`'d + declared), `src/luaai.h`/`.cpp` (1 new
+`LuaHostApi` entry, `api_version` bump to 35), `lua/ffi/funcs.lua`,
+`lua/ai/move.lua` (`near_landing`/`make_landing` + provenance entries).
+
+**Next: sub-stage 2 — `trans_move` itself** (dispatch + the
+`TileSearch` scan, reusing `search_route`/`escape_move` — no new work
+needed there), **then live verification.**
+
+---
+
 ## Phase 5 — validation
 
 The Consolidation gate (`IMPLEMENTATION_PLAN.md`, opened 2026-07-14) exists

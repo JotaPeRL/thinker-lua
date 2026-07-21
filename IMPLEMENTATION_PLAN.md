@@ -572,7 +572,15 @@ enable Lua by default on the branch → next.
    (`escape_move`/`search_base` called before their own definitions,
    caught safely by `pcall` every time but never actually running) —
    see `IMPLEMENTATION_DETAILS.md` 4.13 for the full bug-hunt narrative.
-   Next movement stage: `trans_move` (stage 5).**
+   Stage 5 (`trans_move`) under way: sub-stage 1 (engine surface +
+   `near_landing`/`make_landing`, its two small dependencies) done and
+   build-verified — `choose_defender`/`battle_priority` (used by
+   `trans_move` for invasion-attack decisions) confirmed to belong to
+   `combat_move`'s own family (6 call sites total, movement stage 6)
+   and kept opaque, respecting the classification `IMPLEMENTATION_
+   DETAILS.md` 4.12 already made. Sub-stage 2 (`trans_move` itself +
+   live verification) not yet started — see `IMPLEMENTATION_DETAILS.md`
+   4.14.**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across

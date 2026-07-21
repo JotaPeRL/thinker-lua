@@ -563,6 +563,12 @@ struct LuaHostApi {
     void (*former_consume)(int32_t x, int32_t y);
     int32_t (*former_apply_action)(int32_t veh_id, int32_t item);
     void (*former_request_new_orders)(int32_t veh_id);
+    // trans_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.14):
+    // near_landing/make_landing's own dependencies. reg_enemy_at queries
+    // region_probe/region_enemy, two move.cpp-internal containers
+    // populated by move_upkeep (not yet ported, movement stage 7) --
+    // pure precomputed-fact lookup, not AI policy, kept opaque.
+    int32_t (*reg_enemy_at)(int32_t region, int32_t is_probe);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

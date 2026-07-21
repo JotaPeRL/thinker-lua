@@ -71,6 +71,10 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         former_move = { file = "src/move.cpp", func = "former_move",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        near_landing = { file = "src/move.cpp", func = "near_landing",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        make_landing = { file = "src/move.cpp", func = "make_landing",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -1713,6 +1717,60 @@ local function colony_move(veh_id)
         end
     end
     return funcs.mod_veh_skip(veh_id)
+end
+
+-- trans_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.14):
+-- near_landing (move.cpp:2403-2411) -- a plain fact, no scoring.
+local function near_landing(veh_id)
+    local v = veh.get(veh_id)
+    return funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_END)
+        or funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_PICK)
+        or funcs.has_map_node(v.x, v.y, E.NODE_SCOUT_SITE)
+end
+
+-- trans_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.14):
+-- make_landing (move.cpp:2413-2446) -- where an invading unit should
+-- disembark, real AI policy. iterate_tiles(veh->x, veh->y, 1, 9) is the
+-- immediate 8-neighbor ring, same tile_neighbor(x, y, i) for i=1..8
+-- pattern as can_borehole/can_road. reg_enemy_at queries move_upkeep's
+-- own precomputed region_probe/region_enemy sets (kept opaque, see
+-- src/luaai.h) -- not AI policy, movement stage 7 territory.
+local function make_landing(veh_id)
+    local v = veh.get(veh_id)
+    local faction_id = v.faction_id
+    local best_score = 0
+    local tx, ty = -1, -1
+    local coord = ffi.new("int32_t[2]")
+    for i = 1, 8 do
+        if funcs.tile_neighbor(v.x, v.y, i, coord, coord + 1) then
+            local mx, my = coord[0], coord[1]
+            local region = funcs.tile_region(mx, my)
+            local owner = funcs.tile_owner(mx, my)
+            if funcs.allow_move(mx, my, faction_id, E.TRIAD_LAND)
+                and not (funcs.has_pact(faction_id, owner)
+                    and not funcs.reg_enemy_at(region, veh.is_probe(v))) then
+                local continent = map.continent(region)
+                if not (veh.is_combat_unit(v) and not funcs.has_map_node(mx, my, E.NODE_SCOUT_SITE)
+                    and not funcs.has_map_node(mx, my, E.NODE_NAVAL_BEACH)
+                    and rand.map(0, 8) > 4 * (funcs.reg_enemy_at(region, false) and 1 or 0)
+                    and continent.pods <= idiv(continent.tile_count, 32)) then
+                    local score = 16 * (funcs.has_map_node(mx, my, E.NODE_NAVAL_BEACH) and 1 or 0)
+                        + 4 * ((veh.is_colony(v) and owner < 0) and 1 or 0)
+                        + min(8, continent.pods) + rand.map(0, 8)
+                    if score > best_score then
+                        tx, ty = mx, my
+                        best_score = score
+                    end
+                end
+            end
+        end
+    end
+    if tx >= 0 then
+        log.debug("make_landing %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+        funcs.set_move_to(veh_id, tx, ty)
+        return true
+    end
+    return false
 end
 
 port.artifact_move = artifact_move

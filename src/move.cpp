@@ -69,7 +69,7 @@ static void adjust_enemy_near(int x, int y, int range, int value) {
     }
 }
 
-static bool reg_enemy_at(int region, bool is_probe) {
+bool reg_enemy_at(int region, bool is_probe) {
     return is_probe ? region_probe.count(region) : region_enemy.count(region);
 }
 

@@ -917,6 +917,11 @@ int main() {
     // 4.12): add_goal's own goal-type constant (engine_enums.h, already
     // included above) -- compiler-read, not hand-typed.
     printf("    AI_GOAL_NAVAL_PICK = %d,\n", AI_GOAL_NAVAL_PICK);
+    // trans_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.14):
+    // near_landing/make_landing's own markers.
+    printf("    NODE_NAVAL_BEACH = %d,\n", 8);
+    printf("    NODE_NAVAL_END = %d,\n", 9);
+    printf("    NODE_SCOUT_SITE = %d,\n", 11);
     // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
     // escape_score/base_tile_score/colony_move's own item/landmark/
     // altitude/order constants. All come straight from engine_enums.h/

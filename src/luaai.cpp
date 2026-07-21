@@ -1400,11 +1400,19 @@ static void host_former_request_new_orders(int32_t veh_id) {
     veh->order = ORDER_NONE;
 }
 
+// trans_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.14):
+// near_landing/make_landing's own dependencies. reg_enemy_at lost its
+// static (move.cpp) to be reachable here, same precedent as
+// build.cpp's check_probe (4.8).
+static int32_t host_reg_enemy_at(int32_t region, int32_t is_probe) {
+    return reg_enemy_at(region, is_probe);
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 34,
+    /* api_version          */ 35,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1604,6 +1612,7 @@ static LuaHostApi g_host_api = {
     /* former_consume              */ host_former_consume,
     /* former_apply_action         */ host_former_apply_action,
     /* former_request_new_orders   */ host_former_request_new_orders,
+    /* reg_enemy_at                */ host_reg_enemy_at,
 };
 
 static lua_State* L = NULL;
