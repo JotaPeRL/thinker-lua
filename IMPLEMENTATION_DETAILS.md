@@ -2079,8 +2079,46 @@ short and local (e.g. `44 42 -> 40 46`), and at least 44 distinct
 starting positions were touched across the run — broad, not a single
 repeating case. **Stage 2 closed.**
 
-- **Stage 3 — `colony_move`** (~125 loc, reuses `can_build_base`/
-  `base_tile_score`).
+**The "search + score" function family (found 2026-07-21, before starting
+stage 3).** Reading `colony_move` before implementing it (per the user's
+own request, after the `want_convoy` correction) found the *same*
+opaque-scoring mistake already shipped in stage 1: `path.search_route`
+(used by `artifact_move`, already "done, live-verified") wraps
+`route_score`, a real scoring formula with an artifact-specific special
+case (`path.cpp:759`), not engine mechanics. The user asked for a full
+sweep of `move.cpp`/`path.cpp` before touching any more movers. Found a
+whole family of standalone `*_score(...)` functions, each consumed by a
+`TileSearch` scan tracking a `best_score`:
+
+- **Group A — blocks stage 3 or already shipped, addressed now:**
+  `route_score` (`search_route`, deferred to its own stage — see below),
+  `escape_score` (`search_escape`/`search_base`), `base_tile_score`
+  (`colony_move`'s own site scoring).
+- **Group B — belongs to movers not yet scoped, deferred to their own
+  stage rather than ported blind without full context:** `former_tile_score`
+  (`former_move`, stage 4), `teleport_score`/`flank_score`/`cover_score`/
+  `target_priority`/`battle_calc`/`battle_eval`/`battle_priority` (all
+  `combat_move`/`choose_defender`, stage 6). Both groups also feed
+  `move_upkeep`'s `PMTable.overlay` cache fill (stage 7) — a
+  precomputation for other systems to read cheaply, not itself a
+  decision; revisit when stage 7 is scoped.
+
+**`route_score`/`search_route` split into its own stage, not fixed
+inline.** Read in full (`path.cpp:675-885`, 210 loc): 4 branches by
+triad/combat status (air/sea/land-combat/land-noncombat), **5 separate
+scoring loops**, a gate-teleport network search (`FAC_PSI_GATE`), and a
+sea-route "naval pickup point" search that walks `TileSearch`'s own
+path-node parent chain (`ts.get_prev()`/`node.prev`) — deeper coupling
+to `TileSearch` internals than `crawler_move`'s simple per-tile scan, so
+the start/next iterator pattern doesn't drop in as-is. Comparable in
+size to `nuclear_move`/`find_project`, not a quick formula swap.
+Deferred to its own stage (placement TBD — likely alongside or after
+`nuclear_move`, given similar weight) rather than rushed; `escape_score`/
+`base_tile_score` are more contained and come first.
+
+- **Stage 3 — `colony_move`**, now including a real port of `base_tile_score`
+  and a fix for `escape_score`/`search_escape`/`search_base` (both
+  consumed by `colony_move` directly, not deferred).
 - **Stage 4 — `former_move`** (~157 loc). The one stage where a real,
   substantial new port is unavoidable: `select_item`
   (`move.cpp:1803-2004`, ~200 loc) plus its 12 `can_*` tile-eligibility

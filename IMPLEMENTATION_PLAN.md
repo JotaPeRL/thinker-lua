@@ -548,8 +548,18 @@ enable Lua by default on the branch → next.
    C++ baseline already measured.
 
    **Status: 🔨 stages 0-2 done and live-verified, next up is stage 3
-   (`colony_move`).** Real function sizes read (not estimated) and a
-   concrete stage-by-stage breakdown agreed with the
+   (`colony_move`).** Before starting stage 3, a user-directed audit of
+   `move.cpp`/`path.cpp` found the `want_convoy` mistake already shipped
+   in stage 1 too: `search_route` (used by `artifact_move`) wraps
+   `route_score`, a real scoring formula, opaquely — and a whole family
+   of similar `*_score` functions exists across the file. `route_score`/
+   `search_route` turned out comparable in size to `nuclear_move`
+   (210 loc, 5 scoring loops, deep `TileSearch` path-node coupling), so
+   it's deferred to its own stage rather than fixed inline; `escape_score`/
+   `base_tile_score` (both needed by `colony_move` directly) are smaller
+   and come first, folded into stage 3. See `IMPLEMENTATION_DETAILS.md`
+   4.12 for the full classification. Real function sizes read (not
+   estimated) and a concrete stage-by-stage breakdown agreed with the
    user — see `IMPLEMENTATION_DETAILS.md` 4.12. Stage 0 (the Class 3
    hook mechanism, `lua_ai_command_hook`) and stage 1 (`artifact_move`,
    the pilot) are done and live-verified: 5 real invocations, all
