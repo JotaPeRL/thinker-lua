@@ -534,6 +534,391 @@ int32_t* tx, int32_t* ty, int32_t* dist) {
     *valid = 0;
 }
 
+// Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12): escape_score's
+// own dependencies (used by escape_move/search_escape/search_base, all
+// needed by colony_move). Pure reads.
+static int32_t host_map_target(int32_t x, int32_t y) {
+    return mapdata[{x, y}].target;
+}
+
+static uint32_t host_tile_items(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq ? sq->items : 0;
+}
+
+static int32_t host_tile_is_rocky(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_rocky();
+}
+
+static int32_t host_has_map_node(int32_t x, int32_t y, int32_t node_type) {
+    return mapnodes.count({x, y, node_type});
+}
+
+static void host_mark_map_node(int32_t x, int32_t y, int32_t node_type) {
+    g_mutation_issued = true;
+    mapnodes.insert({x, y, node_type});
+}
+
+static int32_t host_veh_need_monolith(int32_t veh_id) {
+    return Vehs[veh_id].need_monolith();
+}
+
+static int32_t host_veh_need_refuel(int32_t veh_id) {
+    return Vehs[veh_id].need_refuel();
+}
+
+static int32_t host_veh_speed(int32_t veh_id, int32_t skip_morale) {
+    return veh_speed(veh_id, skip_morale);
+}
+
+static int32_t host_allow_move(int32_t x, int32_t y, int32_t faction_id, int32_t triad) {
+    return allow_move(x, y, faction_id, triad);
+}
+
+static int32_t host_non_ally_in_tile(int32_t x, int32_t y, int32_t faction_id) {
+    return non_ally_in_tile(x, y, faction_id);
+}
+
+static int32_t host_defend_tile(int32_t veh_id) {
+    VEH* veh = &Vehs[veh_id];
+    MAP* sq = mapsq(veh->x, veh->y);
+    return defend_tile(veh, sq);
+}
+
+static int32_t host_set_order_none(int32_t veh_id) {
+    g_mutation_issued = true;
+    return set_order_none(veh_id);
+}
+
+// search_escape (path.cpp:575-605) as an incremental iterator, same
+// start/next shape as crawler_search_*. escape_score itself is ported to
+// Lua (lua/ai/move.lua); this wrapper only applies the original loop's
+// own filters (ally/pact ownership, zoc) -- all boolean facts, no RNG.
+static TileSearch g_escape_ts;
+
+static void host_search_escape_start(int32_t veh_id) {
+    VEH* veh = &Vehs[veh_id];
+    g_escape_ts.init(veh->x, veh->y, veh->triad());
+}
+
+static void host_search_escape_next(int32_t faction_id, int32_t* valid,
+int32_t* tx, int32_t* ty, int32_t* dist) {
+    MAP* sq;
+    while ((sq = g_escape_ts.get_next()) != NULL && g_escape_ts.dist <= 8) {
+        if (non_ally_in_tile(g_escape_ts.rx, g_escape_ts.ry, faction_id)
+        || (sq->is_base() && sq->owner != faction_id && !has_pact(faction_id, sq->owner))
+        || g_escape_ts.has_zoc(faction_id)) {
+            continue;
+        }
+        *valid = 1;
+        *tx = g_escape_ts.rx;
+        *ty = g_escape_ts.ry;
+        *dist = g_escape_ts.dist;
+        return;
+    }
+    *valid = 0;
+}
+
+// search_base (path.cpp:607-657) as an incremental iterator -- see
+// luaai.h's own comment on the kind=0/1/2 contract and the `found`
+// round-trip (Lua owns escape_score's best_score/tx/ty bookkeeping now,
+// so the host side needs `found` passed back in on every call to know
+// whether to keep offering non-base candidates).
+static TileSearch g_search_base_ts;
+static int g_search_base_max_dist;
+
+static void host_search_base_start(int32_t veh_id, int32_t ally,
+int32_t* already_there, int32_t* max_dist) {
+    VEH* veh = &Vehs[veh_id];
+    MAP* sq = mapsq(veh->x, veh->y);
+    if (sq && sq->is_base() && (sq->owner == veh->faction_id || ally)) {
+        *already_there = 1;
+        return;
+    }
+    *already_there = 0;
+    int triad = veh->triad();
+    int type = (triad == TRIAD_SEA) ? TS_SEA_AND_SHORE : triad;
+    if (triad == TRIAD_AIR && veh->need_refuel()) {
+        g_search_base_max_dist = std::max(0, (veh_speed(veh_id, 0) - veh->moves_spent)
+            / Rules->move_rate_roads);
+    } else {
+        g_search_base_max_dist = 20;
+    }
+    *max_dist = g_search_base_max_dist;
+    g_search_base_ts.init(veh->x, veh->y, type, 1);
+}
+
+static void host_search_base_next(int32_t faction_id, int32_t triad, int32_t ally, int32_t found,
+int32_t* kind, int32_t* tx, int32_t* ty, int32_t* dist) {
+    MAP* sq;
+    while ((sq = g_search_base_ts.get_next()) != NULL
+    && g_search_base_ts.dist <= g_search_base_max_dist) {
+        if (sq->is_base()) {
+            if (sq->owner == faction_id || (ally && has_pact(faction_id, sq->owner))) {
+                *kind = 1;
+                *tx = g_search_base_ts.rx;
+                *ty = g_search_base_ts.ry;
+                return;
+            }
+        } else if (!found && (g_search_base_ts.dist <= 5 || triad == TRIAD_AIR)
+        && allow_move(g_search_base_ts.rx, g_search_base_ts.ry, faction_id, triad)
+        && ((triad == TRIAD_AIR && sq->is_airbase())
+            || (triad != TRIAD_AIR && !g_search_base_ts.has_zoc(faction_id)))) {
+            // is_airbase/has_zoc gate the candidate itself (path.cpp:645-649
+            // guards the *assignment*, not the score computation) -- since
+            // escape_score has no side effects, filtering the candidate out
+            // entirely here (never surfacing it to Lua, so best_score never
+            // sees its score) is equivalent to the original computing and
+            // then discarding it.
+            *kind = 2;
+            *tx = g_search_base_ts.rx;
+            *ty = g_search_base_ts.ry;
+            *dist = g_search_base_ts.dist;
+            return;
+        }
+    }
+    *kind = 0;
+}
+
+// base_tile_score's own dependencies (colony_move's site-scoring
+// formula). Same single-field-read tier as the escape_score set above.
+static int32_t host_tile_alt_level(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq ? sq->alt_level() : 0;
+}
+
+static int32_t host_tile_bonus(int32_t x, int32_t y) {
+    return bonus_at(x, y);
+}
+
+static uint32_t host_tile_lm_items(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq ? sq->lm_items() : 0;
+}
+
+static int32_t host_tile_is_land_region(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_land_region();
+}
+
+static int32_t host_tile_region(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq ? sq->region : -1;
+}
+
+static int32_t host_tile_is_rainy(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_rainy();
+}
+
+static int32_t host_tile_is_moist(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_moist();
+}
+
+static int32_t host_tile_is_rolling(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_rolling();
+}
+
+static int32_t host_both_non_enemy(int32_t faction_id_1, int32_t faction_id_2) {
+    return both_non_enemy(faction_id_1, faction_id_2);
+}
+
+static int32_t host_ocean_coast_tiles(int32_t x, int32_t y) {
+    return ocean_coast_tiles(x, y);
+}
+
+// colony_move's own remaining dependencies. can_build_base/near_ocean_
+// coast/has_transport/allow_civ_move/can_airdrop/allow_airdrop/
+// invasion_unit are pure eligibility facts; action_airdrop/mod_veh_kill/
+// net_action_build are mutators; connect_roads is a pure road-planning
+// mechanic (constructs its own local TileSearch, like search_route).
+static int32_t host_can_build_base(int32_t x, int32_t y, int32_t faction_id, int32_t triad) {
+    return can_build_base(x, y, faction_id, triad);
+}
+
+static int32_t host_near_ocean_coast(int32_t x, int32_t y) {
+    return near_ocean_coast(x, y);
+}
+
+static int32_t host_has_transport(int32_t x, int32_t y, int32_t faction_id) {
+    return has_transport(x, y, faction_id);
+}
+
+static int32_t host_allow_civ_move(int32_t x, int32_t y, int32_t faction_id, int32_t triad) {
+    return allow_civ_move(x, y, faction_id, triad);
+}
+
+static int32_t host_can_airdrop(int32_t veh_id) {
+    VEH* veh = &Vehs[veh_id];
+    MAP* sq = mapsq(veh->x, veh->y);
+    return can_airdrop(veh_id, sq);
+}
+
+static int32_t host_drop_range(int32_t faction_id) {
+    return drop_range(faction_id);
+}
+
+static int32_t host_allow_airdrop(int32_t x, int32_t y, int32_t faction_id, int32_t combat) {
+    MAP* sq = mapsq(x, y);
+    return allow_airdrop(x, y, faction_id, combat != 0, sq);
+}
+
+static int32_t host_action_airdrop(int32_t veh_id, int32_t tx, int32_t ty, int32_t flags) {
+    g_mutation_issued = true;
+    return action_airdrop(veh_id, tx, ty, flags);
+}
+
+static int32_t host_mod_veh_kill(int32_t veh_id) {
+    g_mutation_issued = true;
+    return mod_veh_kill(veh_id);
+}
+
+static int32_t host_path_cost(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
+int32_t unit_id, int32_t faction_id, int32_t max_cost) {
+    return path_cost(x1, y1, x2, y2, unit_id, faction_id, max_cost);
+}
+
+static int32_t host_invasion_unit(int32_t veh_id) {
+    return invasion_unit(veh_id);
+}
+
+static int32_t host_net_action_build(int32_t veh_id) {
+    g_mutation_issued = true;
+    return net_action_build(veh_id, NULL);
+}
+
+static void host_connect_roads(int32_t x, int32_t y, int32_t faction_id) {
+    g_mutation_issued = true;
+    TileSearch ts;
+    ts.connect_roads(mapdata, x, y, faction_id);
+}
+
+// colony_move's own site-selection scan (move.cpp:1454-1484) -- the real
+// "which tile is the best colony site" judgment, same incremental
+// iterator shape as crawler_search_*/search_escape_*. base_tile_score
+// itself is pure Lua now; this wrapper applies the original loop's own
+// filters (already-claimed base site, eligibility, safe_path, airdrop
+// range/permission -- all TileSearch-internal-state-dependent or boolean
+// facts, no RNG) so only real per-tile scoring crosses into Lua.
+static TileSearch g_colony_ts;
+static int g_colony_search_i;
+
+static void host_colony_search_start(int32_t veh_id, int32_t skip_owner,
+int32_t* airdrop_out, int32_t* veh_region_out, int32_t* triad_out) {
+    VEH* veh = &Vehs[veh_id];
+    int faction_id = veh->faction_id;
+    int triad = veh->triad();
+    int airdrop = can_airdrop(veh_id, mapsq(veh->x, veh->y)) ? drop_range(faction_id) : 0;
+    if (triad == TRIAD_SEA && invasion_unit(veh_id)) {
+        g_colony_ts.init(plans[faction_id].naval_end_x, plans[faction_id].naval_end_y, triad, 1);
+    } else if (airdrop) {
+        g_colony_ts.init(veh->x, veh->y, TRIAD_AIR, 1);
+    } else {
+        g_colony_ts.init(veh->x, veh->y, triad, 1);
+    }
+    g_colony_search_i = 0;
+    *airdrop_out = airdrop;
+    *veh_region_out = mapsq(veh->x, veh->y)->region;
+    *triad_out = triad;
+    (void)skip_owner; // consumed in _next, not at init time
+}
+
+static void host_colony_search_next(int32_t faction_id, int32_t triad, int32_t skip_owner,
+int32_t airdrop, int32_t veh_region,
+int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist) {
+    MAP* sq;
+    while (++g_colony_search_i <= 2000 && (sq = g_colony_ts.get_next()) != NULL) {
+        if (mapnodes.count({g_colony_ts.rx, g_colony_ts.ry, NODE_BASE_SITE})
+        || !can_build_base(g_colony_ts.rx, g_colony_ts.ry, faction_id, triad)
+        || !safe_path(g_colony_ts, faction_id, skip_owner != 0)
+        || (airdrop && g_colony_ts.dist > airdrop && veh_region != sq->region)
+        || (airdrop && !allow_airdrop(g_colony_ts.rx, g_colony_ts.ry, faction_id, true, sq))) {
+            continue;
+        }
+        *valid = 1;
+        *tx = g_colony_ts.rx;
+        *ty = g_colony_ts.ry;
+        *dist = g_colony_ts.dist;
+        return;
+    }
+    *valid = 0;
+}
+
+static int32_t host_tile_neighbor(int32_t x, int32_t y, int32_t i, int32_t* tx, int32_t* ty) {
+    int x2 = wrap(x + TableOffsetX[i]);
+    int y2 = y + TableOffsetY[i];
+    if (!mapsq(x2, y2)) {
+        return 0;
+    }
+    *tx = x2;
+    *ty = y2;
+    return 1;
+}
+
+// colony_move's own base-site radius mark (move.cpp:1487-1489) -- purely
+// mechanical (iterate_tiles + mapnodes.insert over conf.base_spacing's
+// TableRange, no per-tile judgment), same tier as connect_roads. Kept
+// opaque rather than exposing conf.base_spacing/TableRange to Lua, since
+// neither is AI policy.
+static void host_mark_base_site_radius(int32_t x, int32_t y) {
+    g_mutation_issued = true;
+    for (auto& m : iterate_tiles(x, y, 0, TableRange[conf.base_spacing - 1])) {
+        mapnodes.insert({m.x, m.y, NODE_BASE_SITE});
+    }
+}
+
+// colony_move's own automation-disable flags (move.cpp:1499-1500) -- a
+// plain VEH::state bitset write, no judgment.
+static void host_set_colony_automation_flags(int32_t veh_id) {
+    g_mutation_issued = true;
+    VEH* veh = &Vehs[veh_id];
+    veh->state |= VSTATE_UNK_40000;
+    veh->state &= ~VSTATE_UNK_2000;
+}
+
+// colony_move's own ocean-transport branch (move.cpp:1417-1431) -- a
+// "find the first eligible neighbor tile" mechanic (has_base_sites/
+// allow_civ_move facts, first-match wins, no scoring/comparison among
+// candidates), same tier as ocean_colony_land_site (4.8). RNG
+// (random(4)) is consumed in the original's fixed iterate_tiles order,
+// so this stays host-side to keep that consumption order exact.
+static void host_colony_transport_check(int32_t veh_id, int32_t* has_transport_out,
+int32_t* tx, int32_t* ty) {
+    VEH* veh = &Vehs[veh_id];
+    int faction_id = veh->faction_id;
+    int triad = veh->triad();
+    *tx = -1;
+    *ty = -1;
+    if (!has_transport(veh->x, veh->y, faction_id)) {
+        g_mutation_issued = true;
+        mapnodes.insert({veh->x, veh->y, NODE_NEED_FERRY});
+        *has_transport_out = 0;
+        return;
+    }
+    *has_transport_out = 1;
+    TileSearch ts;
+    for (auto& m : iterate_tiles(veh->x, veh->y, 1, 9)) {
+        if (allow_civ_move(m.x, m.y, faction_id, triad)
+        && has_base_sites(ts, m.x, m.y, faction_id, triad)
+        && (!mapdata[{m.x, m.y}].target || !random(4))) {
+            *tx = m.x;
+            *ty = m.y;
+            return;
+        }
+    }
+}
+
+// colony_move's own site-search break condition (move.cpp:1508):
+// sq->is_visible(faction_id) -- a single-field MAP read, MAP* itself
+// can't cross into Lua (Phase 4.3), same tier as the other tile_* facts.
+static int32_t host_tile_is_visible(int32_t x, int32_t y, int32_t faction_id) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_visible(faction_id);
+}
+
 static void host_mark_convoy_site(int32_t x, int32_t y) {
     g_mutation_issued = true;
     mapnodes.insert({x, y, NODE_CONVOY_SITE});
@@ -682,7 +1067,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 26,
+    /* api_version          */ 29,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -800,6 +1185,52 @@ static LuaHostApi g_host_api = {
     /* project_base         */ host_project_base,
     /* crawler_search_start */ host_crawler_search_start,
     /* crawler_search_next  */ host_crawler_search_next,
+    /* map_target            */ host_map_target,
+    /* tile_items            */ host_tile_items,
+    /* tile_is_rocky         */ host_tile_is_rocky,
+    /* has_map_node          */ host_has_map_node,
+    /* mark_map_node         */ host_mark_map_node,
+    /* veh_need_monolith     */ host_veh_need_monolith,
+    /* veh_need_refuel       */ host_veh_need_refuel,
+    /* veh_speed             */ host_veh_speed,
+    /* allow_move            */ host_allow_move,
+    /* non_ally_in_tile      */ host_non_ally_in_tile,
+    /* defend_tile           */ host_defend_tile,
+    /* set_order_none        */ host_set_order_none,
+    /* search_escape_start   */ host_search_escape_start,
+    /* search_escape_next    */ host_search_escape_next,
+    /* search_base_start     */ host_search_base_start,
+    /* search_base_next      */ host_search_base_next,
+    /* tile_alt_level        */ host_tile_alt_level,
+    /* tile_bonus            */ host_tile_bonus,
+    /* tile_lm_items         */ host_tile_lm_items,
+    /* tile_is_land_region   */ host_tile_is_land_region,
+    /* tile_region           */ host_tile_region,
+    /* tile_is_rainy         */ host_tile_is_rainy,
+    /* tile_is_moist         */ host_tile_is_moist,
+    /* tile_is_rolling       */ host_tile_is_rolling,
+    /* both_non_enemy        */ host_both_non_enemy,
+    /* ocean_coast_tiles     */ host_ocean_coast_tiles,
+    /* can_build_base        */ host_can_build_base,
+    /* near_ocean_coast      */ host_near_ocean_coast,
+    /* has_transport         */ host_has_transport,
+    /* allow_civ_move        */ host_allow_civ_move,
+    /* can_airdrop           */ host_can_airdrop,
+    /* drop_range            */ host_drop_range,
+    /* allow_airdrop         */ host_allow_airdrop,
+    /* action_airdrop        */ host_action_airdrop,
+    /* mod_veh_kill          */ host_mod_veh_kill,
+    /* path_cost             */ host_path_cost,
+    /* invasion_unit         */ host_invasion_unit,
+    /* net_action_build      */ host_net_action_build,
+    /* connect_roads         */ host_connect_roads,
+    /* colony_search_start   */ host_colony_search_start,
+    /* colony_search_next    */ host_colony_search_next,
+    /* tile_neighbor         */ host_tile_neighbor,
+    /* mark_base_site_radius       */ host_mark_base_site_radius,
+    /* set_colony_automation_flags */ host_set_colony_automation_flags,
+    /* colony_transport_check      */ host_colony_transport_check,
+    /* tile_is_visible             */ host_tile_is_visible,
 };
 
 static lua_State* L = NULL;

@@ -23,6 +23,12 @@ local MultiplayerActive = ffi.cast("int32_t*", types.globals.MultiplayerActive)
 -- select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
 -- 4.10.27): SeaProbeUnit's own adjacent_region radius.
 local MapAreaTiles = ffi.cast("int32_t*", types.globals.MapAreaTiles)
+-- Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12): base_tile_score's
+-- own MapAreaY (path.cpp/move.cpp share this with MapAreaSqRoot/MapAreaTiles
+-- above) and colony_move's own BaseCount, used only in its final
+-- mod_veh_kill tail decision.
+local MapAreaY = ffi.cast("int32_t*", types.globals.MapAreaY)
+local BaseCount = ffi.cast("int32_t*", types.globals.BaseCount)
 
 return {
     turn = function() return CurrentTurn[0] end,
@@ -34,4 +40,6 @@ return {
     map_area_tiles = function() return MapAreaTiles[0] end,
     faction_ranking = function(i) return FactionRankings[i] end,
     multiplayer_active = function() return MultiplayerActive[0] ~= 0 end,
+    map_area_y = function() return MapAreaY[0] end,
+    base_count = function() return BaseCount[0] end,
 }

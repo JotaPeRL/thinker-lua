@@ -184,6 +184,13 @@ int __cdecl mod_enemy_move(int veh_id) {
         } else if (!plr_unit && veh->flags & (VFLAG_LURKER|VFLAG_INVISIBLE)) {
             return mod_veh_skip(veh_id);
         } else if (veh->is_colony()) {
+            // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
+            // Class 3 hook, same shape as artifact_move/crawler_move's own
+            // seams.
+            int value;
+            if (lua_ai_command_hook("colony_move", &value, veh_id)) {
+                return value;
+            }
             return colony_move(veh_id);
         } else if (veh->is_former()) {
             return former_move(veh_id);

@@ -476,6 +476,11 @@ int main() {
         FIELD(VEH, waypoint_x),
         FIELD(VEH, waypoint_y),
         FIELD(VEH, waypoint_count),
+        // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
+        // colony_move's own VSTATE_UNK_40000/VSTATE_UNK_2000 waypoint-order
+        // read (state is only ever written through the new
+        // set_colony_automation_flags host wrapper, never directly from Lua).
+        FIELD(VEH, state),
     }});
 
     printf("]]\n\n");
@@ -507,6 +512,9 @@ int main() {
     // select_build itself, unit-branch catalog (IMPLEMENTATION_DETAILS.md
     // 4.10.27): SeaProbeUnit's own adjacent_region radius.
     printf("    MapAreaTiles = 0x%08X,\n", 0x949884);
+    // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
+    // base_tile_score's own map-edge distance term (src/engine.cpp).
+    printf("    MapAreaY = 0x%08X,\n", 0x949874);
     // War-decision port (porting-order item 2b, IMPLEMENTATION_DETAILS.md
     // 4.6): int* const, same provenance-by-comment convention (src/engine.cpp).
     printf("    FactionRankings = 0x%08X,\n", 0x9A64EC);
@@ -834,6 +842,40 @@ int main() {
     printf("    VEH_SYNC = %d,\n", 0);
     printf("    VEH_SKIP = %d,\n", 1);
     printf("    PM_SAFE = %d,\n", -20);
+    // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12): path.h's
+    // NodesetType enum (used by has_map_node/mark_map_node), same
+    // hand-transcription reason as VEH_SYNC/VEH_SKIP/PM_SAFE above --
+    // path.h also pulls in windows.h transitively. Default enum
+    // numbering (path.h:63-78), cross-check there if this ever drifts.
+    printf("    NODE_NEED_FERRY = %d,\n", 3);
+    printf("    NODE_BASE_SITE = %d,\n", 4);
+    printf("    NODE_PATROL = %d,\n", 12);
+    // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
+    // escape_score/base_tile_score/colony_move's own item/landmark/
+    // altitude/order constants. All come straight from engine_enums.h/
+    // engine_veh.h (both already included above), same "compiler-read,
+    // not hand-typed" discipline as the TECH_/FAC_ batch.
+    printf("    BIT_FUNGUS = %d,\n", BIT_FUNGUS);
+    printf("    BIT_RIVER = %d,\n", BIT_RIVER);
+    printf("    BIT_BUNKER = %d,\n", BIT_BUNKER);
+    printf("    BIT_MONOLITH = %d,\n", BIT_MONOLITH);
+    printf("    BIT_FARM = %d,\n", BIT_FARM);
+    printf("    BIT_SENSOR = %u,\n", (unsigned)BIT_SENSOR);
+    printf("    LM_JUNGLE = %d,\n", LM_JUNGLE);
+    printf("    LM_SARGASSO = %d,\n", LM_SARGASSO);
+    printf("    LM_DUNES = %d,\n", LM_DUNES);
+    printf("    LM_UNITY = %d,\n", LM_UNITY);
+    printf("    ALT_OCEAN = %d,\n", ALT_OCEAN);
+    printf("    ALT_OCEAN_SHELF = %d,\n", ALT_OCEAN_SHELF);
+    printf("    ALT_SHORE_LINE = %d,\n", ALT_SHORE_LINE);
+    printf("    ORDER_SENTRY_BOARD = %d,\n", ORDER_SENTRY_BOARD);
+    printf("    VSTATE_UNK_40000 = %d,\n", VSTATE_UNK_40000);
+    printf("    VSTATE_UNK_2000 = %d,\n", VSTATE_UNK_2000);
+    // colony_move's own VehRemoveTurns (move.cpp:30, `static const int` file
+    // -local to move.cpp -- gen_ffi can't #include a .cpp, so hand-
+    // transcribed like PM_SAFE above; cross-check move.cpp:30 if this ever
+    // needs revisiting).
+    printf("    VEH_REMOVE_TURNS = %d,\n", 60);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {

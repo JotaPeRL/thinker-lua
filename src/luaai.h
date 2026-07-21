@@ -302,6 +302,108 @@ struct LuaHostApi {
     void (*crawler_search_start)(int32_t veh_id, int32_t limit);
     void (*crawler_search_next)(int32_t faction_id, int32_t* valid,
         int32_t* tx, int32_t* ty, int32_t* dist);
+    // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
+    // escape_score's own dependencies (used by escape_move/search_escape/
+    // search_base, all needed by colony_move). Single-field tile reads,
+    // same tier as map_safety -- MAP* still can't cross the FFI boundary.
+    int32_t (*map_target)(int32_t x, int32_t y);
+    uint32_t (*tile_items)(int32_t x, int32_t y);
+    int32_t (*tile_is_rocky)(int32_t x, int32_t y);
+    int32_t (*has_map_node)(int32_t x, int32_t y, int32_t node_type);
+    void (*mark_map_node)(int32_t x, int32_t y, int32_t node_type);
+    int32_t (*veh_need_monolith)(int32_t veh_id);
+    int32_t (*veh_need_refuel)(int32_t veh_id);
+    int32_t (*veh_speed)(int32_t veh_id, int32_t skip_morale);
+    int32_t (*allow_move)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*non_ally_in_tile)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*defend_tile)(int32_t veh_id);
+    int32_t (*set_order_none)(int32_t veh_id);
+    // search_escape (move.cpp/path.cpp originals: escape_move/search_base
+    // also feed it) as an incremental iterator, same start/next shape as
+    // crawler_search_*. escape_score itself is pure Lua now (lua/ai/move.lua).
+    void (*search_escape_start)(int32_t veh_id);
+    void (*search_escape_next)(int32_t faction_id, int32_t* valid,
+        int32_t* tx, int32_t* ty, int32_t* dist);
+    // search_base: `already_there` (1 = standing on a valid base already,
+    // matching the C++ original's own early "return 0" case) or 0 with
+    // `max_dist` set to proceed to search_base_next. `found`, passed in by
+    // Lua on every _next call, mirrors the C++ local of the same name --
+    // once Lua has accepted a friendly-base match, non-base candidates
+    // stop being returned (kind=2), matching move.cpp's own `!found` gate.
+    // kind: 0 = exhausted, 1 = friendly base found (tx/ty set, Lua decides
+    // whether to keep searching, same random(2)/triad==AIR break rule as
+    // the original), 2 = eligible non-base candidate (tx/ty/dist set, Lua
+    // scores it with escape_score).
+    void (*search_base_start)(int32_t veh_id, int32_t ally,
+        int32_t* already_there, int32_t* max_dist);
+    void (*search_base_next)(int32_t faction_id, int32_t triad, int32_t ally, int32_t found,
+        int32_t* kind, int32_t* tx, int32_t* ty, int32_t* dist);
+    // base_tile_score's own dependencies (colony_move's site-scoring
+    // formula). Same single-field-read tier as the escape_score set above.
+    int32_t (*tile_alt_level)(int32_t x, int32_t y);
+    int32_t (*tile_bonus)(int32_t x, int32_t y); // -> engine's bonus_at()
+    uint32_t (*tile_lm_items)(int32_t x, int32_t y);
+    int32_t (*tile_is_land_region)(int32_t x, int32_t y);
+    int32_t (*tile_region)(int32_t x, int32_t y);
+    int32_t (*tile_is_rainy)(int32_t x, int32_t y);
+    int32_t (*tile_is_moist)(int32_t x, int32_t y);
+    int32_t (*tile_is_rolling)(int32_t x, int32_t y);
+    int32_t (*both_non_enemy)(int32_t faction_id_1, int32_t faction_id_2);
+    int32_t (*ocean_coast_tiles)(int32_t x, int32_t y);
+    // colony_move's own remaining dependencies, beyond base_tile_score/
+    // escape_score. can_build_base/near_ocean_coast/has_transport/
+    // allow_civ_move/can_airdrop/allow_airdrop/invasion_unit are pure
+    // eligibility facts (no scoring/comparison among alternatives), same
+    // tier as check_probe/has_base_sites (4.8). action_airdrop/
+    // mod_veh_kill/net_action_build are mutators. connect_roads
+    // constructs its own local TileSearch (like search_route) and is a
+    // pure road-planning mechanic, not AI choice.
+    int32_t (*can_build_base)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*near_ocean_coast)(int32_t x, int32_t y);
+    int32_t (*has_transport)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*allow_civ_move)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*can_airdrop)(int32_t veh_id);
+    int32_t (*drop_range)(int32_t faction_id);
+    int32_t (*allow_airdrop)(int32_t x, int32_t y, int32_t faction_id, int32_t combat);
+    int32_t (*action_airdrop)(int32_t veh_id, int32_t tx, int32_t ty, int32_t flags);
+    int32_t (*mod_veh_kill)(int32_t veh_id);
+    int32_t (*path_cost)(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
+        int32_t unit_id, int32_t faction_id, int32_t max_cost);
+    int32_t (*invasion_unit)(int32_t veh_id);
+    int32_t (*net_action_build)(int32_t veh_id);
+    void (*connect_roads)(int32_t x, int32_t y, int32_t faction_id);
+    // colony_move's own site-selection scan (move.cpp:1454-1484), the
+    // real "which tile is the best colony site" judgment -- same
+    // incremental iterator shape as crawler_search_*/search_escape_*,
+    // scoring each candidate in Lua with the (now-Lua) base_tile_score.
+    // airdrop/invasion-specific search origin and the safe_path/airdrop-
+    // range filters stay host-side (TileSearch-internal state), matching
+    // crawler_search_next's own precedent. _start computes and returns
+    // airdrop (the drop range if can_airdrop, else 0 -- matching
+    // move.cpp:1453's own `int airdrop = can_airdrop(...) ? drop_range(...)
+    // : 0;`), veh_region and triad, since Lua needs to pass all three
+    // back into every _next call.
+    void (*colony_search_start)(int32_t veh_id, int32_t skip_owner,
+        int32_t* airdrop, int32_t* veh_region, int32_t* triad);
+    void (*colony_search_next)(int32_t faction_id, int32_t triad, int32_t skip_owner,
+        int32_t airdrop, int32_t veh_region,
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
+    // base_tile_score's own 21-neighbor scan (move.cpp:1355,
+    // `iterate_tiles(x, y, 0, 21)`). iterate_tiles itself is a fixed
+    // TableOffsetX/Y ring-index table plus map-edge wrapping -- pure
+    // geometry, not judgment (same tier as TileSearch) -- so this wrapper
+    // only resolves index `i` to real, wrapped, on-map coordinates (or
+    // reports invalid at the map edge); Lua drives the i=0..20 loop and
+    // scores each neighbor with the tile_* fact wrappers above.
+    int32_t (*tile_neighbor)(int32_t x, int32_t y, int32_t i, int32_t* tx, int32_t* ty);
+    // colony_move's own site-radius mark / automation flags / ocean-
+    // transport branch / site-visibility fact -- see src/luaai.cpp's
+    // comments on each for why they stay opaque (mechanical, no scoring).
+    void (*mark_base_site_radius)(int32_t x, int32_t y);
+    void (*set_colony_automation_flags)(int32_t veh_id);
+    void (*colony_transport_check)(int32_t veh_id, int32_t* has_transport,
+        int32_t* tx, int32_t* ty);
+    int32_t (*tile_is_visible)(int32_t x, int32_t y, int32_t faction_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

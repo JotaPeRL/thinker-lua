@@ -1893,9 +1893,10 @@ trade-off as this file's own session-record structure.
 
 ---
 
-### 4.12 Movement port (porting-order item 4) — stages 0-2 done and live-verified, stage 3 (colony_move) next
+### 4.12 Movement port (porting-order item 4) — stages 0-2 done and live-verified, stage 3 (colony_move) implemented, live verification pending
 
-**Status: ✅ stages 0-2 done, live-verified.** Real function sizes
+**Status: ✅ stages 0-2 done, live-verified. Stage 3 implemented,
+build-verified, live verification pending.** Real function sizes
 read directly from `move.cpp`/`veh_turn.cpp`/`goal.cpp` (3657/887/183
 loc) rather than estimated — the one-liner in `IMPLEMENTATION_PLAN.md`
 predates this pass. Complements 4.4's earlier high-level notes
@@ -2116,9 +2117,124 @@ Deferred to its own stage (placement TBD — likely alongside or after
 `nuclear_move`, given similar weight) rather than rushed; `escape_score`/
 `base_tile_score` are more contained and come first.
 
-- **Stage 3 — `colony_move`**, now including a real port of `base_tile_score`
-  and a fix for `escape_score`/`search_escape`/`search_base` (both
-  consumed by `colony_move` directly, not deferred).
+- **Stage 3 — `colony_move`, plus a real port of `base_tile_score`
+  and `escape_score`/`search_escape`/`search_base` (both consumed by
+  `colony_move` directly, not deferred). ✅ implemented, build-verified,
+  live verification pending.**
+
+**Stage 3 implementation (2026-07-22).** `escape_score` (`path.cpp:567-573`)
+ported straight to Lua — same "compare candidates, pick the best" AI
+judgment as `want_convoy`, just smaller. `search_escape`/`search_base`
+(`path.cpp:575-657`) reuse the crawler_move-established incremental
+start/next iterator shape (`search_escape_start`/`_next`,
+`search_base_start`/`_next`): the host applies the original's own
+eligibility filters (`non_ally_in_tile`/is_base+owner/pact/zoc for
+escape; already-there/is_base+owner/pact/dist+triad gating/`allow_move`/
+is_airbase+zoc for base) as pure facts, never surfacing an ineligible
+candidate to Lua at all — safe because `escape_score` has no side
+effects, so "computed and discarded" (the original's behavior, since the
+zoc/airbase gate in `search_base` only guards the *assignment*, not the
+score computation) and "never computed" are equivalent. The `dist > 2 &&
+best_score > 500` early-out in `search_escape` is checked per candidate
+*returned to Lua* rather than per candidate popped host-side (as the
+original does); proven equivalent by construction, not just assumed —
+ineligible tiles never affect `best_score` in the original either, so
+skipping straight to the next eligible one changes nothing about the
+final `tx`/`ty`/`best_score`.
+
+`base_tile_score` (`move.cpp:1339-1399`) — the real "which tile is worth
+founding a base on" formula — ported in full. Its own 21-tile
+`iterate_tiles(x,y,0,21)` scan is driven by a new `tile_neighbor(x,y,i)`
+wrapper: `iterate_tiles` itself is `TableOffsetX`/`TableOffsetY` ring
+geometry plus map-edge `wrap()`, the same "pure geometry, not judgment"
+tier as `TileSearch` (Phase 4.3) — `tile_neighbor` resolves one ring
+index to real wrapped coordinates (or reports off-map), and Lua drives
+the `i=0..20` loop, scoring each neighbor itself via the new `tile_*`
+fact wrappers (`map_target`/`tile_items`/`tile_is_rocky`/`tile_alt_level`/
+`tile_bonus`/`tile_lm_items`/`tile_is_land_region`/`tile_region`/
+`tile_is_rainy`/`tile_is_moist`/`tile_is_rolling`/`tile_is_visible`/
+`both_non_enemy`/`ocean_coast_tiles`) already added for this stage.
+`defender_count` (`path.cpp:474-485`, a pure garrison-strength count,
+not a scored comparison) ported directly to Lua using only
+already-exposed `veh.get`/`veh.count`/`veh.at_target`/`veh.eval_garrison`
+— no new host wrapper needed, confirming the earlier "cheap enough once
+actually read" classification.
+
+`colony_move` (`move.cpp:1405-1528`) itself: the ocean-transport branch
+(`is_ocean(sq) && triad==LAND`, `move.cpp:1417-1431`) is a "find the
+first eligible neighbor tile" mechanic — first-match wins, no scoring
+among candidates, same tier as `has_base_sites`/`ocean_colony_land_site`
+— kept as one opaque `colony_transport_check` wrapper (mutating: inserts
+`NODE_NEED_FERRY` on the no-transport path) to preserve the original's
+exact in-order `random(4)` consumption. The base-site search loop reuses
+`colony_search_start`/`_next` (already shipped, unused until now) with
+Lua scoring each candidate via the new `base_tile_score` and tracking
+`best_score`/`k` itself, replicating the `k>=25 && best_score>=0 &&
+dist>=...` early-break exactly (including its one quirk: `move.cpp:1490`
+uses the real `region_at()` engine call for its region check, not the
+raw `sq->region` field every other region check in this function uses —
+kept as-is, not "fixed" to match the others). Two more small mechanical
+wrappers: `mark_base_site_radius` (marks the chosen site's claimed
+radius, `conf.base_spacing`-dependent — config value stays in C++, not
+AI policy) and `set_colony_automation_flags` (a plain `VEH::state`
+bitset write, `VSTATE_UNK_40000`/`VSTATE_UNK_2000`). `search_route`'s
+own defect (`route_score` baked into an opaque wrapper, see above)
+remains **deferred** — `colony_move` keeps calling the existing,
+already-flagged `path.search_route` for its one fallback call site until
+that stage lands.
+
+New engine surface: `VEH.state` (VEH's first mutable-bitset field
+exposed for reading — writes still only ever go through
+`set_colony_automation_flags`, never a direct Lua write); enums
+`BIT_FUNGUS`/`BIT_RIVER`/`BIT_BUNKER`/`BIT_MONOLITH`/`BIT_FARM`/
+`BIT_SENSOR`/`LM_JUNGLE`/`LM_SARGASSO`/`LM_DUNES`/`LM_UNITY`/
+`ALT_OCEAN`/`ALT_OCEAN_SHELF`/`ALT_SHORE_LINE`/`ORDER_SENTRY_BOARD`/
+`VSTATE_UNK_40000`/`VSTATE_UNK_2000` (all compiler-read from
+`engine_enums.h`/`engine_veh.h`, already `#include`d) and
+`VEH_REMOVE_TURNS` (hand-transcribed `60`, `move.cpp:30`'s own
+file-local `static const int` — same tier as `PM_SAFE`, cross-check
+there if it ever drifts); `game.map_area_y()`/`game.base_count()` (plain
+scalar globals, same pattern as `game.turn()`). Two bugs caught before
+this shipped: `BIT_SENSOR` (`0x80000000`) was first emitted with a `%uU`
+format string, an invalid LuaJIT numeric literal (`luajit` rejects a
+bare `U` suffix — only `LL`/`ULL` are its extension); caught by actually
+loading the generated `lua/ffi/types.lua`, not just syntax-checking the
+files edited by hand, and fixed by dropping the suffix (LuaJIT's
+`bit.*` library coerces any in-range Lua number to its 32-bit pattern via
+`tobit`, so the plain decimal literal is sufficient). Second: `base_tile_score`'s
+land-tile bonus (`move.cpp:1373`, `(!owned || own) && ++land < 3`) is a
+C pre-increment fused into the `&&` chain — the comparison sees the
+*post*-increment value, so only the first **two** qualifying tiles ever
+grant the bonus, not three; a first draft checked `land < 3` before
+incrementing (granting the bonus to three tiles instead of two), caught
+on a close re-read against the original before ever running it, fixed by
+always incrementing when the first four conditions hold and gating the
+score add on the post-increment value, matching the original's real
+(mildly surprising, but exact) behavior. `LuaHostApi` bumped
+`27→29` (`tile_neighbor` at 28, then `mark_base_site_radius`/
+`set_colony_automation_flags`/`colony_transport_check`/`tile_is_visible`
+at 29). Both presets build clean, every touched file passes a native-
+`luajit` syntax check (including a direct `loadfile` of the generated
+`types.lua`, not just `-bl`).
+
+**Files touched:** `tools/gen_ffi.cpp`, `src/luaai.h`/`.cpp`,
+`src/veh_turn.cpp` (seam), `lua/ffi/funcs.lua`, `lua/api/game.lua`
+(`map_area_y`/`base_count`), `lua/api/faction.lua` (consumed via
+`faction.get(id).base_count`, no new wrapper needed there), `lua/ai/move.lua`
+(`escape_score`/`search_escape`/`search_base`/`escape_move`/
+`base_tile_score`/`defender_count`/`colony_move`), `lua/ai/init.lua`
+(registration).
+
+**Live verification: pending** — hand-off to the user for an in-game run,
+same "check `lua.log`/`debug.txt` for real decision-trace evidence, not
+just absence of errors" discipline stage 2 established. `colony_move`
+carries its own decision-trace `log.debug` lines at all five of the
+original's `debug()` call sites (`colony_trans`/`colony_drop`/
+`colony_move`/`colony_base`/`colony_naval`, `move.cpp:1414/1492/1496/
+1505/1513`) plus `search_escape`'s own `escape_score` line — a clean run
+with zero of these firing would not be sufficient evidence, per the
+crawler_move lesson.
+
 - **Stage 4 — `former_move`** (~157 loc). The one stage where a real,
   substantial new port is unavoidable: `select_item`
   (`move.cpp:1803-2004`, ~200 loc) plus its 12 `can_*` tile-eligibility

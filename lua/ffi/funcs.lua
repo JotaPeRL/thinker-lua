@@ -130,10 +130,64 @@ typedef struct {
     void (*crawler_search_start)(int32_t veh_id, int32_t limit);
     void (*crawler_search_next)(int32_t faction_id, int32_t* valid,
         int32_t* tx, int32_t* ty, int32_t* dist);
+    int32_t (*map_target)(int32_t x, int32_t y);
+    uint32_t (*tile_items)(int32_t x, int32_t y);
+    int32_t (*tile_is_rocky)(int32_t x, int32_t y);
+    int32_t (*has_map_node)(int32_t x, int32_t y, int32_t node_type);
+    void (*mark_map_node)(int32_t x, int32_t y, int32_t node_type);
+    int32_t (*veh_need_monolith)(int32_t veh_id);
+    int32_t (*veh_need_refuel)(int32_t veh_id);
+    int32_t (*veh_speed)(int32_t veh_id, int32_t skip_morale);
+    int32_t (*allow_move)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*non_ally_in_tile)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*defend_tile)(int32_t veh_id);
+    int32_t (*set_order_none)(int32_t veh_id);
+    void (*search_escape_start)(int32_t veh_id);
+    void (*search_escape_next)(int32_t faction_id, int32_t* valid,
+        int32_t* tx, int32_t* ty, int32_t* dist);
+    void (*search_base_start)(int32_t veh_id, int32_t ally,
+        int32_t* already_there, int32_t* max_dist);
+    void (*search_base_next)(int32_t faction_id, int32_t triad, int32_t ally, int32_t found,
+        int32_t* kind, int32_t* tx, int32_t* ty, int32_t* dist);
+    int32_t (*tile_alt_level)(int32_t x, int32_t y);
+    int32_t (*tile_bonus)(int32_t x, int32_t y);
+    uint32_t (*tile_lm_items)(int32_t x, int32_t y);
+    int32_t (*tile_is_land_region)(int32_t x, int32_t y);
+    int32_t (*tile_region)(int32_t x, int32_t y);
+    int32_t (*tile_is_rainy)(int32_t x, int32_t y);
+    int32_t (*tile_is_moist)(int32_t x, int32_t y);
+    int32_t (*tile_is_rolling)(int32_t x, int32_t y);
+    int32_t (*both_non_enemy)(int32_t faction_id_1, int32_t faction_id_2);
+    int32_t (*ocean_coast_tiles)(int32_t x, int32_t y);
+    int32_t (*can_build_base)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*near_ocean_coast)(int32_t x, int32_t y);
+    int32_t (*has_transport)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*allow_civ_move)(int32_t x, int32_t y, int32_t faction_id, int32_t triad);
+    int32_t (*can_airdrop)(int32_t veh_id);
+    int32_t (*drop_range)(int32_t faction_id);
+    int32_t (*allow_airdrop)(int32_t x, int32_t y, int32_t faction_id, int32_t combat);
+    int32_t (*action_airdrop)(int32_t veh_id, int32_t tx, int32_t ty, int32_t flags);
+    int32_t (*mod_veh_kill)(int32_t veh_id);
+    int32_t (*path_cost)(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
+        int32_t unit_id, int32_t faction_id, int32_t max_cost);
+    int32_t (*invasion_unit)(int32_t veh_id);
+    int32_t (*net_action_build)(int32_t veh_id);
+    void (*connect_roads)(int32_t x, int32_t y, int32_t faction_id);
+    void (*colony_search_start)(int32_t veh_id, int32_t skip_owner,
+        int32_t* airdrop, int32_t* veh_region, int32_t* triad);
+    void (*colony_search_next)(int32_t faction_id, int32_t triad, int32_t skip_owner,
+        int32_t airdrop, int32_t veh_region,
+        int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
+    int32_t (*tile_neighbor)(int32_t x, int32_t y, int32_t i, int32_t* tx, int32_t* ty);
+    void (*mark_base_site_radius)(int32_t x, int32_t y);
+    void (*set_colony_automation_flags)(int32_t veh_id);
+    void (*colony_transport_check)(int32_t veh_id, int32_t* has_transport,
+        int32_t* tx, int32_t* ty);
+    int32_t (*tile_is_visible)(int32_t x, int32_t y, int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 26
+local HOST_API_VERSION = 29
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -280,4 +334,66 @@ return {
     crawler_search_next = function(faction_id, valid, tx, ty, dist)
         return api.crawler_search_next(faction_id, valid, tx, ty, dist)
     end,
+    map_target = function(x, y) return api.map_target(x, y) end,
+    tile_items = function(x, y) return api.tile_items(x, y) end,
+    tile_is_rocky = function(x, y) return api.tile_is_rocky(x, y) ~= 0 end,
+    has_map_node = function(x, y, node_type) return api.has_map_node(x, y, node_type) ~= 0 end,
+    mark_map_node = function(x, y, node_type) return api.mark_map_node(x, y, node_type) end,
+    veh_need_monolith = function(veh_id) return api.veh_need_monolith(veh_id) ~= 0 end,
+    veh_need_refuel = function(veh_id) return api.veh_need_refuel(veh_id) ~= 0 end,
+    veh_speed = function(veh_id, skip_morale) return api.veh_speed(veh_id, skip_morale) end,
+    allow_move = function(x, y, faction_id, triad) return api.allow_move(x, y, faction_id, triad) ~= 0 end,
+    non_ally_in_tile = function(x, y, faction_id) return api.non_ally_in_tile(x, y, faction_id) ~= 0 end,
+    defend_tile = function(veh_id) return api.defend_tile(veh_id) ~= 0 end,
+    set_order_none = function(veh_id) return api.set_order_none(veh_id) end,
+    search_escape_start = function(veh_id) return api.search_escape_start(veh_id) end,
+    search_escape_next = function(faction_id, valid, tx, ty, dist)
+        return api.search_escape_next(faction_id, valid, tx, ty, dist)
+    end,
+    search_base_start = function(veh_id, ally, already_there, max_dist)
+        return api.search_base_start(veh_id, ally, already_there, max_dist)
+    end,
+    search_base_next = function(faction_id, triad, ally, found, kind, tx, ty, dist)
+        return api.search_base_next(faction_id, triad, ally, found, kind, tx, ty, dist)
+    end,
+    tile_alt_level = function(x, y) return api.tile_alt_level(x, y) end,
+    tile_bonus = function(x, y) return api.tile_bonus(x, y) end,
+    tile_lm_items = function(x, y) return api.tile_lm_items(x, y) end,
+    tile_is_land_region = function(x, y) return api.tile_is_land_region(x, y) ~= 0 end,
+    tile_region = function(x, y) return api.tile_region(x, y) end,
+    tile_is_rainy = function(x, y) return api.tile_is_rainy(x, y) ~= 0 end,
+    tile_is_moist = function(x, y) return api.tile_is_moist(x, y) ~= 0 end,
+    tile_is_rolling = function(x, y) return api.tile_is_rolling(x, y) ~= 0 end,
+    both_non_enemy = function(f1, f2) return api.both_non_enemy(f1, f2) ~= 0 end,
+    ocean_coast_tiles = function(x, y) return api.ocean_coast_tiles(x, y) end,
+    can_build_base = function(x, y, faction_id, triad) return api.can_build_base(x, y, faction_id, triad) ~= 0 end,
+    near_ocean_coast = function(x, y) return api.near_ocean_coast(x, y) ~= 0 end,
+    has_transport = function(x, y, faction_id) return api.has_transport(x, y, faction_id) ~= 0 end,
+    allow_civ_move = function(x, y, faction_id, triad) return api.allow_civ_move(x, y, faction_id, triad) ~= 0 end,
+    can_airdrop = function(veh_id) return api.can_airdrop(veh_id) ~= 0 end,
+    drop_range = function(faction_id) return api.drop_range(faction_id) end,
+    allow_airdrop = function(x, y, faction_id, combat)
+        return api.allow_airdrop(x, y, faction_id, combat) ~= 0
+    end,
+    action_airdrop = function(veh_id, tx, ty, flags) return api.action_airdrop(veh_id, tx, ty, flags) end,
+    mod_veh_kill = function(veh_id) return api.mod_veh_kill(veh_id) end,
+    path_cost = function(x1, y1, x2, y2, unit_id, faction_id, max_cost)
+        return api.path_cost(x1, y1, x2, y2, unit_id, faction_id, max_cost)
+    end,
+    invasion_unit = function(veh_id) return api.invasion_unit(veh_id) ~= 0 end,
+    net_action_build = function(veh_id) return api.net_action_build(veh_id) end,
+    connect_roads = function(x, y, faction_id) return api.connect_roads(x, y, faction_id) end,
+    colony_search_start = function(veh_id, skip_owner, airdrop, veh_region, triad)
+        return api.colony_search_start(veh_id, skip_owner, airdrop, veh_region, triad)
+    end,
+    colony_search_next = function(faction_id, triad, skip_owner, airdrop, veh_region, valid, tx, ty, dist)
+        return api.colony_search_next(faction_id, triad, skip_owner, airdrop, veh_region, valid, tx, ty, dist)
+    end,
+    tile_neighbor = function(x, y, i, tx, ty) return api.tile_neighbor(x, y, i, tx, ty) ~= 0 end,
+    mark_base_site_radius = function(x, y) return api.mark_base_site_radius(x, y) end,
+    set_colony_automation_flags = function(veh_id) return api.set_colony_automation_flags(veh_id) end,
+    colony_transport_check = function(veh_id, has_transport, tx, ty)
+        return api.colony_transport_check(veh_id, has_transport, tx, ty)
+    end,
+    tile_is_visible = function(x, y, faction_id) return api.tile_is_visible(x, y, faction_id) ~= 0 end,
 }
