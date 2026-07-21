@@ -2006,10 +2006,10 @@ concerning, just means no artifact reached a friendly base under the
 right conditions yet; revisit opportunistically like the handful of
 still-unexercised `select_build` branches, not a blocker. **Stage 0+1
 closed.**
-- **Stage 2 — `crawler_move`. ✅ done, build-verified, live verification
-  pending.** (~67 loc, but with real complexity of its own: `want_convoy`'s
-  tile-yield scoring, a bounded `TileSearch` scan picking the best
-  candidate, `mapnodes` — a mutable `NodeSet` — as shared state).
+- **Stage 2 — `crawler_move`. ✅ done, live-verified.** (~67 loc, but with
+  real complexity of its own: `want_convoy`'s tile-yield scoring, a
+  bounded `TileSearch` scan picking the best candidate, `mapnodes` — a
+  mutable `NodeSet` — as shared state).
 **Stage 2 implementation (2026-07-21).** Two whole decision blocks
 (`move.cpp:1229-1239`/`1240-1246`) wrapped as opaque host calls
 (`crawler_home_base_check`/`crawler_at_target_check`, each returning
@@ -2057,8 +2057,27 @@ to `move.h` next to `crawler_move`, then removed again once the C++-side
 fallback body still calls the real `want_convoy` internally, which
 needs no forward declaration since it's defined earlier in the same
 file. `LuaHostApi` bumped to `api_version=26`. Both presets build clean,
-every touched file passes a native-`luajit` syntax check. **Next: live
-verification.**
+every touched file passes a native-`luajit` syntax check.
+
+**Live-verified (2026-07-21).** The first run only proved "no crash" —
+`crawler_move`/`want_convoy` had no decision-trace logging at all
+(unlike `artifact_move`), so a clean run gave no evidence the *decisions*
+(which resource, which tile) were sane, for the area the user has
+explicitly flagged as this project's highest-priority correctness
+target. Fixed by adding `crawl_score`/`crawl_move`/`crawl_convoy` debug
+lines at `crawler_move`'s three real decision points (mirroring the
+granularity `move.cpp`'s own now-removed `crawl_score` line had). Second
+run: **730 decision lines, 0 errors** — 122 `crawl_score` (a better
+candidate found mid-search), 67 `crawl_move` (final move to the best
+tile), 541 `crawl_convoy` (immediate conversion at the current tile).
+All three `ResType` choices fire, including the narrowly-gated energy
+branch (`res=3`, needs `FAC_NETWORK_NODE`/`FAC_TREE_FARM`/one of two
+secret projects on top of the score threshold) — confirms every formula
+branch is reachable, not just the common mineral case. Scores stay in
+plausible bounded ranges (9–55), `crawl_move` coordinate deltas are
+short and local (e.g. `44 42 -> 40 46`), and at least 44 distinct
+starting positions were touched across the run — broad, not a single
+repeating case. **Stage 2 closed.**
 
 - **Stage 2b — `nuclear_move`** (~163 loc), split out from stage 2 after
   reading it in full — LOC undersold it badly: full cross-faction

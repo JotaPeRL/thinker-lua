@@ -540,3 +540,46 @@ values look like a sane production AI (varied, plausible names across
 every branch category), not just error-free — a check that didn't matter
 for any earlier shadow-only hook, where a wrong Lua answer was invisible
 to the running game either way.
+
+## 2026-07-21
+
+### `crawler_move`'s `want_convoy` wrongly wrapped opaque, then reworked — the "engine mechanics" heuristic has a real failure mode (supports `IMPLEMENTATION_DETAILS.md` 4.12)
+
+Stage 2's first pass wrapped `want_convoy` (the formula deciding which
+resource a crawler should harvest, and how good a tile is) and the whole
+`TileSearch` scan as opaque host calls, on the same "engine mechanics,
+not AI policy" reasoning already used for `former_tile_tally`/
+`has_base_sites`. The user caught this as wrong for this specific case:
+crawlers are the single biggest economic lever in the game and this
+project's explicit priority area, so the *scoring formula itself* is
+real AI policy — the fact that it consumes engine yield-calculator
+functions (`mod_crop_yield`/etc.) as inputs doesn't make the formula
+built on top of them engine mechanics too. The actual test that should
+have been applied and wasn't: does this code make a *choice* an AI could
+reasonably do differently, or does it just compute a fact about the
+world? `want_convoy`'s Ns/Ms/Es weights and thresholds are the former;
+`mod_crop_yield` itself is the latter. Reworked: the formula moved fully
+to Lua; the `TileSearch` scan (which genuinely can't cross into Lua,
+Phase 4.3) became an incremental start/next iterator instead of one
+opaque "whole scan" call, so Lua still drives the candidate-scoring loop
+even though the raw search primitive stays in C++ — a reusable pattern
+for future movers with the same shape.
+
+### Live verification caught a real gap: no decision-trace logging means a clean run proves nothing
+
+After the rework, the first live run came back with 0 errors and was
+reported clean — but `crawler_move`/`want_convoy` had no `log.debug`
+calls anywhere, unlike `artifact_move`'s own decision-point logging.
+"0 errors" only proves the code doesn't crash; it says nothing about
+whether the resource/tile choices are sane, which is exactly what
+matters for the area under the most scrutiny. Fixed by adding
+`crawl_score`/`crawl_move`/`crawl_convoy` lines at the three points
+`crawler_move` actually commits to a decision, mirroring the granularity
+the original C++ `crawl_score` debug line (removed during the rework)
+had. Second run: 730 decision lines, all three resource choices firing
+(including the narrowly-gated energy branch), scores in plausible
+bounded ranges, short local move distances. Lesson for any future
+Class 3 mover: decision-trace logging is not optional polish, it is the
+only verification mechanism this hook class has (5.1's own rule) — a
+mover isn't live-verified until its own log lines exist and were
+actually checked, not just "the run had zero errors."

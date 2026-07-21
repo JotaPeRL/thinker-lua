@@ -543,8 +543,7 @@ enable Lua by default on the branch → next.
    `move_upkeep` + invasion plans. Class 3 territory: largest, most
    performance-sensitive, ported last with the C++ baseline already measured.
 
-   **Status: 🔨 stages 0-2 implemented (0+1 live-verified, 2 build-verified
-   only so far), next up is live-verifying stage 2 before stage 2b
+   **Status: 🔨 stages 0-2 done and live-verified, next up is stage 2b
    (`nuclear_move`, split out after reading it in full — real complexity
    closer to `find_project`/`select_build` than an isolated mover).**
    Real function sizes read (not estimated) and a concrete stage-by-stage
@@ -553,10 +552,16 @@ enable Lua by default on the branch → next.
    hook mechanism, `lua_ai_command_hook`) and stage 1 (`artifact_move`,
    the pilot) are done and live-verified: 5 real invocations, all
    handled by Lua, 0 fallback to C++, 0 errors, a coherent multi-turn
-   movement trajectory logged. Stage 2 (`crawler_move`) is implemented
-   the same way (two opaque decision-block wrappers, `want_convoy` and
-   the `TileSearch` scan kept opaque per Phase 4.3) — both presets build
-   clean, native-`luajit` syntax-checked, live verification pending.
+   movement trajectory logged. Stage 2 (`crawler_move`) is done and
+   live-verified too — after an explicit correction from the user
+   (2026-07-21): the first pass had wrapped `want_convoy`'s scoring
+   formula opaquely, but crawlers are the game's single biggest economic
+   lever and this project's stated priority area, so that formula now
+   lives fully in Lua; only the yield calculators and the `TileSearch`
+   scan mechanics (Phase 4.3) stay in C++, the latter as a new
+   incremental start/next iterator pattern rather than one opaque call.
+   730 real decision-trace log lines confirmed across a live run, 0
+   errors, all three resource choices firing with plausible scores.
    Native life (fauna/aliens —
    `mod_alien_move`/`mod_alien_fauna`/`mod_do_fungal_towers`,
    `veh_turn.cpp`) is explicitly out of scope, by user decision
