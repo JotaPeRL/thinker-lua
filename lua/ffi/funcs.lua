@@ -115,10 +115,18 @@ typedef struct {
     int32_t (*mod_study_artifact)(int32_t veh_id);
     int32_t (*set_move_to)(int32_t veh_id, int32_t x, int32_t y);
     int32_t (*mod_veh_skip)(int32_t veh_id);
+    void (*crawler_home_base_check)(int32_t veh_id, int32_t* applicable, int32_t* action);
+    void (*crawler_at_target_check)(int32_t veh_id, int32_t* applicable, int32_t* action);
+    void (*want_convoy)(int32_t veh_id, int32_t x, int32_t y, int32_t* choice, int32_t* score);
+    void (*crawler_find_convoy_site)(int32_t veh_id, int32_t best_score, int32_t limit,
+        int32_t* found, int32_t* tx, int32_t* ty, int32_t* score);
+    void (*mark_convoy_site)(int32_t x, int32_t y);
+    int32_t (*set_convoy)(int32_t veh_id, int32_t res);
+    int32_t (*move_to_base)(int32_t veh_id, int32_t ally);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 24
+local HOST_API_VERSION = 25
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -239,4 +247,19 @@ return {
     mod_study_artifact = function(veh_id) return api.mod_study_artifact(veh_id) end,
     set_move_to = function(veh_id, x, y) return api.set_move_to(veh_id, x, y) end,
     mod_veh_skip = function(veh_id) return api.mod_veh_skip(veh_id) end,
+    crawler_home_base_check = function(veh_id, applicable, action)
+        return api.crawler_home_base_check(veh_id, applicable, action)
+    end,
+    crawler_at_target_check = function(veh_id, applicable, action)
+        return api.crawler_at_target_check(veh_id, applicable, action)
+    end,
+    want_convoy = function(veh_id, x, y, choice, score)
+        return api.want_convoy(veh_id, x, y, choice, score)
+    end,
+    crawler_find_convoy_site = function(veh_id, best_score, limit, found, tx, ty, score)
+        return api.crawler_find_convoy_site(veh_id, best_score, limit, found, tx, ty, score)
+    end,
+    mark_convoy_site = function(x, y) return api.mark_convoy_site(x, y) end,
+    set_convoy = function(veh_id, res) return api.set_convoy(veh_id, res) end,
+    move_to_base = function(veh_id, ally) return api.move_to_base(veh_id, ally) end,
 }

@@ -729,6 +729,12 @@ int main() {
     // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12): VEH::at_target().
     printf("    ORDER_NONE = %d,\n", ORDER_NONE);
     printf("    ORDER_HOLD = %d,\n", ORDER_HOLD);
+    // Movement port, stage 2 (IMPLEMENTATION_DETAILS.md 4.12): crawler_move.
+    printf("    ORDER_MOVE_TO = %d,\n", ORDER_MOVE_TO);
+    printf("    RES_NONE = %d,\n", RES_NONE);
+    printf("    RES_NUTRIENT = %d,\n", RES_NUTRIENT);
+    printf("    RES_MINERAL = %d,\n", RES_MINERAL);
+    printf("    RES_ENERGY = %d,\n", RES_ENERGY);
     // select_build itself, step 2 (push_item + has_retool/skip_facility,
     // IMPLEMENTATION_DETAILS.md 4.10.5/4.10.9 resumed after the
     // Consolidation gate).

@@ -65,4 +65,7 @@ return {
     -- lua_ai_command_hook for the contract (no fallback once a mutation
     -- is issued, unlike every hook above).
     artifact_move = move.artifact_move,
+    -- Movement port, stage 2 (IMPLEMENTATION_DETAILS.md 4.12): same
+    -- Class 3 contract as artifact_move.
+    crawler_move = move.crawler_move,
 }

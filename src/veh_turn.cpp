@@ -188,6 +188,12 @@ int __cdecl mod_enemy_move(int veh_id) {
         } else if (veh->is_former()) {
             return former_move(veh_id);
         } else if (veh->is_supply()) {
+            // Movement port, stage 2 (IMPLEMENTATION_DETAILS.md 4.12):
+            // Class 3 hook, same shape as artifact_move's own seam.
+            int value;
+            if (lua_ai_command_hook("crawler_move", &value, veh_id)) {
+                return value;
+            }
             return crawler_move(veh_id);
         } else if (veh->is_artifact()) {
             // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12):

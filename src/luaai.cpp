@@ -406,6 +406,129 @@ static int32_t host_mod_veh_skip(int32_t veh_id) {
     return mod_veh_skip(veh_id);
 }
 
+// Movement port, stage 2 (IMPLEMENTATION_DETAILS.md 4.12): crawler_move's
+// own dependencies. Wraps move.cpp:1223-1239's leading eligibility gate
+// (mapsq null check + home-base validity) as one opaque block -- no real
+// AI judgment in it, same tier as former_tile_tally. g_mutation_issued
+// is set precisely at each real mutation point (home_base_id write,
+// or a call to a mutating action), not unconditionally.
+static void host_crawler_home_base_check(int32_t veh_id, int32_t* applicable, int32_t* action) {
+    VEH* veh = &Vehs[veh_id];
+    MAP* sq = mapsq(veh->x, veh->y);
+    if (!sq) {
+        *applicable = 1;
+        g_mutation_issued = true;
+        *action = mod_veh_skip(veh_id);
+        return;
+    }
+    if (veh->home_base_id < 0 || Bases[veh->home_base_id].faction_id != veh->faction_id) {
+        *applicable = 1;
+        if (is_human(veh->faction_id)) {
+            g_mutation_issued = true;
+            *action = mod_veh_skip(veh_id);
+            return;
+        }
+        if (sq->is_base() && sq->owner == veh->faction_id) {
+            g_mutation_issued = true;
+            veh->home_base_id = base_at(veh->x, veh->y);
+        } else if (random(2)) {
+            g_mutation_issued = true;
+            *action = move_to_base(veh_id, false);
+            return;
+        }
+        g_mutation_issued = true;
+        *action = mod_veh_skip(veh_id);
+        return;
+    }
+    *applicable = 0;
+}
+
+// move.cpp:1240-1246. Same "whole block, no real judgment" treatment --
+// the only content is a direct veh->order field write (can't cross the
+// FFI read-only boundary any other way) plus the VEH_SYNC early return.
+static void host_crawler_at_target_check(int32_t veh_id, int32_t* applicable, int32_t* action) {
+    VEH* veh = &Vehs[veh_id];
+    if (!veh->at_target()) {
+        *applicable = 1;
+        if (veh->order == ORDER_CONVOY) {
+            g_mutation_issued = true;
+            veh->order = ORDER_MOVE_TO;
+        }
+        *action = VEH_SYNC;
+        return;
+    }
+    *applicable = 0;
+}
+
+// move.cpp:1167-1221, reproduced via the real want_convoy verbatim. Pure
+// tile-yield scoring (mod_crop_yield/mod_mine_yield/mod_energy_yield) --
+// real engine mechanics, not AI choice. Flags g_mutation_issued
+// unconditionally since want_convoy's own body can insert into mapnodes
+// on one early-return path (a dedup marker, not a "decision").
+static void host_want_convoy(int32_t veh_id, int32_t x, int32_t y, int32_t* choice, int32_t* score) {
+    g_mutation_issued = true;
+    MAP* sq = mapsq(x, y);
+    if (!sq) {
+        *choice = RES_NONE;
+        *score = 0;
+        return;
+    }
+    *choice = (int32_t)want_convoy(veh_id, x, y, score, sq);
+}
+
+// move.cpp:1253-1275, the TileSearch scan itself. TileSearch never
+// crosses into Lua (Phase 4.3) -- same "wrap the whole scan+pick-best"
+// precedent as has_base_sites/former_tile_tally, reusing the real
+// want_convoy internally per candidate tile (not the Lua-facing wrapper
+// above -- this stays a plain in-process C++ call).
+static void host_crawler_find_convoy_site(int32_t veh_id, int32_t best_score, int32_t limit,
+int32_t* found, int32_t* tx_out, int32_t* ty_out, int32_t* score_out) {
+    VEH* veh = &Vehs[veh_id];
+    int i = 0;
+    int tx = -1;
+    int ty = -1;
+    int score = 0;
+    int best = best_score;
+    TileSearch ts;
+    ts.init(veh->x, veh->y, veh->triad());
+    MAP* sq;
+    while (++i <= limit && (sq = ts.get_next()) != NULL) {
+        if (mapdata[{ts.rx, ts.ry}].safety < PM_SAFE
+        || non_ally_in_tile(ts.rx, ts.ry, veh->faction_id)
+        || mapnodes.count({ts.rx, ts.ry, NODE_CONVOY_SITE})) {
+            continue;
+        }
+        int choice = want_convoy(veh_id, ts.rx, ts.ry, &score, sq);
+        if (choice != RES_NONE && score - ts.dist > best) {
+            best = score - ts.dist;
+            tx = ts.rx;
+            ty = ts.ry;
+            debug("crawl_score %2d %2d res: %2d score: %2d %s\n",
+                ts.rx, ts.ry, choice, best, Bases[veh->home_base_id].name);
+        }
+    }
+    g_mutation_issued = true;
+    *found = (tx >= 0) ? 1 : 0;
+    *tx_out = tx;
+    *ty_out = ty;
+    *score_out = best;
+}
+
+static void host_mark_convoy_site(int32_t x, int32_t y) {
+    g_mutation_issued = true;
+    mapnodes.insert({x, y, NODE_CONVOY_SITE});
+}
+
+static int32_t host_set_convoy(int32_t veh_id, int32_t res) {
+    g_mutation_issued = true;
+    return set_convoy(veh_id, (ResType)res);
+}
+
+static int32_t host_move_to_base(int32_t veh_id, int32_t ally) {
+    g_mutation_issued = true;
+    return move_to_base(veh_id, ally != 0);
+}
+
 // select_build itself, unit-branch catalog continued (IMPLEMENTATION_
 // DETAILS.md 4.10.29): FormerUnit's own tile-quality tally
 // (build.cpp:1157-1166), reproduced verbatim.
@@ -539,7 +662,7 @@ static int32_t host_ocean_colony_land_site(int32_t base_id, int32_t land) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 24,
+    /* api_version          */ 25,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -643,6 +766,13 @@ static LuaHostApi g_host_api = {
     /* mod_study_artifact   */ host_mod_study_artifact,
     /* set_move_to          */ host_set_move_to,
     /* mod_veh_skip         */ host_mod_veh_skip,
+    /* crawler_home_base_check */ host_crawler_home_base_check,
+    /* crawler_at_target_check */ host_crawler_at_target_check,
+    /* want_convoy          */ host_want_convoy,
+    /* crawler_find_convoy_site */ host_crawler_find_convoy_site,
+    /* mark_convoy_site     */ host_mark_convoy_site,
+    /* set_convoy           */ host_set_convoy,
+    /* move_to_base         */ host_move_to_base,
 };
 
 static lua_State* L = NULL;

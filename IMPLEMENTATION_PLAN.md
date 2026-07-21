@@ -543,18 +543,21 @@ enable Lua by default on the branch → next.
    `move_upkeep` + invasion plans. Class 3 territory: largest, most
    performance-sensitive, ported last with the C++ baseline already measured.
 
-   **Status: 🔨 stage 0+1 done and live-verified, next up is stage 2
-   (`crawler_move` alone — `nuclear_move` split into its own stage 2b
-   after reading it in full, real complexity closer to
-   `find_project`/`select_build` than an isolated mover).** Real
-   function sizes read (not estimated) and a concrete stage-by-stage
+   **Status: 🔨 stages 0-2 implemented (0+1 live-verified, 2 build-verified
+   only so far), next up is live-verifying stage 2 before stage 2b
+   (`nuclear_move`, split out after reading it in full — real complexity
+   closer to `find_project`/`select_build` than an isolated mover).**
+   Real function sizes read (not estimated) and a concrete stage-by-stage
    breakdown agreed with the
    user — see `IMPLEMENTATION_DETAILS.md` 4.12. Stage 0 (the Class 3
    hook mechanism, `lua_ai_command_hook`) and stage 1 (`artifact_move`,
-   the pilot) are done: both presets build clean, and a live autoplay
-   run confirmed the hook actually governs — 5 real invocations, all
+   the pilot) are done and live-verified: 5 real invocations, all
    handled by Lua, 0 fallback to C++, 0 errors, a coherent multi-turn
-   movement trajectory logged. Native life (fauna/aliens —
+   movement trajectory logged. Stage 2 (`crawler_move`) is implemented
+   the same way (two opaque decision-block wrappers, `want_convoy` and
+   the `TileSearch` scan kept opaque per Phase 4.3) — both presets build
+   clean, native-`luajit` syntax-checked, live verification pending.
+   Native life (fauna/aliens —
    `mod_alien_move`/`mod_alien_fauna`/`mod_do_fungal_towers`,
    `veh_turn.cpp`) is explicitly out of scope, by user decision
    (2026-07-20): not strategic faction AI, revisit later if it ever

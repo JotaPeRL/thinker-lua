@@ -53,6 +53,7 @@ bool invasion_unit(int veh_id);
 bool near_landing(int veh_id);
 int make_landing(int veh_id);
 
+ResType want_convoy(int veh_id, int x, int y, int* score, MAP* sq);
 int crawler_move(const int id);
 int colony_move(const int id);
 int former_move(const int id);

@@ -2006,10 +2006,34 @@ concerning, just means no artifact reached a friendly base under the
 right conditions yet; revisit opportunistically like the handful of
 still-unexercised `select_build` branches, not a blocker. **Stage 0+1
 closed.**
-- **Stage 2 — `crawler_move`** (~67 loc, but with real complexity of its
-  own: `want_convoy`'s tile-yield scoring, a bounded `TileSearch` scan
-  picking the best candidate, `mapnodes` — a mutable `NodeSet` — as
-  shared state).
+- **Stage 2 — `crawler_move`. ✅ done, build-verified, live verification
+  pending.** (~67 loc, but with real complexity of its own: `want_convoy`'s
+  tile-yield scoring, a bounded `TileSearch` scan picking the best
+  candidate, `mapnodes` — a mutable `NodeSet` — as shared state).
+**Stage 2 implementation (2026-07-21).** Two whole decision blocks
+(`move.cpp:1229-1239`/`1240-1246`) wrapped as opaque host calls
+(`crawler_home_base_check`/`crawler_at_target_check`, each returning
+`{applicable, action}`) rather than exposing the individual MAP-tile/
+VEH-field touches they need (`sq->is_base()`/`->owner`, a direct
+`veh->order` write) — same "no real judgment in the block" reasoning as
+`former_tile_tally`. `want_convoy` (`move.cpp:1167-1221`) is its own
+opaque wrapper (pure tile-yield scoring, real engine mechanics, mutates
+`mapnodes` on one path so still flags the mutation tracker) — exposed
+both directly (for the current-tile check) and reused internally, in
+plain C++, by a second wrapper covering the whole `TileSearch` scan
+(`crawler_find_convoy_site`, `move.cpp:1253-1275`) that stays opaque per
+Phase 4.3. New mutating wrappers: `mark_convoy_site` (marks `mapnodes`),
+`set_convoy`, `move_to_base`. `ResType` (`RES_NONE`/`RES_MINERAL`/
+`RES_NUTRIENT`/`RES_ENERGY`) and `ORDER_MOVE_TO` newly exposed enums,
+both already visible via existing `#include`s (no hand-transcription
+needed this time). One new upstream declaration:
+`want_convoy` had no header declaration at all (file-local to
+`move.cpp` but not `static`) — added to `move.h` next to
+`crawler_move`, a genuine 1-line upstream touch, smallest possible.
+`LuaHostApi` bumped to `api_version=25`. Both presets build clean, every
+touched file passes a native-`luajit` syntax check. **Next: live
+verification.**
+
 - **Stage 2b — `nuclear_move`** (~163 loc), split out from stage 2 after
   reading it in full — LOC undersold it badly: full cross-faction
   diplomatic/threat scoring (`diplo_status`/`at_war`/`un_charter`/

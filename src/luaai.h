@@ -256,6 +256,34 @@ struct LuaHostApi {
     int32_t (*mod_study_artifact)(int32_t veh_id);
     int32_t (*set_move_to)(int32_t veh_id, int32_t x, int32_t y);
     int32_t (*mod_veh_skip)(int32_t veh_id);
+    // Movement port, stage 2 (IMPLEMENTATION_DETAILS.md 4.12):
+    // crawler_move's own dependencies. The first two wrap whole decision
+    // blocks (move.cpp:1229-1239/1240-1246) rather than exposing their
+    // individual MAP-tile/VEH-field touches piecemeal (sq->is_base()/
+    // ->owner, a direct veh->order write) -- both blocks are eligibility/
+    // bookkeeping with no real AI judgment in them, same tier as
+    // former_tile_tally. applicable=0 means "guard condition was false,
+    // continue with the rest of crawler_move normally"; applicable!=0
+    // means the whole block ran and `action` is the final return value.
+    void (*crawler_home_base_check)(int32_t veh_id, int32_t* applicable, int32_t* action);
+    void (*crawler_at_target_check)(int32_t veh_id, int32_t* applicable, int32_t* action);
+    // want_convoy (move.cpp:1167-1221): pure scoring formula over tile
+    // yields (mod_crop_yield/mod_mine_yield/mod_energy_yield) and base
+    // state -- real engine mechanics, not AI choice (the choice itself
+    // is a simple threshold comparison already inside the formula).
+    // Mutates mapnodes in one early-return path (a dedup marker, not a
+    // "decision"), so still flags g_mutation_issued like every other
+    // wrapper that touches engine state.
+    void (*want_convoy)(int32_t veh_id, int32_t x, int32_t y, int32_t* choice, int32_t* score);
+    // The TileSearch scan itself (move.cpp:1253-1275) -- stays opaque
+    // per Phase 4.3 (TileSearch never crosses into Lua), calls the real
+    // C++ want_convoy internally per candidate tile, same "wrap the
+    // whole scan+pick-best" precedent as has_base_sites/former_tile_tally.
+    void (*crawler_find_convoy_site)(int32_t veh_id, int32_t best_score, int32_t limit,
+        int32_t* found, int32_t* tx, int32_t* ty, int32_t* score);
+    void (*mark_convoy_site)(int32_t x, int32_t y);
+    int32_t (*set_convoy)(int32_t veh_id, int32_t res);
+    int32_t (*move_to_base)(int32_t veh_id, int32_t ally);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3
