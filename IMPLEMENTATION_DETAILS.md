@@ -1893,9 +1893,9 @@ trade-off as this file's own session-record structure.
 
 ---
 
-### 4.12 Movement port (porting-order item 4) — stage 0+1 done and live-verified
+### 4.12 Movement port (porting-order item 4) — stages 0-2 done and live-verified, stage 3 (colony_move) next
 
-**Status: ✅ stage 0+1 done, live-verified.** Real function sizes
+**Status: ✅ stages 0-2 done, live-verified.** Real function sizes
 read directly from `move.cpp`/`veh_turn.cpp`/`goal.cpp` (3657/887/183
 loc) rather than estimated — the one-liner in `IMPLEMENTATION_PLAN.md`
 predates this pass. Complements 4.4's earlier high-level notes
@@ -2079,18 +2079,6 @@ short and local (e.g. `44 42 -> 40 46`), and at least 44 distinct
 starting positions were touched across the run — broad, not a single
 repeating case. **Stage 2 closed.**
 
-- **Stage 2b — `nuclear_move`** (~163 loc), split out from stage 2 after
-  reading it in full — LOC undersold it badly: full cross-faction
-  diplomatic/threat scoring (`diplo_status`/`at_war`/`un_charter`/
-  `corner_market_active`), a complete secret-project iteration (same
-  tier as `find_project`/`select_build`), spatial containers for
-  base-target search (`Points`, `map_int_t`), and several genuinely new
-  primitives (`veh_drop`/`veh_lift`/`defender_count`/`ally_near_tile`/
-  `min_range`/a `map_range(VEH*, BASE*)` overload distinct from the
-  already-exposed coordinate form). Closer in weight to
-  `find_project`/`select_build` than to an "isolated small mover" —
-  deferred to its own stage rather than merged with stage 2, once
-  `crawler_move` and the rest of the merge-worthy movers are done.
 - **Stage 3 — `colony_move`** (~125 loc, reuses `can_build_base`/
   `base_tile_score`).
 - **Stage 4 — `former_move`** (~157 loc). The one stage where a real,
@@ -2112,6 +2100,21 @@ repeating case. **Stage 2 closed.**
   `move_upkeep` itself splits per 4.4's existing note (table fills stay
   C++, the planning that consumes them is what ports); `goal.cpp` lands
   here since it's consumed by this planning, not by the movers.
+- **Stage 8 — `nuclear_move`** (~163 loc), moved to the very end of the
+  phase by explicit user direction (2026-07-21), reordering the plan's
+  original position right after `crawler_move`. Originally split out of
+  stage 2 after reading it in full — LOC undersold it badly: full
+  cross-faction diplomatic/threat scoring (`diplo_status`/`at_war`/
+  `un_charter`/`corner_market_active`), a complete secret-project
+  iteration (same tier as `find_project`/`select_build`), spatial
+  containers for base-target search (`Points`, `map_int_t`), and several
+  genuinely new primitives (`veh_drop`/`veh_lift`/`defender_count`/
+  `ally_near_tile`/`min_range`/a `map_range(VEH*, BASE*)` overload
+  distinct from the already-exposed coordinate form). Closer in weight
+  to `find_project`/`select_build` than to an "isolated small mover" —
+  now deferred past every other movement stage, including `combat_move`
+  and the faction-level orchestration stage, so its outsized complexity
+  doesn't block the more clearly-scoped work.
 
 ---
 

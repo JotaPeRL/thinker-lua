@@ -538,16 +538,18 @@ enable Lua by default on the branch → next.
    4.10.31). `select_build` itself is fully closed. `mod_base_hurry`/
    `plans_upkeep`/`design_units`/`former_plans` remain unsurveyed.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
-   with the isolated movers (`artifact_move` → `crawler_move` → `nuclear_move` →
-   `colony_move` → `former_move` → `trans_move`) and finish with `combat_move` +
-   `move_upkeep` + invasion plans. Class 3 territory: largest, most
-   performance-sensitive, ported last with the C++ baseline already measured.
+   with the isolated movers (`artifact_move` → `crawler_move` →
+   `colony_move` → `former_move` → `trans_move`), then `combat_move` +
+   `move_upkeep` + invasion plans, and finish with `nuclear_move` last —
+   reordered by user direction (2026-07-21) since it turned out closer
+   in weight to `find_project`/`select_build` than an isolated mover, so
+   its complexity shouldn't block the rest of the phase. Class 3
+   territory: largest, most performance-sensitive, ported last with the
+   C++ baseline already measured.
 
-   **Status: 🔨 stages 0-2 done and live-verified, next up is stage 2b
-   (`nuclear_move`, split out after reading it in full — real complexity
-   closer to `find_project`/`select_build` than an isolated mover).**
-   Real function sizes read (not estimated) and a concrete stage-by-stage
-   breakdown agreed with the
+   **Status: 🔨 stages 0-2 done and live-verified, next up is stage 3
+   (`colony_move`).** Real function sizes read (not estimated) and a
+   concrete stage-by-stage breakdown agreed with the
    user — see `IMPLEMENTATION_DETAILS.md` 4.12. Stage 0 (the Class 3
    hook mechanism, `lua_ai_command_hook`) and stage 1 (`artifact_move`,
    the pilot) are done and live-verified: 5 real invocations, all
