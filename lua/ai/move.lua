@@ -127,6 +127,18 @@ end
 -- defined later in this file next to the route_score/route_best_home_base/
 -- route_gate_teleport pieces it's built from.
 local search_route
+-- Forward declaration: former_move (sub-stage 4, defined further up in
+-- this file than escape_move's/search_base's own definitions -- unlike
+-- colony_move, which is defined after both) calls escape_move for its
+-- own !safe branch and search_base for its own tail-end fallback.
+-- Found live (IMPLEMENTATION_DETAILS.md 4.13): without these, former_move
+-- treated both as undefined globals, caught safely by
+-- lua_ai_command_hook's pcall (no mutation had occurred yet) but
+-- incorrectly falling back to former_move's own C++ body every time
+-- either branch was reached. A systematic sweep for the same forward-
+-- reference pattern across the rest of the file found no other instances.
+local escape_move
+local search_base
 
 -- former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the 12
 -- can_*/keep_fungus/plant_fungus tile-eligibility helpers select_item
@@ -1123,7 +1135,7 @@ end
 -- itself; since escape_score has no side effects, never surfacing an
 -- ineligible candidate to Lua at all is equivalent). kind: 0 = exhausted,
 -- 1 = friendly/pact base found, 2 = scoreable non-base candidate.
-local function search_base(veh_id, ally)
+search_base = function(veh_id, ally)
     local start_out = ffi.new("int32_t[2]")
     funcs.search_base_start(veh_id, ally and 1 or 0, start_out, start_out + 1)
     if start_out[0] ~= 0 then
@@ -1167,7 +1179,7 @@ local function search_base(veh_id, ally)
 end
 
 -- path.cpp:551-564.
-local function escape_move(veh_id)
+escape_move = function(veh_id)
     if funcs.defend_tile(veh_id) then
         return funcs.set_order_none(veh_id)
     end

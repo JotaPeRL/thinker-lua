@@ -2451,7 +2451,7 @@ diff, and `crawler_move`'s own code path shares nothing with
 
 ---
 
-### 4.13 `former_move` port (movement stage 4) — all 4 sub-stages done, build-verified; live verification pending
+### 4.13 `former_move` port (movement stage 4) — live-verified clean, one more confirmation run pending after the last fix
 
 **Real size, read in full before touching any code:** `former_move`
 itself ~155 loc (`move.cpp:2047-2202`), `select_item` ~200 loc
@@ -2790,7 +2790,38 @@ own wrapper arity, across all of `lua/ai/` and `lua/api/`, not just
 `move.lua` — zero remaining mismatches anywhere. Diagnostic logging
 removed (its job was done); the shipped logging is back to one
 decision-trace line per real outcome, matching every other mover.
-Redeployed for a third live attempt.
+Redeployed for a third live attempt — **no crash.** 61 turns, 1050 real
+`former_move` decision lines (636 `former_action`, 414 `former_move`; 0
+`former_trans`/`former_skip` this run — not concerning, same "revisit
+opportunistically" precedent as every prior stage's unexercised
+branches), 0 mismatches, `lua.log`'s count exactly matching
+`debug.txt`'s `lua: former_*` count (1050 = 1050) — every decision
+Lua-handled, no stray C++-side duplicate, same cross-check as stage
+3's `colony_move` verification.
+
+**One more real bug surfaced, this time fully contained, never a
+crash risk:** 8 `error in 'former_move'` lines, all `attempt to call
+global 'escape_move' (a nil value)`. `escape_move` is defined later in
+`lua/ai/move.lua` than `former_move` itself (`colony_move`, defined
+after both, was unaffected) — `former_move`'s own `elseif not safe
+then return escape_move(veh_id) end` branch was written before adding
+the forward declaration `search_route` already needed for the same
+reason (`artifact_move` calling it ahead of its own definition,
+route_score sub-stage B). Caught safely every time by
+`lua_ai_command_hook`'s pcall (no mutation had occurred yet, so it
+correctly fell back to `former_move`'s own C++ body) — a real gap in
+port fidelity, not a stability risk, but still needed fixing since the
+whole point is the Lua path actually running. A second, identical
+instance found by re-checking rather than assuming this was the only
+one: `search_base` (used by `former_move`'s own tail-end fallback) has
+the exact same ordering problem, just never triggered in this run's
+specific game state. Both fixed with the same forward-declaration
+pattern as `search_route`. Verified with a script (not just rereading)
+that checks, for every call site of every locally-defined function in
+the file, whether the callee's own definition line is later and no
+forward declaration covers the gap — comment lines excluded after an
+initial pass surfaced them as false positives. Zero remaining
+instances found after the fix.
 
 ---
 

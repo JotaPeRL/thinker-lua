@@ -561,14 +561,18 @@ enable Lua by default on the branch → next.
    own artifact-at-home-base baseline, `path.cpp:760` — and a live-
    verification instrumentation gap found and fixed on the first
    attempt: the ordinary success path had no log line at all). Stage 4
-   (`former_move`) all 4 sub-stages done and build-verified — the 12
-   `can_*`/`keep_fungus`/`plant_fungus` tile-eligibility helpers,
-   `select_item`, `former_tile_score`, and `former_move` itself
-   (~670 loc total), hooked into `veh_turn.cpp` as a Class 3 seam; a
-   real bug found and fixed along the way (`FormerMode` was never
-   actually added to the generated enum table, silently `nil`-ing every
-   `select_item` mode comparison since sub-stage 2). Live verification
-   is the only remaining step — see `IMPLEMENTATION_DETAILS.md` 4.13.
+   (`former_move`) all 4 sub-stages done, build-verified, and live-
+   verified clean on the latest run (1050 real decision lines over 61
+   turns, 0 mismatches) after a live bug hunt across several attempts —
+   two missing enum values (`FormerMode`, then `FORMER_NONE`/
+   `FORMER_RAISE_LAND`), a genuine native crash (an FFI wrapper called
+   with the wrong argument count, `tile_near8`/`tile_neighbor` — a NULL-
+   pointer write pcall couldn't catch), and a forward-reference bug
+   (`escape_move`/`search_base` called before their own definitions,
+   caught safely by `pcall` every time but never actually running).
+   One more confirmation run is queued to make sure nothing else
+   surfaces before formally closing this stage — see
+   `IMPLEMENTATION_DETAILS.md` 4.13 for the full bug-hunt narrative.
    Next movement stage after this closes: `trans_move` (stage 5).**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
