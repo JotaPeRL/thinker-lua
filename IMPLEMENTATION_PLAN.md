@@ -560,8 +560,12 @@ enable Lua by default on the branch → next.
    assembling the full function — a stale-`sq` reuse in the original's
    own artifact-at-home-base baseline, `path.cpp:760` — and a live-
    verification instrumentation gap found and fixed on the first
-   attempt: the ordinary success path had no log line at all). Next up:
-   stage 4 (`former_move`).**
+   attempt: the ordinary success path had no log line at all). Stage 4
+   (`former_move`) under way: sub-stage 1 (the 12 `can_*`/`keep_fungus`/
+   `plant_fungus` tile-eligibility helpers, ~670 loc total scope for the
+   whole stage) done and build-verified; sub-stages 2-4 (`select_item`,
+   `former_tile_score`, `former_move` itself + live verification) not
+   yet started — see `IMPLEMENTATION_DETAILS.md` 4.13.**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across

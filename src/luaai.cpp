@@ -1265,11 +1265,71 @@ int32_t x, int32_t y, int32_t base_id) {
     add_goal(faction_id, type, priority, x, y, base_id);
 }
 
+// former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the 12
+// can_*/keep_fungus/plant_fungus tile-eligibility helpers' own
+// dependencies. has_terra wraps terrain_avail -- a genuine faction-level
+// tech/reactor eligibility gate, not AI policy.
+static int32_t host_has_terra(int32_t item_id, int32_t ocean, int32_t faction_id) {
+    return has_terra((FormerItem)item_id, ocean, faction_id);
+}
+
+static int32_t host_coast_tiles(int32_t x, int32_t y) {
+    return coast_tiles(x, y);
+}
+
+static int32_t host_both_neutral(int32_t faction_id_1, int32_t faction_id_2) {
+    return both_neutral(faction_id_1, faction_id_2);
+}
+
+static int32_t host_map_former(int32_t x, int32_t y) {
+    return mapdata[{x, y}].former;
+}
+
+static int32_t host_map_roads(int32_t x, int32_t y) {
+    return mapdata[{x, y}].roads;
+}
+
+// can_road's own 8-direction NearbyTiles[] ring (path.h), distinct from
+// (smaller than) the 21-tile TableOffsetX/Y ring tile_neighbor resolves
+// -- same "pure geometry, not judgment" tier and shape as tile_neighbor.
+static int32_t host_tile_near8(int32_t x, int32_t y, int32_t i, int32_t* tx, int32_t* ty) {
+    int x2 = wrap(x + NearbyTiles[i][0]);
+    int y2 = y + NearbyTiles[i][1];
+    if (!mapsq(x2, y2)) {
+        return 0;
+    }
+    *tx = x2;
+    *ty = y2;
+    return 1;
+}
+
+static int32_t host_tile_output_limit_nutrient() {
+    return conf.tile_output_limit[0];
+}
+
+// can_bridge (path.cpp:1530-1566) stays fully opaque, unlike its 12
+// siblings: it couples a bounded TileSearch scan (used only to build an
+// oldtiles set, no per-candidate scoring) with a territory-conflict check
+// (compare_might) -- a structural eligibility gate with no comparison-
+// among-candidates judgment in it, same tier as has_base_sites.
+static int32_t host_can_bridge(int32_t x, int32_t y, int32_t faction_id) {
+    MAP* sq = mapsq(x, y);
+    return sq && can_bridge(x, y, faction_id, sq);
+}
+
+static int32_t host_plant_fungus_flag(int32_t faction_id) {
+    return plans[faction_id].plant_fungus;
+}
+
+static int32_t host_build_tubes(int32_t faction_id) {
+    return plans[faction_id].build_tubes;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 31,
+    /* api_version          */ 32,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1450,6 +1510,16 @@ static LuaHostApi g_host_api = {
     /* route_search_naval_pickup_start */ host_route_search_naval_pickup_start,
     /* route_search_naval_pickup_next  */ host_route_search_naval_pickup_next,
     /* add_goal                    */ host_add_goal,
+    /* has_terra                   */ host_has_terra,
+    /* coast_tiles                 */ host_coast_tiles,
+    /* both_neutral                */ host_both_neutral,
+    /* map_former                  */ host_map_former,
+    /* map_roads                   */ host_map_roads,
+    /* tile_near8                  */ host_tile_near8,
+    /* tile_output_limit_nutrient  */ host_tile_output_limit_nutrient,
+    /* can_bridge                  */ host_can_bridge,
+    /* plant_fungus_flag           */ host_plant_fungus_flag,
+    /* build_tubes                 */ host_build_tubes,
 };
 
 static lua_State* L = NULL;

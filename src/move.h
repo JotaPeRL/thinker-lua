@@ -39,6 +39,7 @@ void invasion_plan(int faction_id);
 void update_main_region(int faction_id);
 void move_upkeep(int faction_id, UpdateMode mode);
 bool can_build_base(int x, int y, int faction_id, int triad);
+bool can_bridge(int x, int y, int faction_id, MAP* sq);
 int base_tile_score(int x, int y, int faction_id, MAP* sq);
 int select_item(int x, int y, int faction_id, FormerMode mode, MAP* sq);
 int former_tile_score(int x, int y, int faction_id, MAP* sq);

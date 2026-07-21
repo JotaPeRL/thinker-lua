@@ -41,6 +41,30 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         search_route = { file = "src/path.cpp", func = "search_route",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_borehole = { file = "src/move.cpp", func = "can_borehole",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_farm = { file = "src/move.cpp", func = "can_farm",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_solar = { file = "src/move.cpp", func = "can_solar",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_mine = { file = "src/move.cpp", func = "can_mine",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_forest = { file = "src/move.cpp", func = "can_forest",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_sensor = { file = "src/move.cpp", func = "can_sensor",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        former_keep_fungus = { file = "src/move.cpp", func = "keep_fungus",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        former_plant_fungus = { file = "src/move.cpp", func = "plant_fungus",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_level = { file = "src/move.cpp", func = "can_level",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_river = { file = "src/move.cpp", func = "can_river",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_road = { file = "src/move.cpp", func = "can_road",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        can_magtube = { file = "src/move.cpp", func = "can_magtube",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -54,6 +78,7 @@ local cmath = dofile("lua/api/cmath.lua")
 local game = dofile("lua/api/game.lua")
 local rand = dofile("lua/api/rand.lua")
 local faction = dofile("lua/api/faction.lua")
+local tech = dofile("lua/api/tech.lua")
 
 local E = types.enums
 local idiv = cmath.idiv
@@ -61,11 +86,339 @@ local clamp = cmath.clamp
 local min = math.min
 local max = math.max
 
+-- former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13):
+-- GamePreferences/GameMorePreferences are plain int* globals (like
+-- CurrentTurn), read via [0]. ResInfoForestSq is the one ResValue member
+-- can_solar needs -- same one-field-address technique as tech.lua's
+-- ResInfoRecyclingTanks (the FIELD()/FieldShape mechanism can't emit_struct
+-- a nested-struct member), read as int32_t[3] (nutrient, mineral, energy,
+-- skipping the unused 4th) -- only .energy (index 2) is used here.
+local GamePreferences = ffi.cast("int32_t*", types.globals.GamePreferences)
+local GameMorePreferences = ffi.cast("int32_t*", types.globals.GameMorePreferences)
+local ResInfoForestSq = ffi.cast("int32_t*", types.globals.ResInfoForestSq)
+
 -- Forward declaration: artifact_move (below) calls the fully-assembled
 -- search_route (IMPLEMENTATION_DETAILS.md 4.12, route_score sub-stage B),
 -- defined later in this file next to the route_score/route_best_home_base/
 -- route_gate_teleport pieces it's built from.
 local search_route
+
+-- former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the 12
+-- can_*/keep_fungus/plant_fungus tile-eligibility helpers select_item
+-- (sub-stage 2) will choose among -- real AI policy (only here does
+-- *which* terraform action gets picked matter, per select_build's own
+-- former_tile_tally note deferring this exact port), unlike the engine-
+-- eligibility gates (has_terra, can_bridge) they call, which stay opaque.
+-- None of these take a VEH -- all are pure tile+faction-level queries,
+-- same signatures as the C++ originals minus the MAP* (recomputed from
+-- x, y via the tile_* fact wrappers instead). keep_fungus/plant_fungus
+-- are named former_keep_fungus/former_plant_fungus here to avoid
+-- colliding with the existing funcs.keep_fungus AIPlans accessor.
+
+-- move.cpp:1568-1595.
+local function can_borehole(x, y, faction_id, bonus)
+    if not funcs.has_terra(E.FORMER_THERMAL_BORE, funcs.tile_is_ocean(x, y) and 1 or 0, faction_id) then
+        return false
+    end
+    if funcs.is_human(faction_id) and bit.band(GamePreferences[0], E.PREF_AUTO_FORMER_BUILD_ADV) == 0 then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    if bit.band(items, bit.bor(E.BIT_BASE_IN_TILE, E.BIT_MONOLITH, E.BIT_THERMAL_BORE)) ~= 0
+        or bonus == E.RES_NUTRIENT then
+        return false
+    end
+    if bonus == E.RES_NONE and funcs.tile_is_rolling(x, y) and bit.band(items, E.BIT_CONDENSER) ~= 0 then
+        return false
+    end
+    if funcs.map_former(x, y) < 4 and not funcs.has_map_node(x, y, E.NODE_BOREHOLE) then
+        return false
+    end
+    local level = funcs.tile_alt_level(x, y)
+    for i = 1, 8 do
+        local valid, nx, ny = funcs.tile_neighbor(x, y, i)
+        if valid then
+            if bit.band(funcs.tile_items(nx, ny), E.BIT_THERMAL_BORE) ~= 0
+                or funcs.has_map_node(nx, ny, E.NODE_BOREHOLE) then
+                return false
+            end
+            local level2 = funcs.tile_alt_level(nx, ny)
+            if level2 < level and level2 > E.ALT_OCEAN_SHELF then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+-- move.cpp:1597-1620.
+local function can_farm(x, y, faction_id, bonus)
+    local has_nut = funcs.has_tech(tech.rules().tech_preq_allow_3_nutrients_sq, faction_id)
+    local sea = funcs.tile_is_ocean(x, y)
+    local items = funcs.tile_items(x, y)
+    if not funcs.has_terra(E.FORMER_FARM, sea and 1 or 0, faction_id)
+        or funcs.tile_is_rocky(x, y) or bit.band(items, E.BIT_THERMAL_BORE) ~= 0 then
+        return false
+    end
+    if bonus == E.RES_NUTRIENT and bit.band(items, E.BIT_FOREST) == 0
+        and (sea or funcs.tile_is_rainy(x, y) or funcs.tile_is_moist(x, y) or funcs.tile_is_rolling(x, y)) then
+        return true
+    end
+    if bonus == E.RES_ENERGY or bonus == E.RES_MINERAL
+        or bit.band(funcs.tile_lm_items(x, y), E.LM_VOLCANO) ~= 0 then
+        return false
+    end
+    if not has_nut and bonus ~= E.RES_NUTRIENT
+        and funcs.mod_crop_yield(faction_id, -1, x, y, 0) >= funcs.tile_output_limit_nutrient() then
+        return false
+    end
+    local score = (funcs.tile_is_rolling(x, y) and 1 or 0)
+        + ((funcs.tile_is_rainy(x, y) or funcs.tile_is_moist(x, y)) and 1 or 0)
+        + (funcs.nearby_items(x, y, 0, 9, bit.bor(E.BIT_FARM, E.BIT_CONDENSER)) < 2 and 1 or 0)
+        + (bit.band(items, bit.bor(E.BIT_FARM, E.BIT_CONDENSER)) ~= 0 and 1 or 0)
+        + (bit.band(items, E.BIT_FOREST) ~= 0 and 0 or 2)
+        + (bit.band(funcs.tile_lm_items(x, y), E.LM_JUNGLE) ~= 0 and 0 or 1)
+    return score > 4
+end
+
+-- move.cpp:1622-1645. BIT_ADVANCED (move.h) is CONDENSER|THERMAL_BORE,
+-- computed inline rather than exposed as its own constant.
+local function can_solar(x, y, faction_id, bonus)
+    local sea = funcs.tile_is_ocean(x, y)
+    if not funcs.has_terra(E.FORMER_SOLAR, sea and 1 or 0, faction_id) or bonus == E.RES_MINERAL then
+        return false
+    end
+    if funcs.tile_is_rocky(x, y) and bonus ~= E.RES_ENERGY then
+        return false
+    end
+    if not funcs.has_tech(tech.rules().tech_preq_allow_3_energy_sq, faction_id)
+        and bonus ~= E.RES_ENERGY and funcs.mod_energy_yield(faction_id, -1, x, y, 0) >= 2 then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    if not sea and funcs.has_terra(E.FORMER_FOREST, sea and 1 or 0, faction_id) and ResInfoForestSq[2] > 0
+        and not (funcs.tile_is_rocky(x, y) and bonus == E.RES_ENERGY
+            and funcs.tile_alt_level(x, y) > E.ALT_TWO_ABOVE_SEA)
+        and (bit.band(funcs.tile_lm_items(x, y), E.LM_JUNGLE) ~= 0
+            or ((funcs.tile_is_rainy(x, y) and 1 or 0) + (funcs.tile_is_rolling(x, y) and 1 or 0)
+                + ((funcs.tile_is_rainy(x, y) or funcs.tile_is_moist(x, y)) and 1 or 0)
+                + (bit.band(items, E.BIT_FARM) ~= 0 and 1 or 0) < 3)) then
+        return false
+    end
+    if bit.band(items, E.BIT_SENSOR) ~= 0 and funcs.nearby_items(x, y, 0, 9, E.BIT_SENSOR) < 2 then
+        return false
+    end
+    return bit.band(items, bit.bor(E.BIT_MINE, E.BIT_FOREST, E.BIT_SOLAR, E.BIT_CONDENSER, E.BIT_THERMAL_BORE)) == 0
+end
+
+-- move.cpp:1647-1663.
+local function can_mine(x, y, faction_id, bonus)
+    local sea = funcs.tile_is_ocean(x, y)
+    if not funcs.has_terra(E.FORMER_MINE, sea and 1 or 0, faction_id) or bonus == E.RES_NUTRIENT then
+        return false
+    end
+    if not sea and not funcs.tile_is_rocky(x, y) then
+        return false
+    end
+    if not funcs.has_tech(tech.rules().tech_preq_allow_3_minerals_sq, faction_id)
+        and bonus ~= E.RES_MINERAL and funcs.mod_mine_yield(faction_id, -1, x, y, 0) >= 2 then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    if bit.band(items, E.BIT_SENSOR) ~= 0 and funcs.nearby_items(x, y, 0, 9, E.BIT_SENSOR) < 2 then
+        return false
+    end
+    return bit.band(items, bit.bor(E.BIT_MINE, E.BIT_FOREST, E.BIT_SOLAR, E.BIT_CONDENSER, E.BIT_THERMAL_BORE)) == 0
+end
+
+-- move.cpp:1665-1681.
+local function can_forest(x, y, faction_id)
+    local sea = funcs.tile_is_ocean(x, y)
+    if not funcs.has_terra(E.FORMER_FOREST, sea and 1 or 0, faction_id) then
+        return false
+    end
+    if funcs.tile_is_rocky(x, y) or bit.band(funcs.tile_lm_items(x, y), E.LM_VOLCANO) ~= 0 then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    if not funcs.has_tech(tech.rules().tech_preq_allow_3_nutrients_sq, faction_id)
+        and (funcs.tile_is_rolling(x, y) or bit.band(items, E.BIT_SOLAR) ~= 0)
+        and funcs.mod_crop_yield(faction_id, -1, x, y, 0) >= funcs.tile_output_limit_nutrient() then
+        return false
+    end
+    if funcs.is_human(faction_id) and bit.band(GamePreferences[0], E.PREF_AUTO_FORMER_PLANT_FORESTS) == 0 then
+        return false
+    end
+    return bit.band(items, E.BIT_FOREST) == 0
+end
+
+-- move.cpp:1683-1703.
+local function can_sensor(x, y, faction_id)
+    local sea = funcs.tile_is_ocean(x, y)
+    if not funcs.has_terra(E.FORMER_SENSOR, sea and 1 or 0, faction_id) then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    if bit.band(items, bit.bor(E.BIT_MINE, E.BIT_SOLAR, E.BIT_SENSOR, E.BIT_CONDENSER, E.BIT_THERMAL_BORE)) ~= 0 then
+        return false
+    end
+    if funcs.tile_is_fungus(x, y) and not funcs.has_tech(tech.rules().tech_preq_improv_fungus, faction_id) then
+        return false
+    end
+    for i = 1, 24 do
+        local valid, nx, ny = funcs.tile_neighbor(x, y, i)
+        if valid and funcs.tile_owner(nx, ny) == faction_id
+            and (bit.band(funcs.tile_items(nx, ny), E.BIT_SENSOR) ~= 0
+                or funcs.has_map_node(nx, ny, E.NODE_SENSOR_ARRAY)) then
+            return false
+        end
+    end
+    if funcs.is_human(faction_id) and bit.band(GameMorePreferences[0], E.MPREF_AUTO_FORMER_BUILD_SENSORS) == 0 then
+        return false
+    end
+    return true
+end
+
+-- move.cpp:1705-1711. Named former_keep_fungus: funcs.keep_fungus is
+-- already the AIPlans accessor this calls into.
+local function former_keep_fungus(x, y, faction_id)
+    local keep = funcs.keep_fungus(faction_id)
+    if keep == 0 then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    return bit.band(items, bit.bor(E.BIT_BASE_IN_TILE, E.BIT_MONOLITH)) == 0
+        and funcs.tile_alt_level(x, y) >= E.ALT_OCEAN_SHELF
+        and funcs.nearby_items(x, y, 0, 9, E.BIT_FUNGUS) < (funcs.tile_is_fungus(x, y) and 1 or 0) + keep
+end
+
+-- move.cpp:1713-1718. Named former_plant_fungus for the same reason as
+-- former_keep_fungus above (funcs.plant_fungus_flag is the new AIPlans
+-- accessor this calls into).
+local function former_plant_fungus(x, y, faction_id)
+    if funcs.plant_fungus_flag(faction_id) == 0 then
+        return false
+    end
+    if not former_keep_fungus(x, y, faction_id) then
+        return false
+    end
+    if funcs.tile_alt_level(x, y) < E.ALT_OCEAN_SHELF then
+        return false
+    end
+    return funcs.has_terra(E.FORMER_PLANT_FUNGUS, funcs.tile_is_ocean(x, y) and 1 or 0, faction_id)
+end
+
+-- move.cpp:1720-1728.
+local function can_level(x, y, faction_id, bonus)
+    if not funcs.tile_is_rocky(x, y) then
+        return false
+    end
+    if not funcs.has_terra(E.FORMER_LEVEL_TERRAIN, funcs.tile_is_ocean(x, y) and 1 or 0, faction_id) then
+        return false
+    end
+    if bonus == E.RES_NUTRIENT then
+        return true
+    end
+    if bonus ~= E.RES_NONE then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    if bit.band(items, bit.bor(E.BIT_MINE, E.BIT_FUNGUS, E.BIT_THERMAL_BORE)) ~= 0 then
+        return false
+    end
+    if bit.band(items, E.BIT_RIVER) == 0 then
+        return false
+    end
+    if funcs.plant_fungus_flag(faction_id) ~= 0 then
+        return false
+    end
+    local limit = (bit.band(funcs.tile_lm_items(x, y), E.LM_JUNGLE) ~= 0) and 4 or 2
+    return funcs.nearby_items(x, y, 0, 9, bit.bor(E.BIT_FARM, E.BIT_FOREST)) < limit
+end
+
+-- move.cpp:1730-1741.
+local function can_river(x, y, faction_id)
+    if funcs.tile_is_ocean(x, y) or not funcs.has_terra(E.FORMER_AQUIFER, E.TRIAD_LAND, faction_id) then
+        return false
+    end
+    local items = funcs.tile_items(x, y)
+    if bit.band(items, bit.bor(E.BIT_BASE_IN_TILE, E.BIT_RIVER, E.BIT_THERMAL_BORE)) ~= 0 then
+        return false
+    end
+    return bit.band(bit.bxor(idiv(game.turn(), 4) * x, y), 15) == 0
+        and funcs.coast_tiles(x, y) == 0
+        and funcs.nearby_items(x, y, 1, 9, bit.bor(E.BIT_RIVER, E.BIT_THERMAL_BORE)) < 2
+        and funcs.nearby_items(x, y, 1, 25, E.BIT_RIVER) < 6
+end
+
+-- move.cpp:1743-1786. The 8-direction NearbyTiles ring (tile_near8) is a
+-- distinct, smaller table from the 21-tile TableOffsetX/Y ring
+-- tile_neighbor resolves -- off-map/ocean neighbors contribute r[i]=0
+-- either way (an off-map tile_near8 result is treated the same as a
+-- present-but-ocean one), matching the original's own NULL-safe
+-- is_ocean(NULL)==true short-circuit.
+local function can_road(x, y, faction_id)
+    local sea = funcs.tile_is_ocean(x, y)
+    local items = funcs.tile_items(x, y)
+    if not funcs.has_terra(E.FORMER_ROAD, sea and 1 or 0, faction_id)
+        or bit.band(items, bit.bor(E.BIT_ROAD, E.BIT_BASE_IN_TILE)) ~= 0 then
+        return false
+    end
+    if not funcs.tile_is_base_radius(x, y) and funcs.map_roads(x, y) < 1 then
+        return false
+    end
+    if funcs.tile_is_fungus(x, y)
+        and (not funcs.has_tech(tech.rules().tech_preq_build_road_fungus, faction_id)
+            or (funcs.build_tubes(faction_id) == 0 and funcs.has_project(E.FAC_XENOEMPATHY_DOME, faction_id))) then
+        return false
+    end
+    if funcs.is_human(faction_id) and bit.band(GameMorePreferences[0], E.MPREF_AUTO_FORMER_CANT_BUILD_ROADS) ~= 0 then
+        return false
+    end
+    if funcs.tile_owner(x, y) ~= faction_id then
+        return funcs.map_roads(x, y) > 0 and not funcs.both_neutral(faction_id, funcs.tile_owner(x, y))
+    end
+    if funcs.has_map_node(x, y, E.NODE_GOAL_RAISE_LAND) then
+        return true
+    end
+    if funcs.map_roads(x, y) > 0 or bit.band(items, bit.bor(E.BIT_MINE, E.BIT_CONDENSER, E.BIT_THERMAL_BORE)) ~= 0 then
+        return true
+    end
+    local r = {}
+    for i = 0, 7 do
+        local valid, nx, ny = funcs.tile_near8(x, y, i)
+        r[i] = 0
+        if valid and not funcs.tile_is_ocean(nx, ny) and funcs.tile_owner(nx, ny) == faction_id
+            and bit.band(funcs.tile_items(nx, ny), bit.bor(E.BIT_ROAD, E.BIT_BASE_IN_TILE)) ~= 0 then
+            r[i] = 1
+        end
+    end
+    if (r[0] == 1 and r[4] == 1 and r[2] == 0 and r[6] == 0)
+        or (r[2] == 1 and r[6] == 1 and r[0] == 0 and r[4] == 0)
+        or (r[1] == 1 and r[5] == 1 and not ((r[2] == 1 and r[4] == 1) or (r[0] == 1 and r[6] == 1)))
+        or (r[3] == 1 and r[7] == 1 and not ((r[0] == 1 and r[2] == 1) or (r[4] == 1 and r[6] == 1))) then
+        return true
+    end
+    return false
+end
+
+-- move.cpp:1788-1801.
+local function can_magtube(x, y, faction_id)
+    local sea = funcs.tile_is_ocean(x, y)
+    local items = funcs.tile_items(x, y)
+    if not funcs.has_terra(E.FORMER_MAGTUBE, sea and 1 or 0, faction_id)
+        or bit.band(items, bit.bor(E.BIT_MAGTUBE, E.BIT_BASE_IN_TILE)) ~= 0 then
+        return false
+    end
+    if funcs.both_neutral(faction_id, funcs.tile_owner(x, y)) then
+        return false
+    end
+    if funcs.is_human(faction_id) and bit.band(GameMorePreferences[0], E.MPREF_AUTO_FORMER_CANT_BUILD_ROADS) ~= 0 then
+        return false
+    end
+    return funcs.map_roads(x, y) > 0 and bit.band(items, E.BIT_ROAD) ~= 0
+        and (not funcs.tile_is_fungus(x, y) or funcs.has_tech(tech.rules().tech_preq_improv_fungus, faction_id))
+end
 
 -- move.cpp:2204-2225.
 local function artifact_move(veh_id)

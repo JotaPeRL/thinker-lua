@@ -2451,6 +2451,114 @@ diff, and `crawler_move`'s own code path shares nothing with
 
 ---
 
+### 4.13 `former_move` port (movement stage 4) — sub-stage 1 done, build-verified
+
+**Real size, read in full before touching any code:** `former_move`
+itself ~155 loc (`move.cpp:2047-2202`), `select_item` ~200 loc
+(`move.cpp:1803-2002`, the terraform-choice decision tree), 13
+tile-eligibility helpers ~270 loc (`move.cpp:1530-1802`:
+`can_bridge`/`can_borehole`/`can_farm`/`can_solar`/`can_mine`/
+`can_forest`/`can_sensor`/`keep_fungus`/`plant_fungus`/`can_level`/
+`can_river`/`can_road`/`can_magtube`), `former_tile_score` ~42 loc
+(`move.cpp:2004-2045`, the site-scoring formula). ~670 loc total —
+bigger than any prior movement stage except `combat_move`, matching the
+plan's own warning that this is "the one stage where a real,
+substantial new port is unavoidable."
+
+**Classification decided:** `has_terra` (wraps `terrain_avail`, a
+faction-level tech/reactor eligibility gate) stays opaque, same tier as
+`has_fac_built`. The 12 tile-eligibility helpers (all but `can_bridge`)
+plus `select_item`/`former_tile_score` are real AI policy — the exact
+scope `select_build`'s own `former_tile_tally` (4.10.29) deferred here,
+since only in `former_move` does *which* terraform action gets chosen
+matter, not just a `>=0` eligibility check.
+
+**`can_bridge` stays fully opaque (one host wrapper), unlike its 12
+siblings.** Read in full: it couples a bounded `TileSearch` scan (used
+only to populate an `oldtiles` set consulted by a following
+`iterate_tiles` loop — no per-candidate scoring in the scan itself) with
+a territory-conflict check (`compare_might`). No comparison-among-
+candidates judgment anywhere in it — a structural eligibility gate, same
+tier as `has_base_sites`, not the kind of AI choice `select_item` itself
+makes among its siblings' results.
+
+**Sub-stage 1: the 12 can_*/`keep_fungus`/`plant_fungus` helpers. ✅
+done, build-verified; not yet live-verified (nothing calls them yet —
+`select_item`, sub-stage 2, is what will).** None of the 12 take a
+`VEH` — all are pure tile+faction-level queries, ported with the same
+signature as the C++ originals minus the `MAP*` (recomputed from `x, y`
+via already-exposed `tile_*` fact wrappers). `keep_fungus`/`plant_fungus`
+are named `former_keep_fungus`/`former_plant_fungus` in
+`lua/ai/move.lua` to avoid colliding with the existing
+`funcs.keep_fungus` AIPlans accessor (a different thing: the C++
+function reads `plans[faction_id].keep_fungus` as one of several
+conditions, the accessor just returns that field).
+
+**New engine surface** (`api_version` bumped 31→32):
+- Two new `CRules` fields: `tech_preq_improv_fungus`,
+  `tech_preq_build_road_fungus` (the three `tech_preq_allow_3_*_sq`
+  fields `can_farm`/`can_solar`/`can_mine`/`can_forest` need were
+  already exposed from `select_build`).
+- New globals `GamePreferences`/`GameMorePreferences` (plain `int*`,
+  same tier as `MultiplayerActive`) and `ResInfoForestSq` (one more
+  single-`ResValue`-member address, same technique as the existing
+  `ResInfoRecyclingTanks` — the `FIELD()`/`FieldShape` mechanism still
+  can't `emit_struct` a nested-struct member; only `.energy`, index 2,
+  is read here).
+- New host wrappers, all pure reads unless noted: `has_terra`,
+  `coast_tiles`, `both_neutral`, `map_former`/`map_roads` (`PInfo`
+  fields, same tier as `map_target`/`map_safety`), `tile_near8`
+  (`can_road`'s own 8-direction `NearbyTiles[]` ring — a distinct,
+  smaller table from the 21-tile `TableOffsetX`/`Y` ring `tile_neighbor`
+  already resolves, same "pure geometry" tier and shape), `tile_output_
+  limit_nutrient` (`conf.tile_output_limit[0]`, same pattern as
+  `max_veh_num`), `can_bridge` (opaque, see above), and two new AIPlans
+  accessors `plant_fungus_flag`/`build_tubes` (same tier as the existing
+  `keep_fungus` accessor).
+- New enums, all compiler-read from `engine_enums.h`/`engine_veh.h`
+  (both already included by `gen_ffi.cpp`): `BIT_BASE_IN_TILE`/`ROAD`/
+  `MAGTUBE`/`MINE`/`SOLAR`/`CONDENSER`/`THERMAL_BORE`, `RES_NONE`/
+  `NUTRIENT`/`MINERAL`/`ENERGY`, `LM_VOLCANO`, `ALT_TWO_ABOVE_SEA`,
+  `PREF_AUTO_FORMER_BUILD_ADV`/`PLANT_FORESTS`, `MPREF_AUTO_FORMER_
+  BUILD_SENSORS`/`CANT_BUILD_ROADS`, `FAC_XENOEMPATHY_DOME`, and the 11
+  `FORMER_*` former-action constants the 12 helpers pass to `has_terra`
+  (`FORMER_FARM`/`MINE`/`SOLAR`/`FOREST`/`ROAD`/`MAGTUBE`/`SENSOR`/
+  `PLANT_FUNGUS`/`THERMAL_BORE`/`AQUIFER`/`LEVEL_TERRAIN`); three more
+  hand-transcribed `NodesetType` values (`NODE_BOREHOLE`/`SENSOR_ARRAY`/
+  `GOAL_RAISE_LAND`), same reason and tier as `NODE_NAVAL_START`/`PICK`.
+  `PREF_AUTO_FORMER_RAISE_LWR_TERRAIN` (used only inside the now-opaque
+  `can_bridge`) is deliberately *not* exposed to Lua — it's read natively
+  inside that wrapper's C++ body, no FFI crossing needed.
+- `BIT_ADVANCED` (`move.h`'s `CONDENSER|THERMAL_BORE` constant) is
+  computed inline in Lua (`bit.bor(E.BIT_CONDENSER, E.BIT_THERMAL_BORE)`)
+  rather than exposed as its own constant, since both components were
+  already being added anyway.
+
+**Reuse from prior stages (no new work):** `tile_is_ocean`/`tile_items`/
+`tile_is_rocky`/`tile_is_rolling`/`tile_is_rainy`/`tile_is_moist`/
+`tile_alt_level`/`tile_lm_items`/`tile_is_fungus`/`tile_is_base_radius`/
+`tile_owner`/`tile_neighbor`/`has_map_node`/`nearby_items`/
+`mod_crop_yield`/`mod_mine_yield`/`mod_energy_yield`/`has_tech`/
+`has_project`/`is_human`/`game.turn()`/`tech.rules()`/the existing
+`keep_fungus` AIPlans accessor — all already exposed by earlier stages.
+
+**Files touched:** `tools/gen_ffi.cpp` (fields/globals/enums above),
+`src/move.h` (new `can_bridge` declaration — it had none; the other 12
+helpers were never declared in a header either, but none of those are
+called from `luaai.cpp`, so no declarations were needed for them),
+`src/luaai.h`/`.cpp` (10 new `LuaHostApi` entries, `api_version` bump to
+32), `lua/ffi/funcs.lua`, `lua/ai/move.lua` (the 12 ported functions +
+provenance entries).
+
+**Next: sub-stage 2 — `select_item`** (the ~200-line decision tree
+combining these 12 helpers' results), **then sub-stage 3 —
+`former_tile_score`**, **then sub-stage 4 — `former_move` itself**
+(dispatch + the `TileSearch` scan, reusing the already-ported
+`search_base`/`search_route` for its own tail-end fallback — no new
+work needed there), **then live verification.**
+
+---
+
 ## Phase 5 — validation
 
 The Consolidation gate (`IMPLEMENTATION_PLAN.md`, opened 2026-07-14) exists

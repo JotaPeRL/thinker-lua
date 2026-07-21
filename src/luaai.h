@@ -485,6 +485,42 @@ struct LuaHostApi {
     // own stage (Movement stage 7), reused there later. Mutating.
     void (*add_goal)(int32_t faction_id, int32_t type, int32_t priority,
         int32_t x, int32_t y, int32_t base_id);
+    // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the
+    // 12 can_*/keep_fungus/plant_fungus tile-eligibility helpers ported to
+    // Lua, plus the engine-mechanics primitives they depend on.
+    // has_terra wraps terrain_avail -- a genuine faction-level tech/
+    // reactor eligibility gate (same tier as has_fac_built), not AI
+    // policy, even though it's called from what IS AI policy below.
+    int32_t (*has_terra)(int32_t item_id, int32_t ocean, int32_t faction_id);
+    // coast_tiles/both_neutral: plain engine queries, no scoring.
+    int32_t (*coast_tiles)(int32_t x, int32_t y);
+    int32_t (*both_neutral)(int32_t faction_id_1, int32_t faction_id_2);
+    // map_former/map_roads: PInfo fields (mapdata, a std::unordered_map --
+    // stays entirely in C++ per Phase 4.3), same tier as map_target/
+    // map_safety.
+    int32_t (*map_former)(int32_t x, int32_t y);
+    int32_t (*map_roads)(int32_t x, int32_t y);
+    // tile_near8: can_road's own 8-direction NearbyTiles[] ring (distinct,
+    // smaller table from the 21-tile TableOffsetX/Y ring tile_neighbor
+    // already resolves) -- same "pure geometry, not judgment" tier and
+    // shape as tile_neighbor, just a different fixed table.
+    int32_t (*tile_near8)(int32_t x, int32_t y, int32_t i, int32_t* tx, int32_t* ty);
+    // tile_output_limit_nutrient: conf.tile_output_limit[0], Thinker-
+    // internal Config array, same pattern as max_veh_num/biology_lab_bonus.
+    int32_t (*tile_output_limit_nutrient)();
+    // can_bridge (path.cpp:1530-1566) stays fully opaque, unlike its 12
+    // siblings: it couples a bounded TileSearch scan (used only to build
+    // an oldtiles set, no per-candidate scoring) with a territory-conflict
+    // check (compare_might) -- a structural eligibility gate with no
+    // comparison-among-candidates judgment in it, same tier as
+    // has_base_sites, not real AI policy the way select_item's own choice
+    // among the ported can_* results is.
+    int32_t (*can_bridge)(int32_t x, int32_t y, int32_t faction_id);
+    // plant_fungus_flag/build_tubes: AIPlans accessors, same tier as the
+    // existing keep_fungus accessor (plant_fungus_flag is named to avoid
+    // colliding with lua/ai/move.lua's own ported plant_fungus function).
+    int32_t (*plant_fungus_flag)(int32_t faction_id);
+    int32_t (*build_tubes)(int32_t faction_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

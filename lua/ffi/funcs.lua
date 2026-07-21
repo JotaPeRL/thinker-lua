@@ -208,10 +208,20 @@ typedef struct {
         int32_t* prev_x, int32_t* prev_y);
     void (*add_goal)(int32_t faction_id, int32_t type, int32_t priority,
         int32_t x, int32_t y, int32_t base_id);
+    int32_t (*has_terra)(int32_t item_id, int32_t ocean, int32_t faction_id);
+    int32_t (*coast_tiles)(int32_t x, int32_t y);
+    int32_t (*both_neutral)(int32_t faction_id_1, int32_t faction_id_2);
+    int32_t (*map_former)(int32_t x, int32_t y);
+    int32_t (*map_roads)(int32_t x, int32_t y);
+    int32_t (*tile_near8)(int32_t x, int32_t y, int32_t i, int32_t* tx, int32_t* ty);
+    int32_t (*tile_output_limit_nutrient)();
+    int32_t (*can_bridge)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*plant_fungus_flag)(int32_t faction_id);
+    int32_t (*build_tubes)(int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 31
+local HOST_API_VERSION = 32
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -447,4 +457,14 @@ return {
     add_goal = function(faction_id, type, priority, x, y, base_id)
         return api.add_goal(faction_id, type, priority, x, y, base_id)
     end,
+    has_terra = function(item_id, ocean, faction_id) return api.has_terra(item_id, ocean, faction_id) ~= 0 end,
+    coast_tiles = function(x, y) return api.coast_tiles(x, y) end,
+    both_neutral = function(faction_id_1, faction_id_2) return api.both_neutral(faction_id_1, faction_id_2) ~= 0 end,
+    map_former = function(x, y) return api.map_former(x, y) end,
+    map_roads = function(x, y) return api.map_roads(x, y) end,
+    tile_near8 = function(x, y, i, tx, ty) return api.tile_near8(x, y, i, tx, ty) ~= 0 end,
+    tile_output_limit_nutrient = function() return api.tile_output_limit_nutrient() end,
+    can_bridge = function(x, y, faction_id) return api.can_bridge(x, y, faction_id) ~= 0 end,
+    plant_fungus_flag = function(faction_id) return api.plant_fungus_flag(faction_id) end,
+    build_tubes = function(faction_id) return api.build_tubes(faction_id) end,
 }

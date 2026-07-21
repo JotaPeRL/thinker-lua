@@ -286,6 +286,10 @@ int main() {
         // (IMPLEMENTATION_DETAILS.md 4.10.21): the shared GOV_MAY_FORCE_
         // PSYCH gate (FAC_PUNISHMENT_SPHERE/FAC_GENEJACK_FACTORY).
         FIELD(CRules, drones_induced_genejack_factory),
+        // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13):
+        // can_sensor/can_magtube's fungus-tech gate and can_road's own.
+        FIELD(CRules, tech_preq_improv_fungus),
+        FIELD(CRules, tech_preq_build_road_fungus),
     }});
 
     emit_struct(stdout, {"Faction", sizeof(Faction), alignof(Faction), {
@@ -545,6 +549,17 @@ int main() {
     // int32_t[3] (skipping the unused 4th) in lua/api/tech.lua.
     printf("    ResInfoRecyclingTanks = 0x%08X,\n",
         (unsigned)(0x945F50 + offsetof(CResourceInfo, recycling_tanks)));
+    // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13):
+    // can_solar's own forest-energy-yield reference point. Same
+    // one-ResValue-member-address technique as ResInfoRecyclingTanks
+    // above, not a whole-CResourceInfo emit_struct.
+    printf("    ResInfoForestSq = 0x%08X,\n",
+        (unsigned)(0x945F50 + offsetof(CResourceInfo, forest_sq)));
+    // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13):
+    // int* const, fixed addresses (src/engine.cpp), same tier as
+    // MultiplayerActive above.
+    printf("    GamePreferences = 0x%08X,\n", 0x9A6490);
+    printf("    GameMorePreferences = 0x%08X,\n", 0x9A6494);
     printf("  },\n");
     // Array bounds for the exposed rule tables, from src/main.h (not
     // included here -- same provenance-by-comment convention as the
@@ -853,6 +868,11 @@ int main() {
     printf("    NODE_NEED_FERRY = %d,\n", 3);
     printf("    NODE_BASE_SITE = %d,\n", 4);
     printf("    NODE_PATROL = %d,\n", 12);
+    // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13):
+    // can_borehole/can_sensor/can_bridge/can_road's own markers.
+    printf("    NODE_BOREHOLE = %d,\n", 0);
+    printf("    NODE_SENSOR_ARRAY = %d,\n", 2);
+    printf("    NODE_GOAL_RAISE_LAND = %d,\n", 6);
     // Movement port, route_score sub-stage (IMPLEMENTATION_DETAILS.md
     // 4.12): route_score's artifact-linking special case (path.h:71).
     printf("    NODE_NAVAL_START = %d,\n", 7);
@@ -889,6 +909,44 @@ int main() {
     // transcribed like PM_SAFE above; cross-check move.cpp:30 if this ever
     // needs revisiting).
     printf("    VEH_REMOVE_TURNS = %d,\n", 60);
+    // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the
+    // 12 can_*/keep_fungus/plant_fungus tile-eligibility helpers -- item/
+    // resource/landmark/altitude/preference-flag constants. All come
+    // straight from engine_enums.h/engine_veh.h (both already included
+    // above), same "compiler-read, not hand-typed" discipline as the
+    // TECH_/FAC_ batch. can_bridge itself stays fully opaque (a single
+    // host wrapper, no AI judgment ported), so its own
+    // PREF_AUTO_FORMER_RAISE_LWR_TERRAIN flag is deliberately NOT exposed
+    // here -- it's read natively inside that wrapper's C++ body.
+    printf("    BIT_BASE_IN_TILE = %d,\n", BIT_BASE_IN_TILE);
+    printf("    BIT_ROAD = %d,\n", BIT_ROAD);
+    printf("    BIT_MAGTUBE = %d,\n", BIT_MAGTUBE);
+    printf("    BIT_MINE = %d,\n", BIT_MINE);
+    printf("    BIT_SOLAR = %d,\n", BIT_SOLAR);
+    printf("    BIT_CONDENSER = %d,\n", BIT_CONDENSER);
+    printf("    BIT_THERMAL_BORE = %d,\n", BIT_THERMAL_BORE);
+    printf("    RES_NONE = %d,\n", RES_NONE);
+    printf("    RES_NUTRIENT = %d,\n", RES_NUTRIENT);
+    printf("    RES_MINERAL = %d,\n", RES_MINERAL);
+    printf("    RES_ENERGY = %d,\n", RES_ENERGY);
+    printf("    LM_VOLCANO = %d,\n", LM_VOLCANO);
+    printf("    ALT_TWO_ABOVE_SEA = %d,\n", ALT_TWO_ABOVE_SEA);
+    printf("    PREF_AUTO_FORMER_BUILD_ADV = %d,\n", PREF_AUTO_FORMER_BUILD_ADV);
+    printf("    PREF_AUTO_FORMER_PLANT_FORESTS = %d,\n", PREF_AUTO_FORMER_PLANT_FORESTS);
+    printf("    MPREF_AUTO_FORMER_BUILD_SENSORS = %d,\n", MPREF_AUTO_FORMER_BUILD_SENSORS);
+    printf("    MPREF_AUTO_FORMER_CANT_BUILD_ROADS = %d,\n", MPREF_AUTO_FORMER_CANT_BUILD_ROADS);
+    printf("    FAC_XENOEMPATHY_DOME = %d,\n", FAC_XENOEMPATHY_DOME);
+    printf("    FORMER_FARM = %d,\n", FORMER_FARM);
+    printf("    FORMER_MINE = %d,\n", FORMER_MINE);
+    printf("    FORMER_SOLAR = %d,\n", FORMER_SOLAR);
+    printf("    FORMER_FOREST = %d,\n", FORMER_FOREST);
+    printf("    FORMER_ROAD = %d,\n", FORMER_ROAD);
+    printf("    FORMER_MAGTUBE = %d,\n", FORMER_MAGTUBE);
+    printf("    FORMER_SENSOR = %d,\n", FORMER_SENSOR);
+    printf("    FORMER_PLANT_FUNGUS = %d,\n", FORMER_PLANT_FUNGUS);
+    printf("    FORMER_THERMAL_BORE = %d,\n", FORMER_THERMAL_BORE);
+    printf("    FORMER_AQUIFER = %d,\n", FORMER_AQUIFER);
+    printf("    FORMER_LEVEL_TERRAIN = %d,\n", FORMER_LEVEL_TERRAIN);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {
