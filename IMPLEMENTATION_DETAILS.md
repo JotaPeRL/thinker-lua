@@ -2451,7 +2451,7 @@ diff, and `crawler_move`'s own code path shares nothing with
 
 ---
 
-### 4.13 `former_move` port (movement stage 4) — live-verified clean, one more confirmation run pending after the last fix
+### 4.13 `former_move` port (movement stage 4) — ✅ closed, live-verified clean
 
 **Real size, read in full before touching any code:** `former_move`
 itself ~155 loc (`move.cpp:2047-2202`), `select_item` ~200 loc
@@ -2822,6 +2822,24 @@ the file, whether the callee's own definition line is later and no
 forward declaration covers the gap — comment lines excluded after an
 initial pass surfaced them as false positives. Zero remaining
 instances found after the fix.
+
+**Confirmation run: clean.** Redeployed, ran again — **0 errors, 0
+mismatches.** 60 turns, 1061 real `former_move` decision lines (650
+`former_action`, 411 `former_move`), `lua.log`'s count again exactly
+matching `debug.txt`'s `lua: former_*` count (1061 = 1061), 286
+distinct starting coordinates (broad, not a handful of repeating
+units). `former_trans`/`former_skip` still didn't fire across either
+run — not concerning, same "revisit opportunistically" precedent as
+every prior stage's unexercised branches (`artifact_move`'s
+`artifact_link`, `colony_move`'s `colony_drop`, etc.).
+
+**This closes movement stage 4 (`former_move`) in full** — all four
+sub-stages (the 12 `can_*`/`keep_fungus`/`plant_fungus` helpers,
+`select_item`, `former_tile_score`, `former_move` itself), plus the
+four real bugs this live bug hunt found and fixed along the way
+(`FormerMode`, `FORMER_NONE`/`FORMER_RAISE_LAND`, the `tile_near8`/
+`tile_neighbor` NULL-pointer crash, and the `escape_move`/`search_base`
+forward-reference gap). Next movement stage: `trans_move` (stage 5).
 
 ---
 
