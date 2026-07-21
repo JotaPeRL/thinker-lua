@@ -2006,9 +2006,22 @@ concerning, just means no artifact reached a friendly base under the
 right conditions yet; revisit opportunistically like the handful of
 still-unexercised `select_build` branches, not a blocker. **Stage 0+1
 closed.**
-- **Stage 2 — `crawler_move` (~67 loc) + `nuclear_move` (~163 loc),
-  merged into one stage** (user's call — both isolated, no shared
-  dependency forcing this, just batched for pacing).
+- **Stage 2 — `crawler_move`** (~67 loc, but with real complexity of its
+  own: `want_convoy`'s tile-yield scoring, a bounded `TileSearch` scan
+  picking the best candidate, `mapnodes` — a mutable `NodeSet` — as
+  shared state).
+- **Stage 2b — `nuclear_move`** (~163 loc), split out from stage 2 after
+  reading it in full — LOC undersold it badly: full cross-faction
+  diplomatic/threat scoring (`diplo_status`/`at_war`/`un_charter`/
+  `corner_market_active`), a complete secret-project iteration (same
+  tier as `find_project`/`select_build`), spatial containers for
+  base-target search (`Points`, `map_int_t`), and several genuinely new
+  primitives (`veh_drop`/`veh_lift`/`defender_count`/`ally_near_tile`/
+  `min_range`/a `map_range(VEH*, BASE*)` overload distinct from the
+  already-exposed coordinate form). Closer in weight to
+  `find_project`/`select_build` than to an "isolated small mover" —
+  deferred to its own stage rather than merged with stage 2, once
+  `crawler_move` and the rest of the merge-worthy movers are done.
 - **Stage 3 — `colony_move`** (~125 loc, reuses `can_build_base`/
   `base_tile_score`).
 - **Stage 4 — `former_move`** (~157 loc). The one stage where a real,
