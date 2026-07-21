@@ -911,6 +911,9 @@ int main() {
     printf("    LM_SARGASSO = %d,\n", LM_SARGASSO);
     printf("    LM_DUNES = %d,\n", LM_DUNES);
     printf("    LM_UNITY = %d,\n", LM_UNITY);
+    // former_move port, sub-stage 3 (IMPLEMENTATION_DETAILS.md 4.13):
+    // former_tile_score's own landmark-bonus mask.
+    printf("    LM_NEXUS = %d,\n", LM_NEXUS);
     printf("    ALT_OCEAN = %d,\n", ALT_OCEAN);
     printf("    ALT_OCEAN_SHELF = %d,\n", ALT_OCEAN_SHELF);
     printf("    ALT_SHORE_LINE = %d,\n", ALT_SHORE_LINE);

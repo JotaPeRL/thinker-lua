@@ -67,6 +67,8 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         select_item = { file = "src/move.cpp", func = "select_item",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        former_tile_score = { file = "src/move.cpp", func = "former_tile_score",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -663,6 +665,63 @@ local function select_item(x, y, faction_id, mode)
         return E.FORMER_FOREST
     end
     return E.FORMER_NONE
+end
+
+local FORMER_TILE_PRIORITY = {
+    { E.BIT_RIVER, 4 },
+    { E.BIT_FARM, -2 },
+    { E.BIT_SOLAR, -2 },
+    { E.BIT_FOREST, -4 },
+    { E.BIT_MINE, -4 },
+    { E.BIT_CONDENSER, -4 },
+    { E.BIT_SOIL_ENRICHER, -4 },
+    { E.BIT_THERMAL_BORE, -8 },
+}
+
+-- former_move port, sub-stage 3 (IMPLEMENTATION_DETAILS.md 4.13):
+-- former_tile_score (move.cpp:2004-2045) -- former_move's own site-
+-- scoring formula (which tile is worth terraforming), real AI policy,
+-- consumed by former_move's TileSearch scan (sub-stage 4). No new
+-- engine surface needed beyond one enum (LM_NEXUS) -- everything else
+-- was already exposed by earlier stages, including sub-stages 1-2's
+-- own keep_fungus/plant_fungus_flag/build_tubes/map_roads/map_former.
+local function former_tile_score(x, y, faction_id)
+    local items = funcs.tile_items(x, y)
+    local alt = funcs.tile_alt_level(x, y)
+    local bonus = funcs.tile_bonus(x, y)
+    local lm = funcs.tile_lm_items(x, y)
+    local score = (bit.band(lm, bit.bnot(bit.bor(E.LM_DUNES, E.LM_SARGASSO, E.LM_UNITY, E.LM_NEXUS))) ~= 0)
+        and 4 or 0
+
+    if bonus ~= E.RES_NONE and bit.band(items, bit.bor(E.BIT_CONDENSER, E.BIT_THERMAL_BORE)) == 0 then
+        score = score
+            + (bit.band(items, bit.bor(E.BIT_FARM, E.BIT_MINE, E.BIT_SOLAR, E.BIT_FOREST)) ~= 0 and 3 or 5)
+                * (bonus == E.RES_NUTRIENT and 3 or 2)
+    end
+    for _, p in ipairs(FORMER_TILE_PRIORITY) do
+        if bit.band(items, p[1]) ~= 0 then
+            score = score + p[2]
+        end
+    end
+    if funcs.tile_is_fungus(x, y) then
+        score = score + (bit.band(items, bit.bor(E.BIT_CONDENSER, E.BIT_THERMAL_BORE)) ~= 0 and 20 or 0)
+        score = score + (funcs.keep_fungus(faction_id) ~= 0 and -8 or (funcs.tile_is_rocky(x, y) and 2 or -2))
+        score = score
+            + (funcs.plant_fungus_flag(faction_id) ~= 0 and bit.band(items, E.BIT_ROAD) ~= 0 and -8 or 0)
+    elseif funcs.plant_fungus_flag(faction_id) ~= 0 then
+        score = score + 8
+    end
+    if bit.band(items, bit.bor(E.BIT_FOREST, E.BIT_SENSOR)) ~= 0 and can_road(x, y, faction_id) then
+        score = score + 8
+    end
+    if funcs.map_roads(x, y) > 0 and (bit.band(items, E.BIT_ROAD) == 0
+        or (funcs.build_tubes(faction_id) ~= 0 and bit.band(items, E.BIT_MAGTUBE) == 0)) then
+        score = score + 15
+    end
+    if alt == E.ALT_SHORE_LINE and funcs.has_map_node(x, y, E.NODE_GOAL_RAISE_LAND) then
+        score = score + 20
+    end
+    return score + min(8, funcs.map_former(x, y)) + min(0, map.safety(x, y))
 end
 
 -- move.cpp:2204-2225.

@@ -2451,7 +2451,7 @@ diff, and `crawler_move`'s own code path shares nothing with
 
 ---
 
-### 4.13 `former_move` port (movement stage 4) — sub-stages 1-2 done, build-verified
+### 4.13 `former_move` port (movement stage 4) — sub-stages 1-3 done, build-verified
 
 **Real size, read in full before touching any code:** `former_move`
 itself ~155 loc (`move.cpp:2047-2202`), `select_item` ~200 loc
@@ -2595,11 +2595,26 @@ meta(faction_id).rule_flags, E.RFLAG_AQUATIC) ~= 0`), same tier as
 `lua/ai/move.lua` (`select_item` + its `ResInfoBoreholeSq`/
 `ResInfoImprovedSea`/`is_aquatic` dependencies + provenance entry).
 
-**Next: sub-stage 3 — `former_tile_score`** (the ~42-line site-scoring
-formula, smaller than `select_item`), **then sub-stage 4 —
-`former_move` itself** (dispatch + the `TileSearch` scan, reusing the
-already-ported `search_base`/`search_route` for its own tail-end
-fallback — no new work needed there), **then live verification.**
+**Sub-stage 3: `former_tile_score`. ✅ done, build-verified; not yet
+live-verified (nothing calls it yet — `former_move`, sub-stage 4, is
+what will).** The ~42-line site-scoring formula (which tile is worth
+terraforming), ported in full. By far the lightest sub-stage: **only
+one new enum** (`LM_NEXUS`, compiler-read) was needed — every other
+dependency (`tile_lm_items`/`tile_bonus`/`tile_is_fungus`/`tile_is_
+rocky`/`can_road`/`map_roads`/`map_former`/`map.safety`/`keep_fungus`/
+`plant_fungus_flag`/`build_tubes`) was already exposed by earlier
+sub-stages or prior stages. `api_version` unchanged (33) — no new
+`LuaHostApi` entries at all this time.
+
+**Files touched:** `tools/gen_ffi.cpp` (one enum), `lua/ai/move.lua`
+(`former_tile_score` + its own local `FORMER_TILE_PRIORITY` table,
+mirroring `move.cpp`'s local `priority[][2]` array, + provenance
+entry).
+
+**Next: sub-stage 4 — `former_move` itself** (dispatch + the
+`TileSearch` scan, reusing the already-ported `search_base`/
+`search_route` for its own tail-end fallback — no new work needed
+there), **then live verification.**
 
 ---
 
