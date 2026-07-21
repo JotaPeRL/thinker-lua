@@ -1346,11 +1346,65 @@ static int32_t host_bonus_yield(int32_t res_type) {
     return bonus_yield(res_type);
 }
 
+// former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+// former_move's own TileSearch scan (move.cpp:2150-2176) -- a bare walk,
+// no host-side filtering (every filter condition is already an atomic
+// fact exposed to Lua from earlier sub-stages). Shares the same "one
+// vehicle moves at a time" sequential-reuse assumption as g_route_ts/
+// g_colony_ts/g_crawler_ts.
+static TileSearch g_former_ts;
+
+static void host_former_search_start(int32_t veh_id) {
+    VEH* veh = &Vehs[veh_id];
+    g_former_ts.init(veh->x, veh->y, veh->triad());
+}
+
+static void host_former_search_next(int32_t* valid, int32_t* tx, int32_t* ty) {
+    if (g_former_ts.get_next() == NULL) {
+        *valid = 0;
+        return;
+    }
+    *valid = 1;
+    *tx = g_former_ts.rx;
+    *ty = g_former_ts.ry;
+}
+
+static void host_former_consume(int32_t x, int32_t y) {
+    g_mutation_issued = true;
+    mapdata[{x, y}].former -= 2;
+}
+
+// Bundles former_move's "execute the chosen item right now" sequence
+// (move.cpp:2112-2121): own-tile former decrement + conditional
+// terraform_cost/energy_credits deduction + set_action. item was already
+// chosen by Lua's own select_item call before this is invoked -- none of
+// these three steps is a separate AI decision.
+static int32_t host_former_apply_action(int32_t veh_id, int32_t item) {
+    g_mutation_issued = true;
+    VEH* veh = &Vehs[veh_id];
+    int faction_id = veh->faction_id;
+    mapdata[{veh->x, veh->y}].former -= 2;
+    if (item == FORMER_RAISE_LAND && !mapnodes.count({veh->x, veh->y, NODE_RAISE_LAND})) {
+        int cost = terraform_cost(veh->x, veh->y, faction_id);
+        Factions[faction_id].energy_credits -= cost;
+    }
+    return set_action(veh_id, item + VehOrderFormerFirst, *Terraform[item].shortcuts);
+}
+
+// FM_Farm_Road/FM_Mine_Road branch (move.cpp:2126-2129): direct
+// veh->state/order writes, same tier as set_colony_automation_flags.
+static void host_former_request_new_orders(int32_t veh_id) {
+    g_mutation_issued = true;
+    VEH* veh = &Vehs[veh_id];
+    veh->state &= ~VSTATE_ON_ALERT;
+    veh->order = ORDER_NONE;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 33,
+    /* api_version          */ 34,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1545,6 +1599,11 @@ static LuaHostApi g_host_api = {
     /* terraform_cost              */ host_terraform_cost,
     /* item_yield                  */ host_item_yield,
     /* bonus_yield                 */ host_bonus_yield,
+    /* former_search_start         */ host_former_search_start,
+    /* former_search_next          */ host_former_search_next,
+    /* former_consume              */ host_former_consume,
+    /* former_apply_action         */ host_former_apply_action,
+    /* former_request_new_orders   */ host_former_request_new_orders,
 };
 
 static lua_State* L = NULL;

@@ -71,4 +71,7 @@ return {
     -- Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12): same
     -- Class 3 contract as artifact_move/crawler_move.
     colony_move = move.colony_move,
+    -- Movement port, stage 4 (IMPLEMENTATION_DETAILS.md 4.13): same
+    -- Class 3 contract as artifact_move/crawler_move/colony_move.
+    former_move = move.former_move,
 }

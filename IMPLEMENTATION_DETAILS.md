@@ -2451,7 +2451,7 @@ diff, and `crawler_move`'s own code path shares nothing with
 
 ---
 
-### 4.13 `former_move` port (movement stage 4) — sub-stages 1-3 done, build-verified
+### 4.13 `former_move` port (movement stage 4) — all 4 sub-stages done, build-verified; live verification pending
 
 **Real size, read in full before touching any code:** `former_move`
 itself ~155 loc (`move.cpp:2047-2202`), `select_item` ~200 loc
@@ -2611,10 +2611,102 @@ sub-stages or prior stages. `api_version` unchanged (33) — no new
 mirroring `move.cpp`'s local `priority[][2]` array, + provenance
 entry).
 
-**Next: sub-stage 4 — `former_move` itself** (dispatch + the
-`TileSearch` scan, reusing the already-ported `search_base`/
-`search_route` for its own tail-end fallback — no new work needed
-there), **then live verification.**
+**Sub-stage 4: `former_move` itself. ✅ done, build-verified; not yet
+live-verified.** The dispatch/movement function (`move.cpp:2047-2202`),
+Class 3, assembling everything from sub-stages 1-3 with one new
+`TileSearch` scan and reusing `search_base`/`search_route` (already
+ported) for its own tail-end fallback — no new work needed for either
+of those. `sq` in the original is `mapsq(veh->x, veh->y)`, unchanged
+until the `TileSearch` scan starts; `sea` (`tile_is_ocean`) is reused
+everywhere the original reused `sq`, same as `search_route`'s own
+assembly.
+
+**A real bug found and fixed while implementing this sub-stage, not
+just a mechanical port:** `select_item`'s Lua port (sub-stage 2)
+referenced `E.FM_Auto_Full`/`FM_Auto_Sensors`/`FM_Remove_Fungus`/
+`FM_Farm_Road`/`FM_Mine_Road` — but **`FormerMode` (`move.h`) was never
+actually added to the generated enum table**, so every one of those
+was silently `nil` the whole time sub-stages 2-3 sat unused. Since
+`mode == nil` is well-formed Lua (always false unless `mode` itself
+happened to be `nil`), this would not have raised an error — it would
+have silently misrouted every mode-dependent branch the first time
+`former_move` called `select_item` for real. Caught here, before any
+live run, while adding `former_move`'s own mode-dispatch (which needed
+the same enum and would have hit the same gap). Fixed by hand-
+transcribing all 7 `FormerMode` values (same reason as `VEH_SYNC`/
+`PM_SAFE`/`NodesetType` — `move.h` pulls in `windows.h` transitively).
+
+**New engine surface** (`api_version` bumped 33→34): a genuine first-
+ever `CTerraform` exposure — unlike `ResInfo`'s `ResValue` members,
+`CTerraform` needed no special-casing: `rate` is a plain scalar (not a
+nested struct), so ordinary `emit_struct` works, auto-padding the
+leading `char*`/`int32_t`/`uint32_t` fields it doesn't expose
+(`name`/`name_sea`/`preq_tech`/`preq_tech_sea`/`bit`/`bit_incompatible`)
+and the trailing `shortcuts` (`char*`, read natively inside
+`former_apply_action`'s C++ body instead, never crossing into Lua) —
+same auto-padding mechanism already relied on for every other
+`emit_struct` call, just the first time a field wasn't already at
+offset 0. New `Terraform` global (fixed address, same tier as
+`Rules`/`ResInfo`). New `VEH` field `order_auto_type`. New enums: the 7
+hand-transcribed `FormerMode` values above; `ORDER_FARM`/
+`ORDER_DRILL_AQUIFER` and the 7 `ORDERA_TERRA_*` auto-order-type
+constants (all compiler-read from `engine_veh.h`, already included);
+`VSTATE_ON_ALERT`.
+
+**New host wrappers**, following the same split as every prior stage —
+mechanical facts stay host-side only when Lua genuinely can't get them
+another way, real judgment crosses to Lua:
+- `former_search_start`/`_next`: the vehicle's own-triad `TileSearch`
+  scan (`move.cpp:2150-2176`). Unlike almost every earlier iterator,
+  this one does **no host-side filtering at all** — every one of the
+  original's `continue` conditions (`is_base`, `owner+roads`,
+  `home_base_only+range`, `former+roads` floor, `safety` floor,
+  `non_ally_in_tile`) was already an atomic fact exposed to Lua by
+  earlier sub-stages, so there was no "mechanical, no judgment" residue
+  left to keep in C++ the way `route_search_sea_next`'s `safe_path`
+  check needed to. A bare walk was enough.
+- `former_consume(x, y)`: mutating, the plain `mapdata[{x,y}].former -=
+  2` bookkeeping used at the "move to a chosen candidate tile" call
+  site.
+- `former_apply_action(veh_id, item)`: mutating, bundles the "execute
+  the chosen item right now" sequence (own-tile `former` decrement +
+  conditional `terraform_cost`/`energy_credits` deduction + `set_action`)
+  into one call — `item` itself was already chosen by Lua's own
+  `select_item` call before this fires, so none of these three
+  mechanical steps is a separate AI decision worth splitting out.
+- `former_request_new_orders(veh_id)`: mutating, the `FM_Farm_Road`/
+  `FM_Mine_Road` branch's direct `veh->state`/`order` writes, same tier
+  as `set_colony_automation_flags` (writes to mutable fields can't cross
+  the FFI read-only boundary any other way).
+
+`veh.plr_owner()` ported directly to Lua (`lua/api/veh.lua`, pure
+delegation to `is_human(faction_id)`), no host wrapper needed.
+
+**Wiring:** new Class 3 seam in `src/veh_turn.cpp` (`veh->is_former()`
+branch), same shape as `artifact_move`/`crawler_move`/`colony_move`'s
+own seams; registered in `lua/ai/init.lua`.
+
+**Files touched:** `tools/gen_ffi.cpp` (struct/global/field/enums
+above), `src/luaai.h`/`.cpp` (5 new `LuaHostApi` entries, `api_version`
+bump to 34), `lua/ffi/funcs.lua`, `lua/api/veh.lua` (`plr_owner`),
+`lua/ai/move.lua` (`former_move` + `Terraform` cast + provenance entry
++ export), `lua/ai/init.lua` (hook registration), `src/veh_turn.cpp`
+(the seam).
+
+Both presets build clean; the generated `types.lua` carries the new
+surface (including confirming `CTerraform`'s `alignof` comes out as 1 —
+expected, all three portable struct headers are `#pragma pack(1)`, same
+as every other exposed struct) and loads clean under native `luajit`;
+every file under `lua/` passes a bytecode compile.
+
+**Not yet true — live verification.** Nothing has exercised this hook
+in-game yet. `former_move` fires for every former unit every turn it's
+dispatched (not a rare fallback branch like `search_route`'s own tail
+end), so this should be easy to exercise with any former in play — but
+per this project's own repeated discipline, exercise evidence is
+needed, not assumed. **This closes the whole `former_move` port
+(movement stage 4) once verified** — the next movement stage is
+`trans_move` (stage 5).
 
 ---
 

@@ -222,10 +222,15 @@ typedef struct {
     int32_t (*terraform_cost)(int32_t x, int32_t y, int32_t faction_id);
     int32_t (*item_yield)(int32_t x, int32_t y, int32_t faction_id, int32_t bonus, int32_t item);
     int32_t (*bonus_yield)(int32_t res_type);
+    void (*former_search_start)(int32_t veh_id);
+    void (*former_search_next)(int32_t* valid, int32_t* tx, int32_t* ty);
+    void (*former_consume)(int32_t x, int32_t y);
+    int32_t (*former_apply_action)(int32_t veh_id, int32_t item);
+    void (*former_request_new_orders)(int32_t veh_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 33
+local HOST_API_VERSION = 34
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -475,4 +480,9 @@ return {
     terraform_cost = function(x, y, faction_id) return api.terraform_cost(x, y, faction_id) end,
     item_yield = function(x, y, faction_id, bonus, item) return api.item_yield(x, y, faction_id, bonus, item) end,
     bonus_yield = function(res_type) return api.bonus_yield(res_type) end,
+    former_search_start = function(veh_id) return api.former_search_start(veh_id) end,
+    former_search_next = function(valid, tx, ty) return api.former_search_next(valid, tx, ty) end,
+    former_consume = function(x, y) return api.former_consume(x, y) end,
+    former_apply_action = function(veh_id, item) return api.former_apply_action(veh_id, item) end,
+    former_request_new_orders = function(veh_id) return api.former_request_new_orders(veh_id) end,
 }

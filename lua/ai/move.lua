@@ -69,6 +69,8 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         former_tile_score = { file = "src/move.cpp", func = "former_tile_score",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        former_move = { file = "src/move.cpp", func = "former_move",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -86,6 +88,7 @@ local tech = dofile("lua/api/tech.lua")
 
 local E = types.enums
 local idiv = cmath.idiv
+local imod = cmath.imod
 local clamp = cmath.clamp
 local min = math.min
 local max = math.max
@@ -105,6 +108,11 @@ local ResInfoForestSq = ffi.cast("int32_t*", types.globals.ResInfoForestSq)
 -- convention as ResInfoForestSq above.
 local ResInfoBoreholeSq = ffi.cast("int32_t*", types.globals.ResInfoBoreholeSq)
 local ResInfoImprovedSea = ffi.cast("int32_t*", types.globals.ResInfoImprovedSea)
+-- former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+-- Terraform[item].rate (turns remaining for an in-progress terraform
+-- order) -- same cast pattern as tech.lua's Rules/ResInfo-style rule
+-- tables, indexed by FormerItem (0-based, matching VehOrderFormerFirst).
+local Terraform = ffi.cast("CTerraform*", types.globals.Terraform)
 
 -- engine_types.h:287-289's MFaction::is_aquatic() (rule_flags &
 -- RFLAG_AQUATIC) -- same tier as war.lua's/build.lua's own local
@@ -722,6 +730,171 @@ local function former_tile_score(x, y, faction_id)
         score = score + 20
     end
     return score + min(8, funcs.map_former(x, y)) + min(0, map.safety(x, y))
+end
+
+-- former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+-- former_move itself (move.cpp:2047-2202), Class 3. Assembles
+-- select_item/former_tile_score (sub-stages 2-3) with a new TileSearch
+-- scan (own triad; a bare walk, since every one of the original's
+-- filter conditions is already an atomic fact Lua can read itself) and
+-- reuses the already-ported search_base/search_route for its own
+-- tail-end fallback -- no new work needed for either. `sq` in the
+-- original is mapsq(veh->x, veh->y), unchanged until the TileSearch
+-- scan starts -- `sea` here is that same tile_is_ocean read, reused
+-- everywhere the original reused `sq`.
+local function former_move(veh_id)
+    local v = veh.get(veh_id)
+    local faction_id = v.faction_id
+    local at_base = funcs.tile_is_base(v.x, v.y) and funcs.tile_owner(v.x, v.y) == faction_id
+    local safe = map.safety(v.x, v.y) >= E.PM_SAFE
+    local mode = E.FM_Auto_Full
+
+    if funcs.tile_owner(v.x, v.y) ~= faction_id and funcs.map_roads(v.x, v.y) < 1 then
+        return funcs.move_to_base(veh_id, false)
+    end
+    if funcs.defend_tile(veh_id) then
+        return funcs.set_order_none(veh_id)
+    end
+    local sea = funcs.tile_is_ocean(v.x, v.y)
+    if sea and veh.triad(v) == E.TRIAD_LAND then
+        if not funcs.has_transport(v.x, v.y, faction_id) then
+            funcs.mark_map_node(v.x, v.y, E.NODE_NEED_FERRY)
+            return funcs.mod_veh_skip(veh_id)
+        end
+        for i = 1, 8 do
+            local valid, nx, ny = funcs.tile_neighbor(v.x, v.y, i)
+            if valid and funcs.allow_civ_move(nx, ny, faction_id, E.TRIAD_LAND) and rand.map(0, 2) == 0 then
+                log.debug("former_trans %2d %2d -> %2d %2d", v.x, v.y, nx, ny)
+                return funcs.set_move_to(veh_id, nx, ny)
+            end
+        end
+        return funcs.mod_veh_skip(veh_id)
+    end
+
+    if veh.plr_owner(v) then
+        if v.order_auto_type == E.ORDERA_TERRA_AUTO_MAGTUBE
+            and funcs.has_terra(E.FORMER_MAGTUBE, sea and 1 or 0, faction_id) then
+            mode = E.FM_Auto_Tubes
+        elseif v.order_auto_type == E.ORDERA_TERRA_AUTO_ROAD
+            and funcs.has_terra(E.FORMER_ROAD, sea and 1 or 0, faction_id) then
+            mode = E.FM_Auto_Roads
+        elseif v.order_auto_type == E.ORDERA_TERRA_AUTO_SENSOR
+            and funcs.has_terra(E.FORMER_SENSOR, sea and 1 or 0, faction_id) then
+            mode = E.FM_Auto_Sensors
+        elseif v.order_auto_type == E.ORDERA_TERRA_AUTO_FUNGUS_REM
+            and funcs.has_terra(E.FORMER_REMOVE_FUNGUS, sea and 1 or 0, faction_id) then
+            mode = E.FM_Remove_Fungus
+        elseif v.order_auto_type == E.ORDERA_TERRA_FARM_SOLAR_ROAD then
+            mode = E.FM_Farm_Road
+        elseif v.order_auto_type == E.ORDERA_TERRA_FARM_MINE_ROAD then
+            mode = E.FM_Mine_Road
+        end
+    end
+
+    local turns = 0
+    if v.order >= E.ORDER_FARM and v.order < E.ORDER_MOVE_TO then
+        turns = Terraform[v.order - E.ORDER_FARM].rate
+    end
+
+    if safe or turns >= 12 or veh.plr_owner(v) then
+        if turns > 0 and not (v.order == E.ORDER_DRILL_AQUIFER
+            and funcs.nearby_items(v.x, v.y, 0, 9, E.BIT_RIVER) >= 4) then
+            return E.VEH_SYNC
+        end
+        if not veh.at_target(v) and not can_road(v.x, v.y, faction_id) and not can_magtube(v.x, v.y, faction_id) then
+            return E.VEH_SYNC
+        end
+        local item = select_item(v.x, v.y, faction_id, mode)
+        if item >= 0 then
+            log.debug("former_action %2d %2d item: %d", v.x, v.y, item)
+            return funcs.former_apply_action(veh_id, item)
+        end
+    elseif not safe then
+        return escape_move(veh_id)
+    end
+
+    if mode == E.FM_Farm_Road or mode == E.FM_Mine_Road then
+        funcs.former_request_new_orders(veh_id)
+        return E.VEH_SYNC
+    end
+
+    local home_base_only = false
+    local full_search = imod(game.turn() + veh_id, 4) == 0
+    local limit = full_search and 320 or 80
+    local best_score = -math.huge
+    local bx, by = v.x, v.y
+    local item = -1
+    local tx, ty = -1, -1
+
+    if v.home_base_id >= 0 and base_api.get(v.home_base_id).faction_id == faction_id then
+        local hb = base_api.get(v.home_base_id)
+        bx, by = hb.x, hb.y
+        if veh.plr_owner(v) and v.order_auto_type == E.ORDERA_TERRA_AUTOIMPROVE_BASE
+            and funcs.region_at(v.x, v.y) == funcs.region_at(bx, by) then
+            home_base_only = true
+        end
+    end
+
+    funcs.former_search_start(veh_id)
+    local i = 0
+    local out = ffi.new("int32_t[3]")
+    while i < limit do
+        i = i + 1
+        funcs.former_search_next(out, out + 1, out + 2)
+        if out[0] == 0 then
+            break
+        end
+        local cx, cy = out[1], out[2]
+        if not funcs.tile_is_base(cx, cy)
+            and not (funcs.tile_owner(cx, cy) ~= faction_id and funcs.map_roads(cx, cy) < 1)
+            and not (home_base_only and funcs.map_range(bx, by, cx, cy) > 2)
+            and not (funcs.map_former(cx, cy) < 1 and funcs.map_roads(cx, cy) < 1)
+            and map.safety(cx, cy) >= E.PM_SAFE
+            and not funcs.non_ally_in_tile(cx, cy, faction_id) then
+            local score
+            if mode == E.FM_Auto_Full then
+                score = former_tile_score(cx, cy, faction_id) - idiv(funcs.map_range(bx, by, cx, cy), 2)
+            else
+                score = former_tile_score(cx, cy, faction_id) - 2 * funcs.map_range(v.x, v.y, cx, cy)
+            end
+            if score > best_score then
+                local choice = select_item(cx, cy, faction_id, mode)
+                if choice >= 0 then
+                    tx, ty = cx, cy
+                    best_score = score
+                    item = choice
+                end
+            end
+        end
+    end
+
+    if tx >= 0 then
+        funcs.former_consume(tx, ty)
+        log.debug("former_move %2d %2d -> %2d %2d score: %d item: %d", v.x, v.y, tx, ty, best_score, item)
+        return funcs.set_move_to(veh_id, tx, ty)
+    end
+
+    log.debug("former_skip %2d %2d", v.x, v.y)
+    if funcs.region_at(v.x, v.y) == funcs.region_at(bx, by) and not (v.x == bx and v.y == by)
+        and (home_base_only or funcs.map_range(v.x, v.y, bx, by) < rand.map(0, 32)) then
+        return funcs.set_move_to(veh_id, bx, by)
+    end
+    if not at_base then
+        local sbx, sby = search_base(veh_id, false)
+        if sbx >= 0 then
+            return funcs.set_move_to(veh_id, sbx, sby)
+        end
+    end
+    if full_search and not veh.plr_owner(v) then
+        local rtx, rty = search_route(veh_id)
+        if rtx then
+            return funcs.set_move_to(veh_id, rtx, rty)
+        end
+        if v.home_base_id >= 0 and game.turn() > E.VEH_REMOVE_TURNS and rand.map(0, 4) == 0 then
+            return funcs.mod_veh_kill(veh_id)
+        end
+    end
+    return funcs.mod_veh_skip(veh_id)
 end
 
 -- move.cpp:2204-2225.
@@ -1523,5 +1696,6 @@ end
 port.artifact_move = artifact_move
 port.crawler_move = crawler_move
 port.colony_move = colony_move
+port.former_move = former_move
 port.escape_move = escape_move
 return port

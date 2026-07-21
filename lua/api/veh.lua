@@ -93,6 +93,12 @@ local function in_transit(veh)
     return veh.order == types.enums.ORDER_SENTRY_BOARD and veh.waypoint_x[0] >= 0
 end
 
+-- former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+-- engine_veh.h:644-646 -- pure delegation, no host wrapper needed.
+local function plr_owner(veh)
+    return funcs.is_human(veh.faction_id)
+end
+
 local function is_native_unit(veh)
     return veh.unit_id < types.counts.MaxProtoFactionNum and tech.proto_offense_value(veh.unit_id) < 0
 end
@@ -114,4 +120,5 @@ return {
     at_target = at_target,
     in_transit = in_transit,
     is_native_unit = is_native_unit,
+    plr_owner = plr_owner,
 }

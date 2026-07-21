@@ -193,6 +193,13 @@ int __cdecl mod_enemy_move(int veh_id) {
             }
             return colony_move(veh_id);
         } else if (veh->is_former()) {
+            // Movement port, stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+            // Class 3 hook, same shape as colony_move/crawler_move/
+            // artifact_move's own seams.
+            int value;
+            if (lua_ai_command_hook("former_move", &value, veh_id)) {
+                return value;
+            }
             return former_move(veh_id);
         } else if (veh->is_supply()) {
             // Movement port, stage 2 (IMPLEMENTATION_DETAILS.md 4.12):

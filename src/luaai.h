@@ -537,6 +537,32 @@ struct LuaHostApi {
     int32_t (*terraform_cost)(int32_t x, int32_t y, int32_t faction_id);
     int32_t (*item_yield)(int32_t x, int32_t y, int32_t faction_id, int32_t bonus, int32_t item);
     int32_t (*bonus_yield)(int32_t res_type);
+    // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+    // former_move itself. former_search_*: the vehicle's own-triad
+    // TileSearch scan (move.cpp:2150-2176) -- a bare walk (unlike most
+    // prior iterators, no host-side filtering at all): every filter
+    // condition in the original is already an atomic fact Lua can read
+    // itself (tile_is_base/tile_owner/map_roads/map_former/map_safety/
+    // non_ally_in_tile/map_range), so there is no "mechanical, no
+    // judgment" residue left to keep host-side, unlike route_search_
+    // sea_next's is_base+safe_path+map_range filters. former_consume/
+    // former_apply_action/former_request_new_orders are mutating:
+    // former_consume is the plain `mapdata[{x,y}].former -= 2` bookkeeping
+    // (used at the "move to a chosen candidate tile" call site);
+    // former_apply_action bundles the "execute the chosen item right
+    // now" sequence (own-tile former decrement + conditional
+    // terraform_cost/energy_credits deduction + set_action) since none
+    // of those three steps is a separate AI decision -- item itself was
+    // already chosen by Lua's own select_item call before this is
+    // invoked. former_request_new_orders is the FM_Farm_Road/FM_Mine_Road
+    // branch's veh->state/order writes, same tier as
+    // set_colony_automation_flags (direct field writes can't cross the
+    // FFI read-only boundary any other way).
+    void (*former_search_start)(int32_t veh_id);
+    void (*former_search_next)(int32_t* valid, int32_t* tx, int32_t* ty);
+    void (*former_consume)(int32_t x, int32_t y);
+    int32_t (*former_apply_action)(int32_t veh_id, int32_t item);
+    void (*former_request_new_orders)(int32_t veh_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

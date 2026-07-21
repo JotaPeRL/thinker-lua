@@ -491,6 +491,23 @@ int main() {
         // read (state is only ever written through the new
         // set_colony_automation_flags host wrapper, never directly from Lua).
         FIELD(VEH, state),
+        // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+        // the player-former auto-order dispatch.
+        FIELD(VEH, order_auto_type),
+    }});
+
+    // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+    // Terraform[]'s own .rate lookup (turns remaining for an in-progress
+    // terraform order). Only .rate is exposed -- name/name_sea/shortcuts
+    // are char* (shortcuts is read natively inside the opaque
+    // former_apply_action wrapper instead, never crossing into Lua);
+    // preq_tech/preq_tech_sea/bit/bit_incompatible aren't needed by any
+    // ported function. Unlike ResInfoRecyclingTanks/ResInfoForestSq, this
+    // one CAN use emit_struct (rate is a scalar, not a nested struct) --
+    // unexposed leading fields become padding, computed via the real
+    // offsetof/sizeof like every other emit_struct call.
+    emit_struct(stdout, {"CTerraform", sizeof(CTerraform), alignof(CTerraform), {
+        FIELD(CTerraform, rate),
     }});
 
     printf("]]\n\n");
@@ -570,6 +587,10 @@ int main() {
     // MultiplayerActive above.
     printf("    GamePreferences = 0x%08X,\n", 0x9A6490);
     printf("    GameMorePreferences = 0x%08X,\n", 0x9A6494);
+    // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+    // CTerraform* const, fixed address (src/engine.cpp), same tier as
+    // Rules/ResInfo.
+    printf("    Terraform = 0x%08X,\n", 0x691878);
     printf("  },\n");
     // Array bounds for the exposed rule tables, from src/main.h (not
     // included here -- same provenance-by-comment convention as the
@@ -972,6 +993,29 @@ int main() {
     printf("    FORMER_SOIL_ENR = %d,\n", FORMER_SOIL_ENR);
     printf("    BIT_SOIL_ENRICHER = %d,\n", BIT_SOIL_ENRICHER);
     printf("    ALT_ONE_ABOVE_SEA = %d,\n", ALT_ONE_ABOVE_SEA);
+    // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
+    // former_move's own dispatch. FormerMode (move.h) is hand-
+    // transcribed, same reason as VEH_SYNC/PM_SAFE (move.h pulls in
+    // windows.h transitively) -- default enum numbering (move.h:7-8),
+    // cross-check there if this ever drifts. Everything else here comes
+    // straight from engine_veh.h (already included above), compiler-read.
+    printf("    FM_Auto_Full = %d,\n", 0);
+    printf("    FM_Auto_Roads = %d,\n", 1);
+    printf("    FM_Auto_Tubes = %d,\n", 2);
+    printf("    FM_Auto_Sensors = %d,\n", 3);
+    printf("    FM_Remove_Fungus = %d,\n", 4);
+    printf("    FM_Farm_Road = %d,\n", 5);
+    printf("    FM_Mine_Road = %d,\n", 6);
+    printf("    ORDER_FARM = %d,\n", ORDER_FARM);
+    printf("    ORDER_DRILL_AQUIFER = %d,\n", ORDER_DRILL_AQUIFER);
+    printf("    ORDERA_TERRA_AUTO_MAGTUBE = %d,\n", ORDERA_TERRA_AUTO_MAGTUBE);
+    printf("    ORDERA_TERRA_AUTO_ROAD = %d,\n", ORDERA_TERRA_AUTO_ROAD);
+    printf("    ORDERA_TERRA_AUTO_SENSOR = %d,\n", ORDERA_TERRA_AUTO_SENSOR);
+    printf("    ORDERA_TERRA_AUTO_FUNGUS_REM = %d,\n", ORDERA_TERRA_AUTO_FUNGUS_REM);
+    printf("    ORDERA_TERRA_FARM_SOLAR_ROAD = %d,\n", ORDERA_TERRA_FARM_SOLAR_ROAD);
+    printf("    ORDERA_TERRA_FARM_MINE_ROAD = %d,\n", ORDERA_TERRA_FARM_MINE_ROAD);
+    printf("    ORDERA_TERRA_AUTOIMPROVE_BASE = %d,\n", ORDERA_TERRA_AUTOIMPROVE_BASE);
+    printf("    VSTATE_ON_ALERT = %d,\n", VSTATE_ON_ALERT);
     printf("  },\n");
     printf("  validation = {\n");
     for (const std::string& row : validation_rows) {
