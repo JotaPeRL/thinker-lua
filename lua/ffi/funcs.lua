@@ -228,10 +228,24 @@ typedef struct {
     int32_t (*former_apply_action)(int32_t veh_id, int32_t item);
     void (*former_request_new_orders)(int32_t veh_id);
     int32_t (*reg_enemy_at)(int32_t region, int32_t is_probe);
+    int32_t (*veh_cargo)(int32_t veh_id);
+    int32_t (*veh_need_heals)(int32_t veh_id);
+    void (*veh_wake)(int32_t veh_id);
+    int32_t (*unmark_map_node)(int32_t x, int32_t y, int32_t node_type);
+    void (*set_board_to)(int32_t veh_id, int32_t trans_veh_id);
+    int32_t (*tile_veh_who)(int32_t x, int32_t y);
+    int32_t (*map_unit_near)(int32_t x, int32_t y);
+    int32_t (*choose_defender)(int32_t x, int32_t y, int32_t veh_id_atk);
+    double (*battle_priority)(int32_t veh_id_atk, int32_t veh_id_def, int32_t dist, int32_t moves,
+        int32_t x, int32_t y);
+    int32_t (*goody_at)(int32_t x, int32_t y);
+    int32_t (*allow_scout)(int32_t faction_id, int32_t x, int32_t y);
+    void (*trans_search_start)(int32_t veh_id);
+    void (*trans_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 35
+local HOST_API_VERSION = 36
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -487,4 +501,19 @@ return {
     former_apply_action = function(veh_id, item) return api.former_apply_action(veh_id, item) end,
     former_request_new_orders = function(veh_id) return api.former_request_new_orders(veh_id) end,
     reg_enemy_at = function(region, is_probe) return api.reg_enemy_at(region, is_probe) ~= 0 end,
+    veh_cargo = function(veh_id) return api.veh_cargo(veh_id) end,
+    veh_need_heals = function(veh_id) return api.veh_need_heals(veh_id) ~= 0 end,
+    veh_wake = function(veh_id) return api.veh_wake(veh_id) end,
+    unmark_map_node = function(x, y, node_type) return api.unmark_map_node(x, y, node_type) ~= 0 end,
+    set_board_to = function(veh_id, trans_veh_id) return api.set_board_to(veh_id, trans_veh_id) end,
+    tile_veh_who = function(x, y) return api.tile_veh_who(x, y) end,
+    map_unit_near = function(x, y) return api.map_unit_near(x, y) end,
+    choose_defender = function(x, y, veh_id_atk) return api.choose_defender(x, y, veh_id_atk) end,
+    battle_priority = function(veh_id_atk, veh_id_def, dist, moves, x, y)
+        return api.battle_priority(veh_id_atk, veh_id_def, dist, moves, x, y)
+    end,
+    goody_at = function(x, y) return api.goody_at(x, y) ~= 0 end,
+    allow_scout = function(faction_id, x, y) return api.allow_scout(faction_id, x, y) ~= 0 end,
+    trans_search_start = function(veh_id) return api.trans_search_start(veh_id) end,
+    trans_search_next = function(valid, tx, ty, dist) return api.trans_search_next(valid, tx, ty, dist) end,
 }

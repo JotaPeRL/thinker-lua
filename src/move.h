@@ -22,6 +22,7 @@ extern PMTable mapdata;
 extern NodeSet mapnodes;
 
 int choose_defender(int x, int y, int veh_id_atk, MAP* sq);
+double battle_priority(int veh_id_atk, int veh_id_def, int dist, int moves, MAP* sq);
 bool reg_enemy_at(int region, bool is_probe);
 bool ally_near_tile(int x, int y, int faction_id, int skip_veh_id, int max_range);
 bool non_ally_in_tile(int x, int y, int faction_id);

@@ -208,7 +208,7 @@ static double battle_eval(int veh_id_atk, int veh_id_def, int moves, int move_ra
     return v1/v2;
 }
 
-static double battle_priority(int veh_id_atk, int veh_id_def, int dist, int moves, MAP* sq) {
+double battle_priority(int veh_id_atk, int veh_id_def, int dist, int moves, MAP* sq) {
     if (!sq || veh_id_atk < 0 || veh_id_atk >= *VehCount
     || veh_id_def < 0 || veh_id_def >= *VehCount) {
         assert(0);

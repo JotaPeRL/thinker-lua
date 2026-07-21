@@ -494,6 +494,9 @@ int main() {
         // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
         // the player-former auto-order dispatch.
         FIELD(VEH, order_auto_type),
+        // trans_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.14):
+        // atk_moves = veh_speed(id, 0) - veh->moves_spent.
+        FIELD(VEH, moves_spent),
     }});
 
     // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
@@ -922,6 +925,9 @@ int main() {
     printf("    NODE_NAVAL_BEACH = %d,\n", 8);
     printf("    NODE_NAVAL_END = %d,\n", 9);
     printf("    NODE_SCOUT_SITE = %d,\n", 11);
+    // trans_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.14):
+    // the needlejet-defender chassis check.
+    printf("    CHS_NEEDLEJET = %d,\n", CHS_NEEDLEJET);
     // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
     // escape_score/base_tile_score/colony_move's own item/landmark/
     // altitude/order constants. All come straight from engine_enums.h/

@@ -2843,7 +2843,7 @@ forward-reference gap). Next movement stage: `trans_move` (stage 5).
 
 ---
 
-### 4.14 `trans_move` port (movement stage 5) — sub-stage 1 done, build-verified
+### 4.14 `trans_move` port (movement stage 5) — ✅ closed, live-verified clean
 
 **Real size, read in full:** `trans_move` itself ~253 loc
 (`move.cpp:2448-2699`), `make_landing` ~34 loc (`move.cpp:2413-2446`,
@@ -2908,9 +2908,69 @@ clean across every file under `lua/`, not just `move.lua`.
 `LuaHostApi` entry, `api_version` bump to 35), `lua/ffi/funcs.lua`,
 `lua/ai/move.lua` (`near_landing`/`make_landing` + provenance entries).
 
-**Next: sub-stage 2 — `trans_move` itself** (dispatch + the
-`TileSearch` scan, reusing `search_route`/`escape_move` — no new work
-needed there), **then live verification.**
+**Sub-stage 2: `trans_move` itself. ✅ done, build-verified; not yet
+live-verified.**
+
+**New engine surface** (`api_version` bumped 35→36): `VEH.moves_spent`
+field (for `atk_moves = veh_speed(id, 0) - veh->moves_spent`),
+`CHS_NEEDLEJET` chassis enum, and 13 new host wrappers —
+`veh_cargo`/`veh_need_heals`/`veh_wake`/`unmark_map_node`/
+`set_board_to`/`tile_veh_who`/`map_unit_near`/`goody_at`/`allow_scout`
+(single-field tile/veh facts or thin engine-mechanic delegations, same
+tier as the rest of this file's host surface) plus `choose_defender`/
+`battle_priority` (kept opaque per this section's own classification
+above — `trans_move` calls them as-is, no new scoring logic) and a
+dedicated incremental scan pair `trans_search_start`/`trans_search_next`
+(`TS_SEA_AND_SHORE` from `veh->x, veh->y` — same "bare walk" iterator
+design as `route`/`escape`/`base`/`former`'s own file-local static
+`TileSearch`, here `g_trans_ts`). `battle_priority` lost its `static` in
+`move.cpp` (same precedent as `reg_enemy_at`/`check_probe`).
+
+**Control-flow detail preserved exactly:** the original's `TileSearch`
+scan loop has two C++ `continue` statements — one inside the
+attack-defender branch (skip the rest of the loop body when the
+candidate defender is an un-interceptable needlejet), one right after
+(skip the rest unless `own_base` or `allow_move` holds). Lua has no
+`continue`; both are replicated with a `skip` flag plus an
+`own_base or allow_move(...)` gate around the remaining body, the same
+technique already used for `former_move`/`make_landing`'s own
+`continue`-replicating restructurings. The three `Vehs[]` scan loops
+(cargo/artifact/nearby tally, landing dispatch, NAVAL_START boarding)
+keep the original's ascending iteration order exactly — unlike
+`defender_count`'s own unrelated descending loop — because the landing
+pass calls `make_landing` (RNG draws) and the boarding pass has
+order-dependent `set_board_to` effects, so iteration order is not
+cosmetic here.
+
+**Reused as-is, no new work:** `search_route`, `escape_move`,
+`invasion_unit`, `near_landing`, `make_landing` (all already ported),
+plus every already-exposed accessor listed above this sub-stage's own
+entry.
+
+**Verified beyond build:** all three scripted sweeps (arg-count
+matching for every `funcs.X(...)` call site, forward-reference checking
+for every locally-defined Lua function call, enum/count coverage) run
+clean across every file under `lua/`, plus a native `luajit` bytecode
+syntax check on every file under `lua/`.
+
+**Files touched:** `tools/gen_ffi.cpp` (1 field, 1 enum), `src/move.cpp`/
+`.h` (`battle_priority` un-`static`'d + declared), `src/luaai.h`/`.cpp`
+(13 new `LuaHostApi` entries, `api_version` bump to 36),
+`lua/ffi/funcs.lua`, `lua/ai/move.lua` (`trans_move` + provenance
+entry), `src/veh_turn.cpp` (Class 3 hook seam, same shape as
+`former_move`/`colony_move`/`crawler_move`/`artifact_move`'s own),
+`lua/ai/init.lua` (hook registration).
+
+**Live-verified clean:** no crash, no native exceptions in `debug.txt`,
+zero errors in `lua.log` (3851 lines total) across the run. `trans_move`
+genuinely executed (not silently falling back to C++): 423 top-level
+`trans_move` decision lines, plus real branch outcomes —
+`trans_patrol` ×31, `trans_invade` ×21, `trans_heals` ×11,
+`trans_scout` ×2, `trans_link` ×2.
+
+Movement stage 5 closed. **Next:** movement stage 6 (`combat_move`,
+which will finally need `choose_defender`/`battle_priority` as real AI
+policy rather than opaque calls).
 
 ---
 

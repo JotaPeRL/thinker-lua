@@ -219,6 +219,13 @@ int __cdecl mod_enemy_move(int veh_id) {
             }
             return artifact_move(veh_id);
         } else if (triad == TRIAD_SEA && veh_cargo(veh_id) > 0) {
+            // Movement port, stage 5 (IMPLEMENTATION_DETAILS.md 4.14):
+            // Class 3 hook, same shape as former_move/colony_move/
+            // crawler_move/artifact_move's own seams.
+            int value;
+            if (lua_ai_command_hook("trans_move", &value, veh_id)) {
+                return value;
+            }
             return trans_move(veh_id);
         } else if (veh->is_planet_buster()) {
             return nuclear_move(veh_id);

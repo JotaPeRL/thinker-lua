@@ -75,6 +75,8 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         make_landing = { file = "src/move.cpp", func = "make_landing",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        trans_move = { file = "src/move.cpp", func = "trans_move",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -1773,9 +1775,306 @@ local function make_landing(veh_id)
     return false
 end
 
+-- trans_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.14):
+-- move.cpp:2448-2699. Ocean transport dispatch. The Vehs[] scan loop's
+-- forward (ascending) order is preserved exactly in all three passes
+-- below -- the landing pass calls make_landing (rand.map draws) and the
+-- boarding pass has order-dependent set_board_to effects, so this is not
+-- cosmetic, unlike defender_count's own (unrelated, RNG-free) descending
+-- loop above. The scan's two C++ `continue` statements (one inside the
+-- attack-defender branch, one right after) are replicated via the `skip`
+-- flag and the `own_base or allow_move(...)` gate below, same technique
+-- as former_move/make_landing's own continue-replicating restructurings.
+-- mapsq(veh->x, veh->y)'s null check is dropped, same rationale as
+-- search_route/near_landing/make_landing: a dispatched vehicle always
+-- sits on a valid map tile. choose_defender/battle_priority stay opaque
+-- (Group B, combat_move's own family -- confirmed via all 6 move.cpp
+-- call sites before this port started).
+local function trans_move(id)
+    local v = veh.get(id)
+    local faction_id = v.faction_id
+
+    if funcs.tile_is_base(v.x, v.y) and funcs.veh_need_heals(id) then
+        return funcs.mod_veh_skip(id)
+    end
+
+    local cargo = 0
+    local nearby = 0
+    local artifact = 0
+    local capacity = funcs.veh_cargo(id)
+    local at_base = funcs.tile_is_base(v.x, v.y) and funcs.tile_owner(v.x, v.y) == faction_id
+    local tx, ty = -1, -1
+
+    for i = 0, veh.count() - 1 do
+        if i ~= id then
+            local v2 = veh.get(i)
+            if v2.faction_id == faction_id and veh.triad(v2) == E.TRIAD_LAND then
+                if v.x == v2.x and v.y == v2.y then
+                    if v2.order == E.ORDER_SENTRY_BOARD and v2.waypoint_x[0] == id then
+                        cargo = cargo + 1
+                        if veh.is_artifact(v2) then
+                            artifact = artifact + 1
+                        end
+                        if at_base and not funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_START) then
+                            funcs.veh_wake(i)
+                        end
+                    end
+                elseif funcs.map_range(v.x, v.y, v2.x, v2.y) == 1 then
+                    nearby = nearby + 1
+                end
+            end
+        end
+    end
+    log.debug("trans_move %2d %2d cargo: %d artifact: %d nearby: %d capacity: %d",
+        v.x, v.y, cargo, artifact, nearby, capacity)
+
+    if cargo < capacity and funcs.unmark_map_node(v.x, v.y, E.NODE_NEED_FERRY) then
+        return funcs.mod_veh_skip(id)
+    end
+    if not veh.at_target(v) then
+        local wx, wy = v.waypoint_x[0], v.waypoint_y[0]
+        if artifact > 0 or (cargo > 0
+            and (funcs.has_map_node(wx, wy, E.NODE_NAVAL_END)
+                or funcs.has_map_node(wx, wy, E.NODE_NAVAL_PICK)
+                or funcs.has_map_node(wx, wy, E.NODE_NEED_FERRY)
+                or funcs.has_map_node(wx, wy, E.NODE_SCOUT_SITE))) then
+            return E.VEH_SYNC
+        end
+        if cargo == 0 and funcs.has_map_node(wx, wy, E.NODE_NAVAL_START) then
+            return E.VEH_SYNC
+        end
+    end
+    if funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_PICK) then
+        if artifact == 0 and cargo < capacity then
+            if v.iter_count < 2 then
+                return E.VEH_SYNC
+            elseif nearby > 0 then
+                return funcs.mod_veh_skip(id)
+            end
+        end
+        if artifact > 0 or nearby == 0 then
+            funcs.unmark_map_node(v.x, v.y, E.NODE_NAVAL_PICK)
+        end
+        if cargo >= capacity then
+            local rtx, rty = search_route(id)
+            if rtx then
+                log.debug("trans_drop %2d %2d -> %2d %2d", v.x, v.y, rtx, rty)
+                return funcs.set_move_to(id, rtx, rty)
+            end
+        end
+    end
+
+    local naval_start_x = funcs.naval_start_x(faction_id)
+    local naval_start_y = funcs.naval_start_y(faction_id)
+    local naval_end_x = funcs.naval_end_x(faction_id)
+    local naval_end_y = funcs.naval_end_y(faction_id)
+
+    if not at_base then
+        if cargo > artifact and near_landing(id) then
+            local landed = false
+            for i = 0, veh.count() - 1 do
+                if i ~= id then
+                    local v2 = veh.get(i)
+                    if v.x == v2.x and v.y == v2.y and veh.triad(v2) == E.TRIAD_LAND
+                        and not veh.is_artifact(v2) and make_landing(i) then
+                        landed = true
+                    end
+                end
+            end
+            if landed then
+                if v.iter_count < 2 then
+                    return E.VEH_SYNC
+                end
+                return funcs.mod_veh_skip(id)
+            end
+        end
+        if map.safety(v.x, v.y) < E.PM_SAFE
+            and not funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_PICK)
+            and not funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_END)
+            and funcs.map_range(v.x, v.y, naval_end_x, naval_end_y) > 3 then
+            return escape_move(id)
+        end
+    end
+
+    if at_base and funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_START) then
+        for i = 0, veh.count() - 1 do
+            if cargo >= capacity then
+                break
+            end
+            local v2 = veh.get(i)
+            if v2.faction_id == faction_id and v.x == v2.x and v.y == v2.y
+                and (veh.is_combat_unit(v2) or veh.is_probe(v2))
+                and veh.triad(v2) == E.TRIAD_LAND and v2.order ~= E.ORDER_SENTRY_BOARD then
+                funcs.set_board_to(i, id)
+                cargo = cargo + 1
+            end
+        end
+        if cargo >= min(4, capacity) then
+            log.debug("trans_invade %2d %2d -> %2d %2d", v.x, v.y, naval_end_x, naval_end_y)
+            return funcs.set_move_to(id, naval_end_x, naval_end_y)
+        end
+        if v.iter_count < 2 then
+            return E.VEH_SYNC
+        end
+        return funcs.mod_veh_skip(id)
+    end
+
+    local best_score = -math.huge
+    local max_dist = (imod(game.turn() + id, 4) ~= 0 and 8 or 16) + (artifact > 0 and 20 or 0)
+    local atk_dist = veh.is_combat_unit(v) and (2 - (at_base and 1 or 0)) or 0
+    local atk_moves = veh.is_combat_unit(v) and (funcs.veh_speed(id, 0) - v.moves_spent) or 0
+    local px, py = -1, -1
+    local best_odds = (cargo > 0 and 1.8 or 1.4)
+        - 0.004 * min(50, funcs.map_unit_near(v.x, v.y))
+        - 0.0005 * min(500, funcs.transport_units(faction_id) + funcs.sea_combat_units(faction_id))
+
+    if funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_START) then
+        max_dist = 4
+    end
+    if cargo > artifact and funcs.invasion_unit(id)
+        and funcs.tile_region(v.x, v.y) == funcs.region_at(naval_end_x, naval_end_y) then
+        max_dist = 4
+    end
+
+    funcs.trans_search_start(id)
+    local out = ffi.new("int32_t[4]")
+    local coord = ffi.new("int32_t[2]")
+    while true do
+        funcs.trans_search_next(out, out + 1, out + 2, out + 3)
+        if out[0] == 0 then
+            break
+        end
+        local dist = out[3]
+        if dist > max_dist then
+            break
+        end
+        local tx2, ty2 = out[1], out[2]
+
+        local to_base = funcs.tile_is_base(tx2, ty2)
+        local owner2 = funcs.tile_owner(tx2, ty2)
+        local own_base = to_base and owner2 == faction_id
+        local skip = false
+
+        if not own_base and dist <= atk_dist and funcs.tile_is_ocean(tx2, ty2) then
+            local to_enemy = funcs.at_war(faction_id, owner2) ~= 0
+            if to_base and to_enemy and funcs.tile_veh_who(tx2, ty2) < 0
+                and funcs.map_target(tx2, ty2) < 2 + rand.map(0, 16) then
+                px, py = tx2, ty2
+                break
+            end
+            if not to_base or to_enemy then
+                local id2 = funcs.choose_defender(tx2, ty2, id)
+                if id2 >= 0 then
+                    local v2 = veh.get(id2)
+                    if not to_base and tech.proto(v2.unit_id).chassis_id == E.CHS_NEEDLEJET
+                        and funcs.has_abil(v.unit_id, E.ABL_AIR_SUPERIORITY) == 0 then
+                        skip = true
+                    else
+                        local odds = funcs.battle_priority(id, id2, dist, atk_moves, tx2, ty2)
+                        if odds > best_odds then
+                            px, py = tx2, ty2
+                            best_odds = odds
+                        end
+                    end
+                end
+            end
+        end
+
+        if not skip and (own_base or funcs.allow_move(tx2, ty2, faction_id, E.TRIAD_SEA)) then
+            if dist <= 2 and not funcs.veh_need_heals(id) and funcs.goody_at(tx2, ty2) then
+                log.debug("trans_heals %2d %2d -> %2d %2d", v.x, v.y, tx2, ty2)
+                return funcs.set_move_to(id, tx2, ty2)
+            end
+            if own_base then
+                if artifact > 0 or funcs.veh_need_heals(id)
+                    or (cargo > artifact and naval_end_x < 0) then
+                    if artifact > 0 and funcs.can_link_artifact(funcs.base_at(tx2, ty2)) then
+                        log.debug("trans_link %2d %2d -> %2d %2d", v.x, v.y, tx2, ty2)
+                        return funcs.set_move_to(id, tx2, ty2)
+                    end
+                    local region = funcs.tile_region(tx2, ty2)
+                    local score = (funcs.tile_is_land_region(tx2, ty2) and 4 or 1)
+                        * faction.get(faction_id).region_total_bases[region] - dist
+                    if score > best_score then
+                        tx, ty = tx2, ty2
+                        best_score = score
+                    end
+                end
+            elseif artifact == 0 then
+                if tx < 0 and funcs.allow_scout(faction_id, tx2, ty2)
+                    and map.safety(tx2, ty2) > E.PM_SAFE and dist < rand.map(0, 16) then
+                    tx, ty = tx2, ty2
+                end
+                if funcs.has_map_node(tx2, ty2, E.NODE_SCOUT_SITE)
+                    and not at_base and cargo > 0 and cargo < 4 and dist < rand.map(0, 16) then
+                    for i = 1, 8 do
+                        if funcs.tile_neighbor(tx2, ty2, i, coord, coord + 1) then
+                            local nx, ny = coord[0], coord[1]
+                            if not funcs.tile_is_ocean(nx, ny) and funcs.has_map_node(nx, ny, E.NODE_PATROL) then
+                                log.debug("trans_scout %2d %2d -> %2d %2d", v.x, v.y, tx2, ty2)
+                                return funcs.set_move_to(id, tx2, ty2)
+                            end
+                        end
+                    end
+                end
+                if funcs.has_map_node(tx2, ty2, E.NODE_PATROL) then
+                    log.debug("trans_patrol %2d %2d -> %2d %2d", v.x, v.y, tx2, ty2)
+                    return funcs.set_move_to(id, tx2, ty2)
+                end
+                if funcs.has_map_node(tx2, ty2, E.NODE_NAVAL_END)
+                    and cargo > 0 and tx < 0 and dist > 3 and dist < rand.map(0, 32) then
+                    tx, ty = tx2, ty2
+                end
+            end
+            if funcs.has_map_node(tx2, ty2, E.NODE_NEED_FERRY)
+                and cargo == 0 and funcs.map_target(tx2, ty2) <= rand.map(0, 8) then
+                log.debug("trans_ferry %2d %2d -> %2d %2d", v.x, v.y, tx2, ty2)
+                return funcs.set_move_to(id, tx2, ty2)
+            end
+            if funcs.has_map_node(tx2, ty2, E.NODE_NAVAL_START)
+                and cargo == 0 and tx < 0 and dist > 3 and dist < rand.map(0, 32) then
+                tx, ty = tx2, ty2
+            end
+        end
+    end
+
+    if px >= 0 then
+        log.debug("trans_attack %2d %2d -> %2d %2d", v.x, v.y, px, py)
+        return funcs.set_move_to(id, px, py)
+    end
+    if tx >= 0 then
+        log.debug("trans_move %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+        return funcs.set_move_to(id, tx, ty)
+    end
+    if not at_base and not veh.at_target(v) and v.iter_count < 2 then
+        return E.VEH_SYNC
+    end
+    if funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_START) then
+        return funcs.mod_veh_skip(id)
+    end
+    if cargo == 0 and naval_start_x >= 0 and funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_END) then
+        log.debug("trans_start %2d %2d -> %2d %2d", v.x, v.y, naval_start_x, naval_start_y)
+        return funcs.set_move_to(id, naval_start_x, naval_start_y)
+    end
+    if (cargo == 0 or at_base) and naval_start_x >= 0 and funcs.invasion_unit(id)
+        and funcs.cargo_capacity(naval_start_x, naval_start_y, faction_id) < 16 + rand.map(0, 32) then
+        log.debug("trans_start %2d %2d -> %2d %2d", v.x, v.y, naval_start_x, naval_start_y)
+        return funcs.set_move_to(id, naval_start_x, naval_start_y)
+    end
+    if not at_base then
+        local rtx, rty = search_route(id)
+        if rtx then
+            log.debug("trans_route %2d %2d -> %2d %2d", v.x, v.y, rtx, rty)
+            return funcs.set_move_to(id, rtx, rty)
+        end
+    end
+    return funcs.mod_veh_skip(id)
+end
+
 port.artifact_move = artifact_move
 port.crawler_move = crawler_move
 port.colony_move = colony_move
 port.former_move = former_move
 port.escape_move = escape_move
+port.trans_move = trans_move
 return port

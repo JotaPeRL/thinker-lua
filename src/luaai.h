@@ -569,6 +569,36 @@ struct LuaHostApi {
     // populated by move_upkeep (not yet ported, movement stage 7) --
     // pure precomputed-fact lookup, not AI policy, kept opaque.
     int32_t (*reg_enemy_at)(int32_t region, int32_t is_probe);
+    // trans_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.14):
+    // trans_move itself. veh_cargo/veh_need_heals/goody_at/allow_scout
+    // are genuine engine mechanics (chassis cargo formula, damage/repair
+    // eligibility, map pod presence, a scouting-eligibility gate that
+    // itself consumes RNG) -- same "engine mechanics, not AI policy"
+    // tier as has_base_sites/allow_move, kept opaque. tile_veh_who/
+    // map_unit_near are single-field tile facts, same tier as
+    // tile_owner/map_target. choose_defender/battle_priority stay
+    // opaque -- confirmed (4.14's own classification note) to belong to
+    // combat_move's own family (movement stage 6), not trans_move's;
+    // trans_move's real judgment is the surrounding decision of
+    // whether/where to attack, not the odds formula itself.
+    int32_t (*veh_cargo)(int32_t veh_id);
+    int32_t (*veh_need_heals)(int32_t veh_id);
+    void (*veh_wake)(int32_t veh_id);
+    int32_t (*unmark_map_node)(int32_t x, int32_t y, int32_t node_type);
+    void (*set_board_to)(int32_t veh_id, int32_t trans_veh_id);
+    int32_t (*tile_veh_who)(int32_t x, int32_t y);
+    int32_t (*map_unit_near)(int32_t x, int32_t y);
+    int32_t (*choose_defender)(int32_t x, int32_t y, int32_t veh_id_atk);
+    double (*battle_priority)(int32_t veh_id_atk, int32_t veh_id_def, int32_t dist, int32_t moves,
+        int32_t x, int32_t y);
+    int32_t (*goody_at)(int32_t x, int32_t y);
+    int32_t (*allow_scout)(int32_t faction_id, int32_t x, int32_t y);
+    // trans_move's own TileSearch scan (move.cpp:2583-2669): a bare
+    // walk, same reasoning as former_search_next -- every filter
+    // condition the original applies (is_base, owner, is_ocean,
+    // allow_move) is already an atomic fact exposed to Lua.
+    void (*trans_search_start)(int32_t veh_id);
+    void (*trans_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

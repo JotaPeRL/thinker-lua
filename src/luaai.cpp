@@ -1408,11 +1408,91 @@ static int32_t host_reg_enemy_at(int32_t region, int32_t is_probe) {
     return reg_enemy_at(region, is_probe);
 }
 
+// trans_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.14):
+// trans_move's own remaining dependencies. veh_cargo/veh_need_heals/
+// goody_at/allow_scout are genuine engine mechanics, kept opaque.
+static int32_t host_veh_cargo(int32_t veh_id) {
+    return veh_cargo(veh_id);
+}
+
+static int32_t host_veh_need_heals(int32_t veh_id) {
+    return Vehs[veh_id].need_heals();
+}
+
+static void host_veh_wake(int32_t veh_id) {
+    g_mutation_issued = true;
+    veh_wake(veh_id);
+}
+
+static int32_t host_unmark_map_node(int32_t x, int32_t y, int32_t node_type) {
+    g_mutation_issued = true;
+    return mapnodes.erase({x, y, node_type}) > 0;
+}
+
+static void host_set_board_to(int32_t veh_id, int32_t trans_veh_id) {
+    g_mutation_issued = true;
+    set_board_to(veh_id, trans_veh_id);
+}
+
+static int32_t host_tile_veh_who(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq ? sq->veh_who() : -1;
+}
+
+static int32_t host_map_unit_near(int32_t x, int32_t y) {
+    return mapdata[{x, y}].unit_near;
+}
+
+// choose_defender/battle_priority stay opaque -- combat_move's own
+// family (movement stage 6), confirmed by reading all 6 call sites
+// across move.cpp (IMPLEMENTATION_DETAILS.md 4.14).
+static int32_t host_choose_defender(int32_t x, int32_t y, int32_t veh_id_atk) {
+    MAP* sq = mapsq(x, y);
+    return sq ? choose_defender(x, y, veh_id_atk, sq) : -1;
+}
+
+static double host_battle_priority(int32_t veh_id_atk, int32_t veh_id_def, int32_t dist, int32_t moves,
+int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq ? battle_priority(veh_id_atk, veh_id_def, dist, moves, sq) : 0.0;
+}
+
+static int32_t host_goody_at(int32_t x, int32_t y) {
+    return goody_at(x, y);
+}
+
+static int32_t host_allow_scout(int32_t faction_id, int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && allow_scout(faction_id, sq);
+}
+
+// trans_move's own TileSearch scan (move.cpp:2583-2669): a bare walk,
+// same reasoning as former_search_next -- every filter condition the
+// original applies (is_base, owner, is_ocean, allow_move) is already
+// an atomic fact exposed to Lua.
+static TileSearch g_trans_ts;
+
+static void host_trans_search_start(int32_t veh_id) {
+    VEH* veh = &Vehs[veh_id];
+    g_trans_ts.init(veh->x, veh->y, TS_SEA_AND_SHORE);
+}
+
+static void host_trans_search_next(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist) {
+    if (g_trans_ts.get_next() == NULL) {
+        *valid = 0;
+        return;
+    }
+    *valid = 1;
+    *tx = g_trans_ts.rx;
+    *ty = g_trans_ts.ry;
+    *dist = g_trans_ts.dist;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 35,
+    /* api_version          */ 36,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1613,6 +1693,19 @@ static LuaHostApi g_host_api = {
     /* former_apply_action         */ host_former_apply_action,
     /* former_request_new_orders   */ host_former_request_new_orders,
     /* reg_enemy_at                */ host_reg_enemy_at,
+    /* veh_cargo                   */ host_veh_cargo,
+    /* veh_need_heals              */ host_veh_need_heals,
+    /* veh_wake                    */ host_veh_wake,
+    /* unmark_map_node             */ host_unmark_map_node,
+    /* set_board_to                */ host_set_board_to,
+    /* tile_veh_who                */ host_tile_veh_who,
+    /* map_unit_near               */ host_map_unit_near,
+    /* choose_defender             */ host_choose_defender,
+    /* battle_priority             */ host_battle_priority,
+    /* goody_at                    */ host_goody_at,
+    /* allow_scout                 */ host_allow_scout,
+    /* trans_search_start          */ host_trans_search_start,
+    /* trans_search_next           */ host_trans_search_next,
 };
 
 static lua_State* L = NULL;
