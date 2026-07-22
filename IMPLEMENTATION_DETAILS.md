@@ -2968,9 +2968,274 @@ genuinely executed (not silently falling back to C++): 423 top-level
 `trans_patrol` ×31, `trans_invade` ×21, `trans_heals` ×11,
 `trans_scout` ×2, `trans_link` ×2.
 
-Movement stage 5 closed. **Next:** movement stage 6 (`combat_move`,
-which will finally need `choose_defender`/`battle_priority` as real AI
-policy rather than opaque calls).
+Movement stage 5 closed. **Next:** movement stage 6 (`combat_move`) —
+staged plan in 4.15 below. (Correction: an earlier draft of this note
+said stage 6 would "finally need `choose_defender`/`battle_priority` as
+real AI policy rather than opaque calls" — superseded by this section's
+own classification, just above, that both stay opaque; `battle_priority`
+computes an actual movement-cost path via `Path_find`, a `path.cpp`
+primitive Phase 4.3 keeps in C++, so porting it would cross that
+boundary. Both wrappers already exist, built in this stage.)
+
+---
+
+### 4.15 `combat_move` port (movement stage 6) — sub-stage A done, build-verified
+
+**Real size, read in full:** `combat_move` itself ~726 loc
+(`move.cpp:2931-3657`, by far the largest single function in the
+project — bigger than `former_move` and `trans_move` combined), plus
+its own pure-scoring dependency cluster (`move.cpp:140-330`, ~190 loc:
+`flank_score`, `cover_score`, `target_priority`, `battle_calc`,
+`battle_eval`, `battle_priority`, `choose_defender`) and `airdrop_move`
+(`move.cpp:2864-2930`, ~66 loc, called unconditionally at the top of
+`combat_move`'s ground/sea branch). Total ~1000 loc. Class 3
+(command/effect), same contract as every prior mover.
+
+**`choose_defender`/`battle_priority` are already done.** Stage 5
+(4.14) added both as opaque host wrappers (`funcs.choose_defender`,
+`funcs.battle_priority`) ahead of need, anticipating this stage.
+`battle_priority`'s "actual movement cost for positioning" block calls
+`Path_find` directly (`move.cpp:260`) — a `path.cpp` primitive Phase
+4.3 keeps in C++ — so keeping both opaque is the correct call, not a
+shortcut: porting `battle_priority` to real Lua policy would require
+exposing pathfinding internals this project deliberately doesn't touch.
+No new work needed on these two; `combat_move` just calls them, same as
+`trans_move` already does.
+
+**Much of the remaining engine surface already exists**, discovered by
+grepping the current FFI/host-API surface against every helper
+`combat_move` calls, rather than assuming from the plan's original
+per-function list:
+
+- General `Vehs[]`/`Bases[]` scans no longer need per-scan host
+  wrappers — `veh.count()`/`veh.get(i)` and `base.count()`/`base.get(i)`
+  (added for `select_build`/`unit_score`, `lua/api/veh.lua`/`base.lua`)
+  already give Lua full index-ordered access. This means several
+  helpers the original plan draft would have kept opaque as "Vehs[]
+  scan, engine mechanic" are actually portable as real Lua functions,
+  same precedent as `defender_count` (4.12): `veh_base_check`,
+  `needlejet_check`, `ally_near_tile`, `stack_search`,
+  `defender_goal` (`path.cpp:452`, a pure formula over already-exposed
+  `BASE`/`AIPlans` fields, same tier as `defender_count`).
+- Already-exposed tile/VEH/BASE facts cover most of `target_priority`/
+  `flank_score`/`cover_score`/`teleport_score`'s inputs: `region_at`,
+  `tile_is_base`/`tile_is_rocky`/`tile_is_fungus`/`tile_is_base_radius`,
+  `tile_items` (raw bitmask — `BIT_SENSOR`/`BIT_BUNKER`/`BIT_RIVER`/
+  `BIT_ROAD`/`BIT_FOREST` enums already generated), `tile_veh_who`,
+  `tile_is_visible`, `RULES_INTENSE_RIVALRY`, `has_fac_built`,
+  `action_airdrop`, `path_cost`, `can_airdrop`, `can_use_teleport`,
+  `has_transport`, `invasion_unit`, `reg_enemy_at`, `allow_move`,
+  `allow_scout`, `non_ally_in_tile`, `veh_need_heals`/`veh_need_refuel`,
+  most `AIPlans` per-field accessors (`naval_start_x/y`, `naval_end_x/y`,
+  `land_combat_units`, `transport_units`, `unknown_factions`,
+  `contacted_factions`, `enemy_bases`, `mil_strength`, `main_region`,
+  `target_land_region`, …), `VEH.order`/`home_base_id`/`iter_count`/
+  `state`/`moves_spent` fields, `tile_neighbor` (the already-exposed
+  `next_tile` equivalent, built for `base_tile_score`'s 21-neighbor
+  scan — covers the artillery-range scoring loop's `next_tile` calls
+  with no new wrapper).
+
+**New engine surface actually needed — narrower than the first pass
+above once each of the 13 sub-stage A helpers was actually read in
+full** (same "undercounted/overcounted until the code is actually
+written" lesson 4.14 sub-stage 1 recorded, this time in the other
+direction — most of the speculative list above turned out to belong to
+`combat_move`'s own body, sub-stages C-F, not to any of the 13 shared
+helpers actually landed in sub-stage A):
+
+- New `PMTable` (`mapdata`) field accessors, extending the
+  `map_target`/`map_unit_near`/`map_roads`/`map_former`/`map_safety`
+  family (the last three turned out to already exist from earlier
+  stages — only these three were actually new): `map_enemy`,
+  `map_enemy_near`, `map_enemy_dist`. `enemy_rank`, the
+  `PM_PsiGateBase` flag check and the `target`-increment mutator are
+  all real but only used inside `combat_move`'s own body, not by any
+  of the 13 helpers — deferred to whichever later sub-stage needs them.
+- `Faction.base_id_attack_target`/`Faction.corner_market_turn` (new
+  fields — `corner_market_active()` ported directly in Lua as
+  `corner_market_turn > game.turn()` rather than re-exposed as a host
+  wrapper, per `gen_ffi.cpp`'s own "re-derive the inline method"
+  precedent), `is_objective(base_id)` (new opaque wrapper),
+  `veh_high_damage(veh_id)` (new opaque wrapper, extends the
+  `veh_need_heals`/`veh_need_refuel` family), `enemy_factions(faction_id)`
+  (new `AIPlans` accessor, extends `contacted_factions`/
+  `land_combat_units`). `main_sea_region`/`prioritize_naval`/
+  `naval_scout_x/y`/`naval_airbase_x/y` are real but, like
+  `enemy_rank` above, only used directly inside `combat_move`'s body —
+  deferred.
+- One new `VEH` field: `damage_taken` (`allow_conv_missile`'s own
+  check; also needed later by the artillery scoring loop directly, not
+  just inside the already-opaque `battle_priority`).
+- New enums: `WMODE_MISSILE`, `PFLAG_STRAT_ATK_ENEMY_HQ`,
+  `PFLAG_STRAT_ATK_OBJECTIVES` (all three compiler-read — the headers
+  that declare them were already `#include`d by `gen_ffi.cpp`), and
+  `ST_NeutralOnly`/`ST_NonPactOnly`/`ST_EnemyOnly`/`ST_EnemyOneUnit`
+  (`stack_search`'s own `StackType` parameter, `move.h:6` — hand-
+  transcribed like `VEH_SYNC`/`PM_SAFE`/`NODE_*`, since `move.h` pulls
+  in `windows.h` transitively and can't be `#include`d by the
+  natively-compiled `gen_ffi` host tool). `BIT_BASE_RADIUS` turned out
+  unnecessary — `allow_conv_missile`'s `items & BIT_BASE_RADIUS` check
+  is exactly what the already-exposed `tile_is_base_radius` wrapper
+  computes, reused instead of adding a redundant raw-bitmask path.
+- Two new `tech.lua` re-exposures of `UNIT` inline methods VEH's own
+  `weapon_mode()`/`is_police_unit()` purely delegate to
+  (`engine_veh.h:568-569/601-603`, same tier as `proto_is_garrison_unit`):
+  `proto_weapon_mode`, `proto_is_police_unit`; the latter re-exposed on
+  `veh.lua` too (`is_police_unit`, pure delegation like
+  `is_garrison_unit`).
+- **Confirmed portable directly to Lua, no host wrapper at all**
+  (extending `defender_count`'s "no new host wrapper needed" precedent
+  now that `veh.count()/get()` and `base.count()/get()` exist):
+  `cover_score`, `target_priority`, `flank_score`, `teleport_score`,
+  `defender_goal` (`path.cpp:452`), `veh_base_check`, `needlejet_check`,
+  `ally_near_tile`, `stack_search`, `allow_probe`, `allow_attack`,
+  `allow_combat`, `allow_conv_missile` — all 13 landed this way, zero
+  of them needed an opaque wrapper for their own logic (only for the
+  handful of new atomic facts listed above).
+- **`mod_stack_check`/`mod_battle_fight`/`net_action_destroy`/
+  `mod_zoc_move`/`has_orbital_drops`/`probe()` were NOT added in
+  sub-stage A** — the first draft of this section bundled them in
+  speculatively, but none of the 13 helpers actually call them; they're
+  called directly inside `combat_move`'s own body (`mod_stack_check` in
+  the `look_first` local, sub-stage C; `mod_battle_fight`/
+  `net_action_destroy` in sub-stages D/E; `mod_zoc_move`/
+  `has_orbital_drops` inside `allow_airdrop`, sub-stage B). Deferred to
+  whichever sub-stage actually needs them, per the project's own
+  "build the API on demand" discipline (`IMPLEMENTATION_PLAN.md` 3.2) —
+  `probe()` (`probe.cpp:327`, ~1900-line file, the whole AI-probe
+  subsystem, porting-order item 5) stays a host wrapper whenever it
+  does land, same precedent as `evaluate_attack` calling into an
+  unported neighbor domain.
+
+**`api_version` bumped 36→37** (`src/luaai.h`/`.cpp`, 6 new
+`LuaHostApi` entries: `map_enemy`, `map_enemy_near`, `map_enemy_dist`,
+`is_objective`, `veh_high_damage`, `enemy_factions`).
+
+**Files touched:** `tools/gen_ffi.cpp` (2 `VEH`/`Faction` field groups,
+7 enum lines — 4 hand-transcribed `StackType` values, 3 compiler-read),
+`src/luaai.h` + `src/luaai.cpp` (6 new `LuaHostApi` entries + impls,
+`api_version` bump), `lua/ffi/funcs.lua` (mirrored cdef + wrappers),
+`lua/api/tech.lua` (`proto_weapon_mode`, `proto_is_police_unit`),
+`lua/api/veh.lua` (`is_police_unit`), `lua/ai/move.lua` (new
+`local build = dofile("lua/ai/build.lua")` require for
+`veh_base_check`'s `base_can_riot` dependency — no circular require,
+`build.lua` never requires `move.lua`; 13 `port.source` provenance
+entries; the 13 functions themselves, none exported via `port.X` since
+none is independently hookable yet, same as `defender_count`/
+`route_score`/`base_tile_score`).
+
+**Verified:** both CMake presets build clean (`gen_ffi`'s generated
+`lua/ffi/types.lua` confirmed carrying the new fields/enums at real
+compiler-verified offsets, e.g. `Faction.base_id_attack_target` at
+offset 1128, `VEH.damage_taken` at offset 16); native `luajit -bl`
+bytecode-compiles every file under `lua/` with no syntax errors;
+manual arg-count cross-check of every new `funcs.*` call site in the
+sub-stage A block against its `funcs.lua` cdef arity (34 distinct
+functions, all matched) and an enum-coverage check (23 distinct `E.*`
+names used, all present in the generated `types.lua`) stood in for the
+"3 scripted sweeps" this file's Phase 5 intro references, since no
+committed sweep script exists in `tools/` — every prior stage's sweeps
+were apparently session-local, not persisted. **Not live-verified** —
+none of the 13 helpers has an existing caller yet (same situation
+`trans_move`'s own sub-stage 1 was in); live verification rides along
+with whichever later sub-stage first calls each one.
+
+**Bug found and fixed (2026-07-22, user-directed, out of scope for this
+sub-stage's own work but touched two already-closed stages' code):**
+two `funcs.has_pact(...)` call sites used the raw return value directly
+in a boolean position instead of normalizing it, both predating
+sub-stage A. `has_pact`'s `funcs.lua` wrapper returns the raw `int32_t`
+(0 or 1), not a real Lua boolean (unlike `both_neutral`, whose wrapper
+does normalize) — and Lua's `0` is truthy, unlike C's, so both sites
+always behaved as if a pact existed, regardless of the actual pact
+status. Confirmed by grepping every other `has_pact` call site in
+`lua/ai/`, all of which correctly compare `~= 0`/`== 0` (`build.lua:548`
+is the clearest contrast).
+
+- `lua/ai/move.lua:1677` (`colony_move`'s own `skip_owner` local,
+  movement stage 3, closed): `not funcs.has_pact(faction_id, owner)` →
+  `funcs.has_pact(faction_id, owner) == 0`.
+- `lua/ai/move.lua:1784` (`make_landing`'s own neighbor-tile filter,
+  movement stage 5 sub-stage 1, closed, `IMPLEMENTATION_DETAILS.md`
+  4.14): `not (funcs.has_pact(faction_id, owner) and not
+  funcs.reg_enemy_at(...))` → `not (funcs.has_pact(faction_id, owner)
+  ~= 0 and not funcs.reg_enemy_at(...))`, structurally verified against
+  `move.cpp:2413-2446`'s own `!allow_move(...) || (has_pact(...) &&
+  !reg_enemy_at(...))` `continue` guard — only the missing
+  normalization was wrong, not the surrounding boolean structure.
+
+Neither site crashes or errors, so shadow-mode's per-call comparison
+would only have caught this if the specific branch ran with an actual
+allied-pact tile in range, which a given autoplay run may simply not
+have exercised (the same "absence of a mismatch is not evidence of
+correctness" caveat this file's Phase 5 intro already warns about, now
+with a concrete instance). Native `luajit -bl` syntax-checked clean
+after the fix.
+
+**Live-verified clean (2026-07-22), 82-turn `--lua-shadow` autoplay run
+(`lua_ai=1 lua_shadow=1 lua_strict=0 autoplay=1`):** `lua.log`/
+`debug.txt` both 4817 lines, byte-identical content (the latter mirrors
+the former, as designed), zero error/mismatch/exception/crash lines in
+either. `colony_move` fired 144 times (its own `colony_base`/
+`colony_naval`/`colony_trans` branch-outcome lines: 618/133/0),
+`make_landing` fired 5 times — both functions containing the fixed
+`has_pact` sites were genuinely exercised, not just present in an
+unreached code path. All 10 other registered hooks continued firing
+with their usual 0 mismatches. Base count grew 67→68 and vehicle count
+to 519 over the run with no stall, and `debug.txt` shows 1214
+pact/treaty-related lines from the engine's own diplomacy logging,
+making it likely (though not directly provable from a debug line the
+way `push_item.*<Facility Name>` proves a `select_build` branch fired)
+that the specific pact-neutral-tile filters both fixes touch were
+actually hit across 82 turns of multi-faction play, not merely present
+in dead code. **Both fixes considered re-confirmed live**; `colony_move`
+(4.12) and `make_landing` (4.14) need no further action on this bug.
+
+**Staged plan** (mirrors the project's established pattern of a
+dependency/engine-surface sub-stage before the dispatcher, plus
+chunking one oversized function into reviewable pieces the way
+`select_build`'s facility catalog was ported in tranches):
+
+1. **Sub-stage A — engine surface + shared scoring helpers. ✅ done,
+   build-verified (2026-07-22, detail above).**
+2. **Sub-stage B — `airdrop_move`.** Self-contained own-`Bases[]`-scan
+   mover, real AI judgment (site scoring), same tier as `route_score`/
+   `want_convoy` — port as a real Lua function, not opaque. No
+   independent hook (it's an internal call `combat_move` makes, not a
+   `mod_enemy_move` dispatch target itself); its live verification rides
+   along with sub-stage C's.
+3. **Sub-stage C — `combat_move` part 1** (`move.cpp:2931-3164`): local
+   setup/constants, the aircraft `max_dist` logic, the ground/sea
+   early-return block (`airdrop_move`, `make_landing`, patrol/waypoint
+   continuation), and the aircraft attack-search `while` loop.
+4. **Sub-stage D — `combat_move` part 2** (`move.cpp:3165-3266`): the
+   non-aircraft attack-search loop and the probe-specific search loop
+   (the one call site to the opaque `probe()` wrapper).
+5. **Sub-stage E — `combat_move` part 3** (`move.cpp:3267-3421`): acting
+   on a found target (`tx`/`px`), aircraft cover/approach positioning,
+   aircraft rebase-to-base scoring, artillery bombardment.
+6. **Sub-stage F — `combat_move` part 4, final assembly**
+   (`move.cpp:3422-3654`): in-base defend/teleport dispatch, patrol,
+   naval invasion stackup/escort, the big final `TileSearch`
+   base-attack/defend loop (`target_priority`-driven), flank/skip
+   logic, `VSTATE_REQUIRES_SUPPORT` cleanup, fallback-to-base. Wire the
+   Class 3 hook in `veh_turn.cpp` + register in `lua/ai/init.lua` here
+   (same shape as every prior mover) — this is the sub-stage that makes
+   the whole function live-testable for the first time, so live
+   verification (per Phase 5's handoff protocol) closes this sub-stage
+   and the whole movement stage 6.
+
+Sub-stages C-F all write into the same Lua function; the split is for
+reviewable session/commit size (`combat_move` has ~15 return points
+across distinct phases already visually separated by blank lines/
+comments in the original, used as the natural cut points above), not
+an architectural boundary — unlike A/B, which are real prerequisite
+modules. Sequencing C→D→E→F preserves the original's top-to-bottom
+control flow (later parts assume earlier `tx`/`px`/`defend`/`defenders`
+locals are already computed), so they should land in that order.
+
+**Resume point:** sub-stage A closed. Next: sub-stage B (`airdrop_move`,
+`move.cpp:2864-2930`).
 
 ---
 

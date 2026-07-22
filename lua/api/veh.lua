@@ -71,6 +71,13 @@ local function is_garrison_unit(veh)
     return tech.proto_is_garrison_unit(veh.unit_id)
 end
 
+-- combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+-- veh_base_check's own is_police_unit() check (engine_veh.h:601-603),
+-- pure delegation like is_garrison_unit above.
+local function is_police_unit(veh)
+    return tech.proto_is_police_unit(veh.unit_id)
+end
+
 -- engine_veh.h:690-692.
 local function eval_garrison(veh)
     return (triad(veh) == types.enums.TRIAD_LAND and 2 or 1)
@@ -116,6 +123,7 @@ return {
     triad = triad,
     is_combat_unit = is_combat_unit,
     is_garrison_unit = is_garrison_unit,
+    is_police_unit = is_police_unit,
     eval_garrison = eval_garrison,
     at_target = at_target,
     in_transit = in_transit,

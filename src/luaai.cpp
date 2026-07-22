@@ -1488,11 +1488,43 @@ static void host_trans_search_next(int32_t* valid, int32_t* tx, int32_t* ty, int
     *dist = g_trans_ts.dist;
 }
 
+// combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+// cover_score/allow_conv_missile's own mapdata reads, extending the
+// map_target/map_roads/map_unit_near family above.
+static int32_t host_map_enemy(int32_t x, int32_t y) {
+    return mapdata[{x, y}].enemy;
+}
+
+static int32_t host_map_enemy_near(int32_t x, int32_t y) {
+    return mapdata[{x, y}].enemy_near;
+}
+
+static int32_t host_map_enemy_dist(int32_t x, int32_t y) {
+    return mapdata[{x, y}].enemy_dist;
+}
+
+// target_priority's own engine call (base.h:62).
+static int32_t host_is_objective(int32_t base_id) {
+    return is_objective(base_id);
+}
+
+// allow_conv_missile's own VEH-instance-level derived boolean, same tier
+// as host_veh_need_heals above.
+static int32_t host_veh_high_damage(int32_t veh_id) {
+    return Vehs[veh_id].high_damage();
+}
+
+// veh_base_check/allow_conv_missile's own AIPlans field, same pattern as
+// host_contacted_factions/host_land_combat_units.
+static int32_t host_enemy_factions(int32_t faction_id) {
+    return plans[faction_id].enemy_factions;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 36,
+    /* api_version          */ 37,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1706,6 +1738,12 @@ static LuaHostApi g_host_api = {
     /* allow_scout                 */ host_allow_scout,
     /* trans_search_start          */ host_trans_search_start,
     /* trans_search_next           */ host_trans_search_next,
+    /* map_enemy                   */ host_map_enemy,
+    /* map_enemy_near              */ host_map_enemy_near,
+    /* map_enemy_dist              */ host_map_enemy_dist,
+    /* is_objective                */ host_is_objective,
+    /* veh_high_damage             */ host_veh_high_damage,
+    /* enemy_factions              */ host_enemy_factions,
 };
 
 static lua_State* L = NULL;

@@ -242,10 +242,16 @@ typedef struct {
     int32_t (*allow_scout)(int32_t faction_id, int32_t x, int32_t y);
     void (*trans_search_start)(int32_t veh_id);
     void (*trans_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
+    int32_t (*map_enemy)(int32_t x, int32_t y);
+    int32_t (*map_enemy_near)(int32_t x, int32_t y);
+    int32_t (*map_enemy_dist)(int32_t x, int32_t y);
+    int32_t (*is_objective)(int32_t base_id);
+    int32_t (*veh_high_damage)(int32_t veh_id);
+    int32_t (*enemy_factions)(int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 36
+local HOST_API_VERSION = 37
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -516,4 +522,10 @@ return {
     allow_scout = function(faction_id, x, y) return api.allow_scout(faction_id, x, y) ~= 0 end,
     trans_search_start = function(veh_id) return api.trans_search_start(veh_id) end,
     trans_search_next = function(valid, tx, ty, dist) return api.trans_search_next(valid, tx, ty, dist) end,
+    map_enemy = function(x, y) return api.map_enemy(x, y) end,
+    map_enemy_near = function(x, y) return api.map_enemy_near(x, y) end,
+    map_enemy_dist = function(x, y) return api.map_enemy_dist(x, y) end,
+    is_objective = function(base_id) return api.is_objective(base_id) ~= 0 end,
+    veh_high_damage = function(veh_id) return api.veh_high_damage(veh_id) ~= 0 end,
+    enemy_factions = function(faction_id) return api.enemy_factions(faction_id) end,
 }

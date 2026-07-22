@@ -599,6 +599,23 @@ struct LuaHostApi {
     // allow_move) is already an atomic fact exposed to Lua.
     void (*trans_search_start)(int32_t veh_id);
     void (*trans_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist);
+    // combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+    // engine surface for cover_score/target_priority/flank_score/
+    // teleport_score/allow_conv_missile. map_enemy/map_enemy_near/
+    // map_enemy_dist extend the map_target/map_roads/map_unit_near/
+    // map_safety/map_former PMTable-field-accessor family (same "opaque
+    // std::unordered_map, one field at a time" tier). is_objective wraps
+    // an engine __cdecl call (base.h:62), same tier as has_fac_built.
+    // veh_high_damage extends the veh_need_heals/veh_need_refuel family
+    // (a VEH-instance-level derived boolean, not AI policy). enemy_factions
+    // extends the contacted_factions/land_combat_units AIPlans single-field
+    // accessor family.
+    int32_t (*map_enemy)(int32_t x, int32_t y);
+    int32_t (*map_enemy_near)(int32_t x, int32_t y);
+    int32_t (*map_enemy_dist)(int32_t x, int32_t y);
+    int32_t (*is_objective)(int32_t base_id);
+    int32_t (*veh_high_damage)(int32_t veh_id);
+    int32_t (*enemy_factions)(int32_t faction_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

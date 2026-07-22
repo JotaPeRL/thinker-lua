@@ -152,6 +152,21 @@ local function proto_is_garrison_unit(unit_id)
         and proto_triad(unit_id) == types.enums.TRIAD_LAND
 end
 
+-- combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+-- stack_search's own weapon_mode() check and veh_base_check's own
+-- is_police_unit() check (engine_veh.h:459-461/416-418) -- both are
+-- UNIT-level (prototype) methods VEH's own weapon_mode()/is_police_unit()
+-- purely delegate to (engine_veh.h:568-569/601-603), same tier as
+-- proto_is_garrison_unit above.
+local function proto_weapon_mode(unit_id)
+    return weapon(proto(unit_id).weapon_id).mode
+end
+
+local function proto_is_police_unit(unit_id)
+    return proto(unit_id).plan <= types.enums.PLAN_RECON
+        and proto_triad(unit_id) ~= types.enums.TRIAD_SEA
+end
+
 -- proto_offense/proto_defense (src/veh.cpp:3166-3182) are *not* the same
 -- computation as proto_offense_value/proto_defense_value above (those are
 -- UNIT::offense_value()/defense_value(), the raw weapon/armor field with
@@ -210,6 +225,8 @@ return {
     proto_is_combat_unit = proto_is_combat_unit,
     proto_is_armored = proto_is_armored,
     proto_is_garrison_unit = proto_is_garrison_unit,
+    proto_weapon_mode = proto_weapon_mode,
+    proto_is_police_unit = proto_is_police_unit,
     proto_offense = proto_offense,
     proto_defense = proto_defense,
     owners = owners,

@@ -77,6 +77,34 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         trans_move = { file = "src/move.cpp", func = "trans_move",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+        -- shared scoring/fact helpers, no dispatcher yet.
+        cover_score = { file = "src/move.cpp", func = "cover_score",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        target_priority = { file = "src/move.cpp", func = "target_priority",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        flank_score = { file = "src/move.cpp", func = "flank_score",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        teleport_score = { file = "src/move.cpp", func = "teleport_score",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        defender_goal = { file = "src/path.cpp", func = "defender_goal",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        veh_base_check = { file = "src/move.cpp", func = "veh_base_check",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        needlejet_check = { file = "src/move.cpp", func = "needlejet_check",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        ally_near_tile = { file = "src/move.cpp", func = "ally_near_tile",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        stack_search = { file = "src/move.cpp", func = "stack_search",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        allow_probe = { file = "src/move.cpp", func = "allow_probe",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        allow_attack = { file = "src/move.cpp", func = "allow_attack",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        allow_combat = { file = "src/move.cpp", func = "allow_combat",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        allow_conv_missile = { file = "src/move.cpp", func = "allow_conv_missile",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -91,6 +119,10 @@ local game = dofile("lua/api/game.lua")
 local rand = dofile("lua/api/rand.lua")
 local faction = dofile("lua/api/faction.lua")
 local tech = dofile("lua/api/tech.lua")
+-- combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+-- veh_base_check's own base_can_riot dependency. No circular require --
+-- build.lua never requires move.lua.
+local build = dofile("lua/ai/build.lua")
 
 local E = types.enums
 local idiv = cmath.idiv
@@ -1642,7 +1674,7 @@ local function colony_move(veh_id)
 
     local owner = funcs.tile_owner(v.x, v.y)
     local at_base = funcs.tile_is_base(v.x, v.y) and owner == faction_id
-    local skip_owner = owner >= 0 and owner ~= faction_id and not funcs.has_pact(faction_id, owner)
+    local skip_owner = owner >= 0 and owner ~= faction_id and funcs.has_pact(faction_id, owner) == 0
 
     local start_out = ffi.new("int32_t[3]")
     funcs.colony_search_start(veh_id, skip_owner and 1 or 0, start_out, start_out + 1, start_out + 2)
@@ -1749,7 +1781,7 @@ local function make_landing(veh_id)
             local region = funcs.tile_region(mx, my)
             local owner = funcs.tile_owner(mx, my)
             if funcs.allow_move(mx, my, faction_id, E.TRIAD_LAND)
-                and not (funcs.has_pact(faction_id, owner)
+                and not (funcs.has_pact(faction_id, owner) ~= 0
                     and not funcs.reg_enemy_at(region, veh.is_probe(v))) then
                 local continent = map.continent(region)
                 if not (veh.is_combat_unit(v) and not funcs.has_map_node(mx, my, E.NODE_SCOUT_SITE)
@@ -2069,6 +2101,338 @@ local function trans_move(id)
         end
     end
     return funcs.mod_veh_skip(id)
+end
+
+-- combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15): shared
+-- scoring/fact helpers combat_move (and its own attack-search loops) call
+-- directly. Not independently live-verifiable yet -- nothing calls these
+-- until combat_move itself is wired (sub-stage F) -- same situation
+-- trans_move's own sub-stage 1 was in. choose_defender/battle_priority
+-- (move.cpp:301/211) stay opaque host wrappers, already added in movement
+-- stage 5 (IMPLEMENTATION_DETAILS.md 4.14) anticipating this stage:
+-- battle_priority's own movement-cost block calls Path_find directly, a
+-- path.cpp primitive Phase 4.3 keeps in C++, so porting it to real Lua
+-- policy would cross that boundary.
+
+-- move.cpp:147-150.
+local function cover_score(x, y)
+    return funcs.map_unit_near(x, y) * funcs.map_enemy_near(x, y)
+end
+
+-- move.cpp:152-192. `sq` collapses into x,y (tile facts) since MAP* can't
+-- cross the FFI boundary -- same substitution as every other *_score
+-- helper in this file.
+local function target_priority(x, y, faction_id)
+    local owner = funcs.tile_owner(x, y)
+    local f = faction.get(faction_id)
+    local score = 0
+    if owner >= 0 then
+        local owner_region = funcs.main_region(owner)
+        if funcs.tile_region(x, y) == owner_region then
+            score = score + 150
+        end
+        if funcs.main_region(faction_id) == owner_region then
+            score = score + 200
+        end
+        if funcs.is_human(owner) then
+            score = score + (bit.band(game.rules(), E.RULES_INTENSE_RIVALRY) ~= 0 and 400 or 200)
+        end
+        if f.base_id_attack_target >= 0 then
+            local abase = base_api.get(f.base_id_attack_target)
+            score = score + 80 * clamp(6 - funcs.map_range(abase.x, abase.y, x, y), 0, 5)
+        end
+        if funcs.tile_is_base(x, y) then
+            local base_id = map.base_at(x, y)
+            if base_id >= 0 then
+                local b = base_api.get(base_id)
+                score = score + clamp(4 * b.pop_size, 4, 64)
+                if funcs.has_fac_built(E.FAC_HEADQUARTERS, base_id) ~= 0 then
+                    score = score
+                        + (bit.band(f.player_flags, E.PFLAG_STRAT_ATK_ENEMY_HQ) ~= 0 and 400 or 200)
+                    local bf = faction.get(b.faction_id)
+                    score = score + (bf.corner_market_turn > game.turn() and 400 or 0)
+                end
+                if funcs.is_objective(base_id) then
+                    score = score
+                        + (bit.band(f.player_flags, E.PFLAG_STRAT_ATK_OBJECTIVES) ~= 0 and 400 or 200)
+                end
+            end
+            score = score + (funcs.map_roads(x, y) > 0 and 150 or 0)
+            return score
+        end
+    end
+    local items = funcs.tile_items(x, y)
+    score = score + (bit.band(items, E.BIT_ROAD) ~= 0 and 80 or 0)
+        + (bit.band(items, E.BIT_SENSOR) ~= 0 and 80 or 0)
+        + ((funcs.tile_is_rocky(x, y) or bit.band(items, bit.bor(E.BIT_BUNKER, E.BIT_FOREST)) ~= 0)
+            and 40 or 0)
+    return score
+end
+
+-- move.cpp:140-145.
+local function flank_score(x, y, native)
+    local items = funcs.tile_items(x, y)
+    local score = rand.map(0, 16) - 4 * funcs.map_enemy_dist(x, y)
+        + (bit.band(items, bit.bor(E.BIT_SENSOR, E.BIT_BUNKER)) ~= 0 and 4 or 0)
+        + (bit.band(items, bit.bor(E.BIT_RIVER, E.BIT_ROAD)) ~= 0 and 4 or 0)
+    if native and funcs.tile_is_fungus(x, y) then
+        score = score + 6
+    elseif bit.band(items, E.BIT_FOREST) ~= 0 or funcs.tile_is_rocky(x, y) then
+        score = score + 4
+    end
+    return score
+end
+
+-- move.cpp:131-138.
+local function teleport_score(base_id)
+    local b = base_api.get(base_id)
+    local enemy_dist = funcs.map_enemy_dist(b.x, b.y)
+    return 64 * b.defend_goal - 4 * b.defend_range + 32 * funcs.map_enemy_near(b.x, b.y)
+        - 16 * (enemy_dist > 0 and enemy_dist or 16)
+        + (funcs.target_land_region(b.faction_id) == funcs.region_at(b.x, b.y) and 200 or 0)
+end
+
+-- path.cpp:452-472 (not move.cpp -- combat_move's own dependency, same
+-- as defender_count above, which is also a path.cpp function).
+local function defender_goal(x, y, faction_id, triad)
+    if triad == E.TRIAD_LAND and funcs.transport_units(faction_id) > 0
+        and funcs.naval_start_x(faction_id) == x and funcs.naval_start_y(faction_id) == y then
+        return clamp(idiv(funcs.land_combat_units(faction_id), 32)
+            + idiv(funcs.transport_units(faction_id), 2), 4, 12)
+    end
+    for i = 0, base_api.count() - 1 do
+        local b = base_api.get(i)
+        if b.x == x and b.y == y then
+            local goal = b.defend_goal
+                - (b.defend_range >= 4 * b.pop_size and 1 or 0)
+                - (b.defend_range >= 10 and 1 or 0)
+                - (b.defend_range >= 20 and 1 or 0)
+                - clamp(funcs.unknown_factions(faction_id) - funcs.contacted_factions(faction_id), 0, 2)
+                - (triad == E.TRIAD_LAND and 0 or 2)
+            return clamp(goal, 1, 5)
+        end
+    end
+    return 0
+end
+
+-- move.cpp:82-117. veh_id (not the veh cdata) is needed to test identity
+-- against the scanned stack (`veh != v` in the original) -- cdata field
+-- comparisons can't stand in for pointer identity.
+local function veh_base_check(veh_id)
+    local v = veh.get(veh_id)
+    local def_unit = veh.is_garrison_unit(v) and funcs.contacted_factions(v.faction_id) ~= 0
+    local pol_unit = veh.is_police_unit(v) and funcs.has_abil(v.unit_id, E.ABL_POLICE_2X) ~= 0
+    local prb_unit = veh.is_probe(v) and funcs.enemy_factions(v.faction_id) ~= 0
+    if not def_unit and not pol_unit and not prb_unit then
+        return false
+    end
+    local base_id = map.base_at(v.x, v.y)
+    if base_id < 0 then
+        return false
+    end
+    local b = base_api.get(base_id)
+    local defend, police, probes = 0, 0, 0
+    for i = veh.count() - 1, 0, -1 do
+        local v2 = veh.get(i)
+        if v.x == v2.x and v.y == v2.y and v2.order ~= E.ORDER_SENTRY_BOARD
+            and veh.at_target(v2) and i ~= veh_id then
+            defend = defend + (veh.is_garrison_unit(v2) and 1 or 0)
+            police = police
+                + ((veh.is_police_unit(v2) and funcs.has_abil(v2.unit_id, E.ABL_POLICE_2X) ~= 0) and 1 or 0)
+            probes = probes + (veh.is_probe(v2) and 1 or 0)
+        end
+    end
+    if police == 0 and pol_unit and build.base_can_riot(base_id, true)
+        and faction.get(v.faction_id).SE_police_pending >= -1 then
+        return true
+    end
+    if defend == 0 and def_unit then
+        return true
+    end
+    if probes == 0 and prb_unit and b.defend_goal > 2 then
+        return b.defend_range > 0 and b.defend_range < rand.map(0, 64)
+    end
+    return false
+end
+
+-- move.cpp:119-129. Same veh_id-for-identity reasoning as veh_base_check.
+local function needlejet_check(veh_id, x, y)
+    local v = veh.get(veh_id)
+    for i = veh.count() - 1, 0, -1 do
+        local v2 = veh.get(i)
+        if v2.x == x and v2.y == y and veh.triad(v2) == E.TRIAD_AIR
+            and tech.proto(v2.unit_id).chassis_id == E.CHS_NEEDLEJET
+            and v.faction_id == v2.faction_id and i ~= veh_id then
+            return true
+        end
+    end
+    return false
+end
+
+-- move.cpp:325-341.
+local function ally_near_tile(x, y, faction_id, skip_veh_id, max_range)
+    for i = veh.count() - 1, 0, -1 do
+        local v = veh.get(i)
+        if (v.faction_id == faction_id or funcs.has_pact(faction_id, v.faction_id) ~= 0)
+            and funcs.map_range(x, y, v.x, v.y) <= max_range and i ~= skip_veh_id then
+            return true
+        end
+    end
+    for i = base_api.count() - 1, 0, -1 do
+        local b = base_api.get(i)
+        if (b.faction_id == faction_id or funcs.has_pact(faction_id, b.faction_id) ~= 0)
+            and funcs.map_range(x, y, b.x, b.y) <= max_range then
+            return true
+        end
+    end
+    return false
+end
+
+-- move.cpp:422-448.
+local function stack_search(x, y, faction_id, stack_type, mode)
+    local found = false
+    for i = veh.count() - 1, 0, -1 do
+        local v = veh.get(i)
+        if v.x == x and v.y == y then
+            if stack_type == E.ST_EnemyOneUnit and (found or funcs.at_war(faction_id, v.faction_id) == 0) then
+                return false
+            end
+            found = true
+            if stack_type == E.ST_NeutralOnly and (faction_id == v.faction_id
+                or not funcs.both_neutral(faction_id, v.faction_id)) then
+                return false
+            end
+            if stack_type == E.ST_NonPactOnly and (faction_id == v.faction_id
+                or funcs.has_pact(faction_id, v.faction_id) ~= 0) then
+                return false
+            end
+            if mode == E.WMODE_COMBAT and tech.proto_weapon_mode(v.unit_id) > E.WMODE_MISSILE then
+                return false
+            end
+            if mode ~= E.WMODE_COMBAT and tech.proto_weapon_mode(v.unit_id) ~= mode then
+                return false
+            end
+        end
+    end
+    return found
+end
+
+-- move.cpp:2236-2270.
+local function allow_probe(faction1, faction2, is_enhanced)
+    if faction1 < 0 or faction2 < 0 or faction1 == faction2 then
+        return false
+    end
+    local f1 = faction.get(faction1)
+    local diplo = f1.diplo_status[faction2]
+    if bit.band(diplo, E.DIPLO_COMMLINK) == 0 then
+        return true
+    end
+    if not is_enhanced and funcs.has_project(E.FAC_HUNTER_SEEKER_ALGORITHM, faction2) then
+        return false
+    end
+    if funcs.at_war(faction1, faction2) ~= 0 then
+        return true
+    end
+    if bit.band(diplo, E.DIPLO_PACT) == 0 then
+        local value = 0
+        if bit.band(diplo, E.DIPLO_TREATY) ~= 0 then
+            value = value - (f1.AI_fight < 0 and 2 or 1)
+        end
+        if funcs.mil_strength(faction1) * 2 < funcs.mil_strength(faction2) then
+            value = value - 1
+        end
+        if funcs.mil_strength(faction1) * 3 < 2 * funcs.mil_strength(faction2) then
+            value = value - 1
+        end
+        local f2 = faction.get(faction2)
+        if f1.tech_ranking < f2.tech_ranking then
+            value = value + 2
+        end
+        if f1.AI_fight > 0 then
+            value = value + 1
+        end
+        if f1.AI_power > 0 then
+            value = value + 1
+        end
+        if f2.integrity_blemishes > 0 then
+            value = value + 1
+        end
+        if bit.band(game.rules(), E.RULES_INTENSE_RIVALRY) ~= 0 and funcs.is_human(faction2) then
+            value = value + 2
+        end
+        return value > 2
+    end
+    return false
+end
+
+-- move.cpp:2272-2277.
+local function allow_attack(faction1, faction2, is_probe, is_enhanced)
+    if is_probe then
+        return allow_probe(faction1, faction2, is_enhanced)
+    end
+    return funcs.at_war(faction1, faction2) ~= 0
+end
+
+-- move.cpp:2279-2290.
+local function allow_combat(x, y, faction_id)
+    local owner = funcs.tile_owner(x, y)
+    for i = veh.count() - 1, 0, -1 do
+        local v = veh.get(i)
+        if v.x == x and v.y == y and funcs.both_neutral(faction_id, v.faction_id)
+            and funcs.has_treaty(faction_id, v.faction_id, E.DIPLO_COMMLINK) ~= 0 then
+            if not veh.is_artifact(v) and (not veh.is_probe(v) or owner ~= faction_id) then
+                return false
+            end
+        end
+    end
+    return true
+end
+
+-- move.cpp:2292-2330. `sq` collapses into the enemy's own tile facts --
+-- every call site passes mapsq(ts.rx, ts.ry) where id2 (the enemy) was
+-- just found standing exactly at (ts.rx, ts.ry) by choose_defender, so
+-- sq's fields and enemy->x/y's tile are always the same tile.
+local function allow_conv_missile(veh_id, enemy_veh_id)
+    local v = veh.get(veh_id)
+    local enemy = veh.get(enemy_veh_id)
+    local sq_owner = funcs.tile_owner(enemy.x, enemy.y)
+    local items = funcs.tile_items(enemy.x, enemy.y)
+    if not (veh.is_combat_unit(enemy) or veh.is_probe(enemy)) or funcs.veh_high_damage(enemy_veh_id) then
+        return false
+    end
+    if not (sq_owner == v.faction_id or funcs.at_war(sq_owner, v.faction_id) ~= 0) then
+        return false
+    end
+    local score = cover_score(enemy.x, enemy.y)
+    if enemy.faction_id == 0 then
+        return funcs.enemy_factions(v.faction_id) == 0 and sq_owner == v.faction_id
+            and funcs.map_range(v.x, v.y, enemy.x, enemy.y) <= 8
+            and funcs.map_enemy(enemy.x, enemy.y) >= 2 and score >= 64
+    end
+    local found = score >= 20
+    for i = veh.count() - 1, 0, -1 do
+        local v2 = veh.get(i)
+        if v.faction_id == v2.faction_id and i ~= veh_id
+            and funcs.map_range(v2.x, v2.y, enemy.x, enemy.y) <= 1 then
+            found = true
+        end
+    end
+    if not found then
+        return false
+    end
+    local def_val = clamp(tech.proto_defense_value(enemy.unit_id) - funcs.max_defense_value(v.faction_id), -8, 8)
+    local base_val = 1
+    if sq_owner == v.faction_id and funcs.tile_is_base_radius(enemy.x, enemy.y) then
+        base_val = funcs.map_range(v.x, v.y, enemy.x, enemy.y) <= 2 and 4 or 2
+    end
+    if funcs.tile_is_base(enemy.x, enemy.y) then
+        return veh.is_combat_unit(enemy)
+            and (tech.proto_is_armored(enemy.unit_id) or veh.triad(enemy) == E.TRIAD_AIR)
+            and def_val + min(8, idiv(score, 32)) + min(8, funcs.map_enemy(enemy.x, enemy.y)) >= 4
+    end
+    return enemy.damage_taken == 0 and (tech.proto_is_armored(enemy.unit_id) or base_val > 2)
+        and (bit.band(items, E.BIT_BUNKER) ~= 0 or base_val > 1 or funcs.map_enemy(enemy.x, enemy.y) >= 4)
+        and def_val + min(8, idiv(score, 32)) + base_val * min(8, funcs.map_enemy(enemy.x, enemy.y)) >= 4
 end
 
 port.artifact_move = artifact_move

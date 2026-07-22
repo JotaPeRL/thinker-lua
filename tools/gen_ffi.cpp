@@ -392,6 +392,15 @@ int main() {
         // faction_might/has_pact/redundant_project (SecretProject branch).
         FIELD(Faction, diplo_status),
         FIELD(Faction, pop_total),
+        // combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+        // target_priority's own base_id_attack_target check and
+        // corner_market_active() (a one-line inline method,
+        // engine_types.h:511-513 -- ported directly in Lua as
+        // `corner_market_turn > game.turn()` rather than re-exposed as a
+        // host wrapper, same "re-derive the inline method" precedent as
+        // BASE::plr_owner/gov_config).
+        FIELD(Faction, base_id_attack_target),
+        FIELD(Faction, corner_market_turn),
     }});
 
     // production/plans port, first slice (porting-order item 3,
@@ -497,6 +506,12 @@ int main() {
         // trans_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.14):
         // atk_moves = veh_speed(id, 0) - veh->moves_spent.
         FIELD(VEH, moves_spent),
+        // combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+        // allow_conv_missile's own damage_taken check and the artillery
+        // scoring loop later in the same stage (both read the raw field
+        // directly, not just through the already-opaque
+        // battle_priority/veh_high_damage wrappers).
+        FIELD(VEH, damage_taken),
     }});
 
     // former_move port, sub-stage 4 (IMPLEMENTATION_DETAILS.md 4.13):
@@ -729,6 +744,9 @@ int main() {
     printf("    WMODE_TERRAFORM = %d,\n", WMODE_TERRAFORM);
     printf("    WMODE_SUPPLY = %d,\n", WMODE_SUPPLY);
     printf("    WMODE_TRANSPORT = %d,\n", WMODE_TRANSPORT);
+    // combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+    // stack_search's own `veh->weapon_mode() > WMODE_MISSILE` check.
+    printf("    WMODE_MISSILE = %d,\n", WMODE_MISSILE);
     printf("    PFLAG_EXT_STRAT_LOTS_MISSILES = %d,\n", PFLAG_EXT_STRAT_LOTS_MISSILES);
     printf("    PFLAG_EXT_STRAT_LOTS_ARTILLERY = %d,\n", PFLAG_EXT_STRAT_LOTS_ARTILLERY);
     printf("    ABL_AAA = %d,\n", ABL_AAA);
@@ -775,6 +793,11 @@ int main() {
     printf("    GOV_MAY_PROD_LAND_DEFENSE = %d,\n", GOV_MAY_PROD_LAND_DEFENSE);
     printf("    GOV_MAY_PROD_NAVAL_COMBAT = %d,\n", GOV_MAY_PROD_NAVAL_COMBAT);
     printf("    RFLAG_AQUATIC = %d,\n", RFLAG_AQUATIC);
+    // combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+    // target_priority's own HQ/objective attack-priority flags
+    // (engine_enums.h, already included above -- compiler-read).
+    printf("    PFLAG_STRAT_ATK_ENEMY_HQ = %d,\n", PFLAG_STRAT_ATK_ENEMY_HQ);
+    printf("    PFLAG_STRAT_ATK_OBJECTIVES = %d,\n", PFLAG_STRAT_ATK_OBJECTIVES);
     // Production/plans port, third slice (item 3, IMPLEMENTATION_DETAILS.md 4.9).
     printf("    GOV_PRIORITY_EXPLORE = %d,\n", GOV_PRIORITY_EXPLORE);
     printf("    GOV_PRIORITY_DISCOVER = %d,\n", GOV_PRIORITY_DISCOVER);
@@ -928,6 +951,16 @@ int main() {
     // trans_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.14):
     // the needlejet-defender chassis check.
     printf("    CHS_NEEDLEJET = %d,\n", CHS_NEEDLEJET);
+    // combat_move port, sub-stage A (IMPLEMENTATION_DETAILS.md 4.15):
+    // stack_search's own StackType parameter (move.h:6, `enum StackType
+    // {ST_NeutralOnly, ST_NonPactOnly, ST_EnemyOnly, ST_EnemyOneUnit}`).
+    // Hand-transcribed, same reason as VEH_SYNC/PM_SAFE/NODE_* above --
+    // move.h pulls in main.h -> windows.h transitively. Default enum
+    // numbering; cross-check move.h:6 directly if this ever drifts.
+    printf("    ST_NeutralOnly = %d,\n", 0);
+    printf("    ST_NonPactOnly = %d,\n", 1);
+    printf("    ST_EnemyOnly = %d,\n", 2);
+    printf("    ST_EnemyOneUnit = %d,\n", 3);
     // Movement port, stage 3 (IMPLEMENTATION_DETAILS.md 4.12):
     // escape_score/base_tile_score/colony_move's own item/landmark/
     // altitude/order constants. All come straight from engine_enums.h/

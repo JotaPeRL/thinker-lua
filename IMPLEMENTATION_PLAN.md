@@ -584,7 +584,31 @@ enable Lua by default on the branch → next.
    sweeps, native `luajit` syntax check) and live-verified clean: no
    crash, 0 errors in `lua.log`, 423 real `trans_move` decision lines
    plus branch outcomes (`trans_patrol`/`trans_invade`/`trans_heals`/
-   `trans_scout`/`trans_link`) — see `IMPLEMENTATION_DETAILS.md` 4.14.**
+   `trans_scout`/`trans_link`) — see `IMPLEMENTATION_DETAILS.md` 4.14.
+   **Stage 6 (`combat_move`, ~726 loc — the largest single function in
+   the project) is under way** (2026-07-22): a 6 sub-stage breakdown
+   (engine-surface/shared-helpers, `airdrop_move`, then the 726-loc
+   dispatcher itself split into 4 reviewable parts following its own
+   control-flow phases, hook wiring landing in the last part) — see
+   `IMPLEMENTATION_DETAILS.md` 4.15. **Sub-stage A (engine surface +
+   13 shared scoring/fact helpers: `cover_score`/`target_priority`/
+   `flank_score`/`teleport_score`/`defender_goal`/`veh_base_check`/
+   `needlejet_check`/`ally_near_tile`/`stack_search`/`allow_probe`/
+   `allow_attack`/`allow_combat`/`allow_conv_missile`) is done and
+   build-verified** — narrower than first estimated, since most
+   `Vehs[]`/`Bases[]` scans and tile/AIPlans facts already existed
+   (`veh.count()/get()`/`base.count()/get()` from `select_build`); all
+   13 helpers landed with zero new opaque wrappers of their own, only 6
+   new atomic-fact host-API entries (`api_version` 36→37). Not yet
+   live-verified (no caller reaches these until later sub-stages wire
+   them in). A pre-existing, unrelated `has_pact` truthiness bug (found
+   while researching this sub-stage, in already-closed stage 3/stage 5
+   code) was fixed at the user's direction and is now **live-verified
+   clean** (82-turn `--lua-shadow` autoplay run, both fixed sites —
+   `colony_move`'s `skip_owner`, `make_landing`'s neighbor filter —
+   genuinely exercised, 0 errors/mismatches across `lua.log`/
+   `debug.txt`); detail in `IMPLEMENTATION_DETAILS.md` 4.15. Next:
+   sub-stage B (`airdrop_move`).**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across
