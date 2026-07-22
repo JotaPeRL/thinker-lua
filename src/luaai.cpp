@@ -1520,11 +1520,37 @@ static int32_t host_enemy_factions(int32_t faction_id) {
     return plans[faction_id].enemy_factions;
 }
 
+// combat_move port, sub-stage B (IMPLEMENTATION_DETAILS.md 4.15):
+// airdrop_move/allow_airdrop's own remaining dependencies.
+static int32_t host_mod_stack_check(int32_t veh_id, int32_t type, int32_t cond1, int32_t cond2,
+int32_t cond3) {
+    return mod_stack_check(veh_id, type, cond1, cond2, cond3);
+}
+
+static int32_t host_mod_zoc_move(int32_t x, int32_t y, int32_t faction_id) {
+    return mod_zoc_move(x, y, faction_id);
+}
+
+static int32_t host_has_orbital_drops(int32_t faction_id) {
+    return has_orbital_drops(faction_id);
+}
+
+static int32_t host_veh_at(int32_t x, int32_t y) {
+    return veh_at(x, y);
+}
+
+// airdrop_move's own `mapdata[{tx, ty}].target++` bookkeeping, same
+// shape as host_former_consume's `mapdata[{x, y}].former -= 2`.
+static void host_map_target_incr(int32_t x, int32_t y) {
+    g_mutation_issued = true;
+    mapdata[{x, y}].target++;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 37,
+    /* api_version          */ 38,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1744,6 +1770,11 @@ static LuaHostApi g_host_api = {
     /* is_objective                */ host_is_objective,
     /* veh_high_damage             */ host_veh_high_damage,
     /* enemy_factions              */ host_enemy_factions,
+    /* mod_stack_check             */ host_mod_stack_check,
+    /* mod_zoc_move                */ host_mod_zoc_move,
+    /* has_orbital_drops           */ host_has_orbital_drops,
+    /* veh_at                      */ host_veh_at,
+    /* map_target_incr             */ host_map_target_incr,
 };
 
 static lua_State* L = NULL;

@@ -607,8 +607,14 @@ enable Lua by default on the branch → next.
    clean** (82-turn `--lua-shadow` autoplay run, both fixed sites —
    `colony_move`'s `skip_owner`, `make_landing`'s neighbor filter —
    genuinely exercised, 0 errors/mismatches across `lua.log`/
-   `debug.txt`); detail in `IMPLEMENTATION_DETAILS.md` 4.15. Next:
-   sub-stage B (`airdrop_move`).**
+   `debug.txt`); detail in `IMPLEMENTATION_DETAILS.md` 4.15. **Sub-stage
+   B (`airdrop_move` + its own `allow_airdrop` dependency, both real AI
+   judgment, ported directly not opaque) is done and build-verified** —
+   5 new opaque host-API entries (`mod_stack_check`/`mod_zoc_move`/
+   `has_orbital_drops`/`veh_at`/`map_target_incr`, `api_version` 37→38)
+   plus 2 `CRules` fields, 1 enum, 1 hand-transcribed constant; not yet
+   live-verified (no caller until sub-stage C wires `combat_move`'s own
+   hook). Next: sub-stage C (`combat_move` part 1).**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across

@@ -3198,12 +3198,46 @@ chunking one oversized function into reviewable pieces the way
 
 1. **Sub-stage A — engine surface + shared scoring helpers. ✅ done,
    build-verified (2026-07-22, detail above).**
-2. **Sub-stage B — `airdrop_move`.** Self-contained own-`Bases[]`-scan
-   mover, real AI judgment (site scoring), same tier as `route_score`/
-   `want_convoy` — port as a real Lua function, not opaque. No
-   independent hook (it's an internal call `combat_move` makes, not a
-   `mod_enemy_move` dispatch target itself); its live verification rides
-   along with sub-stage C's.
+2. **Sub-stage B — `airdrop_move`. ✅ done, build-verified (2026-07-22).**
+   Self-contained own-`Bases[]`-scan mover, real AI judgment (site
+   scoring), same tier as `route_score`/`want_convoy` — ported as a real
+   Lua function, not opaque, together with its own `allow_airdrop`
+   dependency (also real AI-adjacent eligibility logic, portable now
+   that `veh.count()/get()`/`base.count()/get()` exist, same reasoning
+   sub-stage A already established for `allow_probe`/`allow_attack`/
+   `allow_combat`/`allow_conv_missile`). **New engine surface**
+   (`api_version` 37→38, 5 new `LuaHostApi` entries): `mod_stack_check`
+   (`veh.cpp:2499`, kept opaque per sub-stage A's own note — the
+   `AIR_SUPERIORITY`-stack check is its only call site in this stage),
+   `mod_zoc_move`, `has_orbital_drops`, `veh_at` (all three opaque,
+   single-purpose engine mechanics), and `map_target_incr` (the
+   `mapdata[{x,y}].target++` bookkeeping mutator, same shape as
+   `former_consume`). Two new `CRules` fields
+   (`max_airdrop_rng_wo_orbital_insert`, `move_rate_roads`), one
+   compiler-read enum (`PLAN_AIR_SUPERIORITY`, `engine_veh.h`, already
+   included), one hand-transcribed constant (`AerospaceDefenseRange`,
+   `main.h:162`, a plain `const int` — `main.h` pulls in `windows.h`
+   transitively, same reason `VEH_SYNC`/`PM_SAFE` are hand-transcribed).
+   `has_facility`, `action_airdrop`, `path_cost`, `can_airdrop` and every
+   tile/`AIPlans` fact needed were already exposed (`has_facility` was
+   already in `LuaHostApi`, just unused by `lua/ai/` until now — found
+   by re-checking the surface before assuming anything new was needed,
+   same discipline sub-stage A's own write-up recorded). Neither
+   function is independently hookable yet (`mod_enemy_move` never
+   dispatches to `airdrop_move` directly — `combat_move` calls it
+   unconditionally at the top of its own ground/sea branch), so neither
+   is exported via `port.X`, same as `defender_count`/`base_tile_score`.
+   Both CMake presets build clean; `lua/ffi/types.lua` confirms the new
+   fields/enum/constant at real compiler-verified offsets
+   (`CRules.max_airdrop_rng_wo_orbital_insert` at offset 8,
+   `move_rate_roads` at offset 0); native `luajit -bl` syntax-checks
+   every file under `lua/` clean; manual arg-count cross-check (21
+   distinct `funcs.*` calls, all matched their `funcs.lua` cdef arity)
+   and enum-coverage check (3 distinct `E.*` names, all present) stand
+   in for the "3 scripted sweeps" as before. **Not live-verified** — no
+   caller reaches either function until sub-stage C wires
+   `combat_move`'s own hook; live verification rides along with
+   sub-stage C's, once it exists.
 3. **Sub-stage C — `combat_move` part 1** (`move.cpp:2931-3164`): local
    setup/constants, the aircraft `max_dist` logic, the ground/sea
    early-return block (`airdrop_move`, `make_landing`, patrol/waypoint
@@ -3234,8 +3268,10 @@ modules. Sequencing C→D→E→F preserves the original's top-to-bottom
 control flow (later parts assume earlier `tx`/`px`/`defend`/`defenders`
 locals are already computed), so they should land in that order.
 
-**Resume point:** sub-stage A closed. Next: sub-stage B (`airdrop_move`,
-`move.cpp:2864-2930`).
+**Resume point:** sub-stages A and B closed. Next: sub-stage C
+(`combat_move` part 1, `move.cpp:2931-3164`) — this is also the
+sub-stage that first wires a real caller, so it should carry sub-stage
+B's still-pending live verification alongside its own.
 
 ---
 

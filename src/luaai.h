@@ -616,6 +616,21 @@ struct LuaHostApi {
     int32_t (*is_objective)(int32_t base_id);
     int32_t (*veh_high_damage)(int32_t veh_id);
     int32_t (*enemy_factions)(int32_t faction_id);
+    // combat_move port, sub-stage B (IMPLEMENTATION_DETAILS.md 4.15):
+    // airdrop_move + allow_airdrop's own dependencies not already
+    // covered by sub-stage A. mod_stack_check (veh.cpp:2499) is a
+    // generic multi-purpose stack inspector used with cryptic magic-
+    // number args in dozens of engine call sites -- kept opaque, same
+    // "not AI policy" precedent as mod_veh_avail/great_beelzebub.
+    // mod_zoc_move/veh_at are single-purpose engine mechanics, same
+    // tier. map_target_incr is the `mapdata[{x,y}].target++`
+    // bookkeeping mutator, same shape as former_consume.
+    int32_t (*mod_stack_check)(int32_t veh_id, int32_t type, int32_t cond1, int32_t cond2,
+        int32_t cond3);
+    int32_t (*mod_zoc_move)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*has_orbital_drops)(int32_t faction_id);
+    int32_t (*veh_at)(int32_t x, int32_t y);
+    void (*map_target_incr)(int32_t x, int32_t y);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

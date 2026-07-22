@@ -105,6 +105,11 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         allow_conv_missile = { file = "src/move.cpp", func = "allow_conv_missile",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- combat_move port, sub-stage B (IMPLEMENTATION_DETAILS.md 4.15).
+        allow_airdrop = { file = "src/move.cpp", func = "allow_airdrop",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        airdrop_move = { file = "src/move.cpp", func = "airdrop_move",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -2433,6 +2438,109 @@ local function allow_conv_missile(veh_id, enemy_veh_id)
     return enemy.damage_taken == 0 and (tech.proto_is_armored(enemy.unit_id) or base_val > 2)
         and (bit.band(items, E.BIT_BUNKER) ~= 0 or base_val > 1 or funcs.map_enemy(enemy.x, enemy.y) >= 4)
         and def_val + min(8, idiv(score, 32)) + base_val * min(8, funcs.map_enemy(enemy.x, enemy.y)) >= 4
+end
+
+-- combat_move port, sub-stage B (IMPLEMENTATION_DETAILS.md 4.15):
+-- allow_airdrop + airdrop_move, called unconditionally at the top of
+-- combat_move's own ground/sea branch. Real AI judgment (site scoring
+-- for a defend/attack airdrop), same tier as route_score/want_convoy --
+-- ported directly, not kept opaque. Neither is independently hookable
+-- (mod_enemy_move never dispatches to airdrop_move directly), so
+-- neither is exported via port.X yet, same as defender_count/
+-- base_tile_score; live verification rides along with sub-stage C's,
+-- once combat_move's own hook exists to actually reach this code.
+
+-- move.cpp:2340-2375. `sq` collapses into x,y tile facts as usual --
+-- both call sites (here and combat_move's own body, later) always pass
+-- a base's or a vehicle's own on-map coordinates, so the mapsq() null
+-- check is dropped, same rationale as search_route/near_landing/
+-- make_landing.
+local function allow_airdrop(x, y, faction_id, combat)
+    for i = base_api.count() - 1, 0, -1 do
+        local b = base_api.get(i)
+        if funcs.at_war(faction_id, b.faction_id) ~= 0
+            and funcs.map_range(b.x, b.y, x, y) <= E.AerospaceDefenseRange
+            and (funcs.has_facility(E.FAC_AEROSPACE_COMPLEX, i) ~= 0
+                or funcs.mod_stack_check(funcs.veh_at(b.x, b.y), 2, E.PLAN_AIR_SUPERIORITY, -1, -1) ~= 0) then
+            return false
+        end
+    end
+    if funcs.tile_is_base(x, y) then
+        local owner = funcs.tile_owner(x, y)
+        if owner == faction_id then
+            return true
+        elseif not combat and funcs.has_pact(faction_id, owner) == 0 then
+            return false
+        end
+    end
+    if not combat and funcs.mod_zoc_move(x, y, faction_id) ~= 0 then
+        return false
+    end
+    for i = veh.count() - 1, 0, -1 do
+        local v2 = veh.get(i)
+        if v2.x == x and v2.y == y and v2.faction_id ~= faction_id
+            and funcs.has_pact(faction_id, v2.faction_id) == 0 then
+            return false
+        end
+    end
+    return true
+end
+
+-- move.cpp:2864-2930. The two `continue`s guarding the `score`
+-- computation in the original's `allow_defend` branch (enemy_diff <= 0;
+-- path_cost(...) >= 0) are combined into one `and`-guarded block below,
+-- same continue-replacing restructuring already used throughout this
+-- file (former_move/trans_move's own).
+local function airdrop_move(id)
+    local v = veh.get(id)
+    if not funcs.can_airdrop(id) then
+        return false
+    end
+    local faction_id = v.faction_id
+    local max_range = max(tech.rules().max_airdrop_rng_wo_orbital_insert,
+        funcs.has_orbital_drops(faction_id) and rand.map(0, 64) or 0)
+    local tx, ty, best_score = -1, -1, 0
+
+    for i = 0, base_api.count() - 1 do
+        local b = base_api.get(i)
+        local allow_defend = b.faction_id == faction_id and bit.band(game.turn() + id, 1) ~= 0
+        local allow_attack = funcs.at_war(faction_id, b.faction_id) ~= 0
+
+        if (allow_defend or allow_attack) and not funcs.tile_is_ocean(b.x, b.y) then
+            local base_range = funcs.map_range(v.x, v.y, b.x, b.y)
+            if base_range <= max_range and base_range >= 3
+                and allow_airdrop(b.x, b.y, faction_id, true) then
+                if allow_defend then
+                    local enemy_diff = funcs.map_enemy_near(b.x, b.y) - funcs.map_enemy_near(v.x, v.y)
+                    if enemy_diff > 0
+                        and funcs.path_cost(v.x, v.y, b.x, b.y, v.unit_id, v.faction_id,
+                            tech.rules().move_rate_roads) < 0 then
+                        local score = rand.map(0, 4) + enemy_diff
+                            + (funcs.tile_region(b.x, b.y) == funcs.target_land_region(faction_id)
+                                and 5 or 0)
+                            + 2 * b.defend_goal
+                            - idiv(base_range, 4)
+                            - 2 * funcs.map_target(b.x, b.y)
+                        if score > best_score then
+                            tx, ty, best_score = b.x, b.y, score
+                        end
+                    end
+                elseif allow_attack and funcs.tile_veh_who(b.x, b.y) < 0
+                    and base_range < 8 + 2 * funcs.map_unit_near(b.x, b.y)
+                    and (base_range < 8 or funcs.tile_is_visible(b.x, b.y, faction_id)) then
+                    tx, ty = b.x, b.y
+                    break
+                end
+            end
+        end
+    end
+    if tx >= 0 then
+        log.debug("airdrop_move %2d %2d -> %2d %2d score: %d", v.x, v.y, tx, ty, best_score)
+        funcs.map_target_incr(tx, ty)
+        funcs.action_airdrop(id, tx, ty, 3)
+        return true
+    end
+    return false
 end
 
 port.artifact_move = artifact_move

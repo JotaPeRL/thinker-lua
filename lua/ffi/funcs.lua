@@ -248,10 +248,16 @@ typedef struct {
     int32_t (*is_objective)(int32_t base_id);
     int32_t (*veh_high_damage)(int32_t veh_id);
     int32_t (*enemy_factions)(int32_t faction_id);
+    int32_t (*mod_stack_check)(int32_t veh_id, int32_t type, int32_t cond1, int32_t cond2,
+        int32_t cond3);
+    int32_t (*mod_zoc_move)(int32_t x, int32_t y, int32_t faction_id);
+    int32_t (*has_orbital_drops)(int32_t faction_id);
+    int32_t (*veh_at)(int32_t x, int32_t y);
+    void (*map_target_incr)(int32_t x, int32_t y);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 37
+local HOST_API_VERSION = 38
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -528,4 +534,11 @@ return {
     is_objective = function(base_id) return api.is_objective(base_id) ~= 0 end,
     veh_high_damage = function(veh_id) return api.veh_high_damage(veh_id) ~= 0 end,
     enemy_factions = function(faction_id) return api.enemy_factions(faction_id) end,
+    mod_stack_check = function(veh_id, type, cond1, cond2, cond3)
+        return api.mod_stack_check(veh_id, type, cond1, cond2, cond3)
+    end,
+    mod_zoc_move = function(x, y, faction_id) return api.mod_zoc_move(x, y, faction_id) end,
+    has_orbital_drops = function(faction_id) return api.has_orbital_drops(faction_id) ~= 0 end,
+    veh_at = function(x, y) return api.veh_at(x, y) end,
+    map_target_incr = function(x, y) return api.map_target_incr(x, y) end,
 }

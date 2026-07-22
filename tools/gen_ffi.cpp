@@ -293,6 +293,10 @@ int main() {
         // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
         // select_item's own sea solar_need branch.
         FIELD(CRules, tech_preq_mining_platform_bonus),
+        // combat_move port, sub-stage B (IMPLEMENTATION_DETAILS.md 4.15):
+        // airdrop_move's own max-range formula and its path_cost call.
+        FIELD(CRules, max_airdrop_rng_wo_orbital_insert),
+        FIELD(CRules, move_rate_roads),
     }});
 
     emit_struct(stdout, {"Faction", sizeof(Faction), alignof(Faction), {
@@ -717,6 +721,10 @@ int main() {
     // IMPLEMENTATION_DETAILS.md 4.7).
     printf("    PLAN_PLANET_BUSTER = %d,\n", PLAN_PLANET_BUSTER);
     printf("    PLAN_COLONY = %d,\n", PLAN_COLONY);
+    // combat_move port, sub-stage B (IMPLEMENTATION_DETAILS.md 4.15):
+    // allow_airdrop's own Air-Superiority-unit-in-base check
+    // (engine_veh.h, already included above -- compiler-read).
+    printf("    PLAN_AIR_SUPERIORITY = %d,\n", PLAN_AIR_SUPERIORITY);
     printf("    BSTATE_PRODUCTION_DONE = %d,\n", BSTATE_PRODUCTION_DONE);
     // select_build itself, facility-branch catalog continued
     // (IMPLEMENTATION_DETAILS.md 4.10.18): backs BASE::drone_riots_active()
@@ -990,6 +998,11 @@ int main() {
     // transcribed like PM_SAFE above; cross-check move.cpp:30 if this ever
     // needs revisiting).
     printf("    VEH_REMOVE_TURNS = %d,\n", 60);
+    // combat_move port, sub-stage B (IMPLEMENTATION_DETAILS.md 4.15):
+    // allow_airdrop's own AerospaceDefenseRange (main.h:162, `const int`).
+    // Hand-transcribed, same reason as VEH_SYNC/PM_SAFE/VEH_REMOVE_TURNS
+    // above -- main.h pulls in windows.h transitively.
+    printf("    AerospaceDefenseRange = %d,\n", 2);
     // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the
     // 12 can_*/keep_fungus/plant_fungus tile-eligibility helpers -- item/
     // resource/landmark/altitude/preference-flag constants. All come
