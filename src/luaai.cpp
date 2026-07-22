@@ -23,6 +23,9 @@
 #include "build.h"
 #include "path.h"
 #include "move.h"
+#include "net.h"
+#include "veh_combat.h"
+#include "probe.h"
 
 #include <string>
 #include <unordered_set>
@@ -1546,11 +1549,118 @@ static void host_map_target_incr(int32_t x, int32_t y) {
     mapdata[{x, y}].target++;
 }
 
+// combat_move port, remaining engine surface (IMPLEMENTATION_DETAILS.md
+// 4.15): the rest of what the full function needs, landed ahead of
+// assembling combat_move itself.
+static int32_t host_map_enemy_rank(int32_t x, int32_t y) {
+    return mapdata[{x, y}].enemy_rank;
+}
+
+static int32_t host_map_flags(int32_t x, int32_t y) {
+    return mapdata[{x, y}].flags;
+}
+
+static int32_t host_can_arty(int32_t unit_id, int32_t arty) {
+    return can_arty(unit_id, arty);
+}
+
+static int32_t host_arty_range(int32_t unit_id) {
+    return arty_range(unit_id);
+}
+
+static int32_t host_tile_is_airbase(int32_t x, int32_t y) {
+    MAP* sq = mapsq(x, y);
+    return sq && sq->is_airbase();
+}
+
+static int32_t host_veh_mid_damage(int32_t veh_id) {
+    return Vehs[veh_id].mid_damage();
+}
+
+static void host_update_move_path(int32_t veh_id, int32_t tx, int32_t ty) {
+    g_mutation_issued = true;
+    update_move_path(mapdata, veh_id, tx, ty);
+}
+
+static int32_t host_net_action_destroy(int32_t veh_id, int32_t flag, int32_t x, int32_t y) {
+    g_mutation_issued = true;
+    return net_action_destroy(veh_id, flag, x, y);
+}
+
+static int32_t host_mod_battle_fight(int32_t veh_id, int32_t offset, int32_t table_offset,
+int32_t option) {
+    g_mutation_issued = true;
+    return mod_battle_fight(veh_id, offset, table_offset, option, NULL);
+}
+
+// Wraps probe.cpp's own `probe()` (porting-order item 5, ~1900-line
+// file, the whole AI-probe subsystem -- kept opaque, same precedent as
+// evaluate_attack calling into an unported neighbor domain).
+static int32_t host_probe_action(int32_t veh_id, int32_t tgt_base_id, int32_t tgt_veh_id,
+int32_t toggle) {
+    g_mutation_issued = true;
+    return probe(veh_id, tgt_base_id, tgt_veh_id, toggle);
+}
+
+// Generic, re-initializable TileSearch iterator -- unlike every prior
+// mover's single-purpose search pair, combat_move re-inits and re-scans
+// the same TileSearch under several different ts_type values within one
+// call, so ts_type is a runtime parameter here, not baked in.
+static TileSearch g_combat_ts;
+
+static void host_combat_search_start(int32_t veh_id, int32_t ts_type) {
+    VEH* veh = &Vehs[veh_id];
+    g_combat_ts.init(veh->x, veh->y, ts_type);
+}
+
+static void host_combat_search_next(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+int32_t* prev_x, int32_t* prev_y) {
+    if (g_combat_ts.get_next() == NULL) {
+        *valid = 0;
+        return;
+    }
+    *valid = 1;
+    *tx = g_combat_ts.rx;
+    *ty = g_combat_ts.ry;
+    *dist = g_combat_ts.dist;
+    PathNode& prev = g_combat_ts.get_prev();
+    *prev_x = prev.x;
+    *prev_y = prev.y;
+}
+
+static int32_t host_combat_search_has_zoc(int32_t faction_id) {
+    return g_combat_ts.has_zoc(faction_id);
+}
+
+static int32_t host_main_sea_region(int32_t faction_id) {
+    return plans[faction_id].main_sea_region;
+}
+
+static int32_t host_naval_airbase_x(int32_t faction_id) {
+    return plans[faction_id].naval_airbase_x;
+}
+
+static int32_t host_naval_airbase_y(int32_t faction_id) {
+    return plans[faction_id].naval_airbase_y;
+}
+
+static int32_t host_naval_scout_x(int32_t faction_id) {
+    return plans[faction_id].naval_scout_x;
+}
+
+static int32_t host_naval_scout_y(int32_t faction_id) {
+    return plans[faction_id].naval_scout_y;
+}
+
+static int32_t host_prioritize_naval(int32_t faction_id) {
+    return plans[faction_id].prioritize_naval;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 38,
+    /* api_version          */ 39,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1775,6 +1885,25 @@ static LuaHostApi g_host_api = {
     /* has_orbital_drops           */ host_has_orbital_drops,
     /* veh_at                      */ host_veh_at,
     /* map_target_incr             */ host_map_target_incr,
+    /* map_enemy_rank               */ host_map_enemy_rank,
+    /* map_flags                    */ host_map_flags,
+    /* can_arty                     */ host_can_arty,
+    /* arty_range                   */ host_arty_range,
+    /* tile_is_airbase              */ host_tile_is_airbase,
+    /* veh_mid_damage               */ host_veh_mid_damage,
+    /* update_move_path             */ host_update_move_path,
+    /* net_action_destroy           */ host_net_action_destroy,
+    /* mod_battle_fight             */ host_mod_battle_fight,
+    /* probe_action                 */ host_probe_action,
+    /* combat_search_start          */ host_combat_search_start,
+    /* combat_search_next           */ host_combat_search_next,
+    /* combat_search_has_zoc        */ host_combat_search_has_zoc,
+    /* main_sea_region              */ host_main_sea_region,
+    /* naval_airbase_x              */ host_naval_airbase_x,
+    /* naval_airbase_y              */ host_naval_airbase_y,
+    /* naval_scout_x                */ host_naval_scout_x,
+    /* naval_scout_y                */ host_naval_scout_y,
+    /* prioritize_naval             */ host_prioritize_naval,
 };
 
 static lua_State* L = NULL;

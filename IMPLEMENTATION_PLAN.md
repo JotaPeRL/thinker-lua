@@ -613,8 +613,21 @@ enable Lua by default on the branch → next.
    5 new opaque host-API entries (`mod_stack_check`/`mod_zoc_move`/
    `has_orbital_drops`/`veh_at`/`map_target_incr`, `api_version` 37→38)
    plus 2 `CRules` fields, 1 enum, 1 hand-transcribed constant; not yet
-   live-verified (no caller until sub-stage C wires `combat_move`'s own
-   hook). Next: sub-stage C (`combat_move` part 1).**
+   live-verified (no caller until `combat_move`'s own hook exists).
+   **The original plan to then split `combat_move`'s own 726-loc body
+   into 4 sub-stages (C-F) turned out not to work** — the whole function
+   shares one `TileSearch` object's cursor state across three separate
+   loops before re-initializing it twice more later, which every prior
+   mover's single-purpose search pairs never had to deal with; splitting
+   the body into independently-committed partial functions would mean
+   threading that plus ~15 other shared locals through call boundaries,
+   against the plan's own "keep the C++ control flow recognizable" rule.
+   **Revised and back on every prior mover's own precedent instead:
+   sub-stage C (remaining engine surface — a generic re-initializable
+   `TileSearch` iterator, `api_version` 38→39, 19 new entries) is done
+   and build-verified; sub-stage D (`combat_move` itself, whole-function
+   assembly + hook wiring) is next and not yet started** — full detail
+   and rationale in `IMPLEMENTATION_DETAILS.md` 4.15.**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across

@@ -254,10 +254,31 @@ typedef struct {
     int32_t (*has_orbital_drops)(int32_t faction_id);
     int32_t (*veh_at)(int32_t x, int32_t y);
     void (*map_target_incr)(int32_t x, int32_t y);
+    int32_t (*map_enemy_rank)(int32_t x, int32_t y);
+    int32_t (*map_flags)(int32_t x, int32_t y);
+    int32_t (*can_arty)(int32_t unit_id, int32_t arty);
+    int32_t (*arty_range)(int32_t unit_id);
+    int32_t (*tile_is_airbase)(int32_t x, int32_t y);
+    int32_t (*veh_mid_damage)(int32_t veh_id);
+    void (*update_move_path)(int32_t veh_id, int32_t tx, int32_t ty);
+    int32_t (*net_action_destroy)(int32_t veh_id, int32_t flag, int32_t x, int32_t y);
+    int32_t (*mod_battle_fight)(int32_t veh_id, int32_t offset, int32_t table_offset,
+        int32_t option);
+    int32_t (*probe_action)(int32_t veh_id, int32_t tgt_base_id, int32_t tgt_veh_id, int32_t toggle);
+    void (*combat_search_start)(int32_t veh_id, int32_t ts_type);
+    void (*combat_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* prev_x, int32_t* prev_y);
+    int32_t (*combat_search_has_zoc)(int32_t faction_id);
+    int32_t (*main_sea_region)(int32_t faction_id);
+    int32_t (*naval_airbase_x)(int32_t faction_id);
+    int32_t (*naval_airbase_y)(int32_t faction_id);
+    int32_t (*naval_scout_x)(int32_t faction_id);
+    int32_t (*naval_scout_y)(int32_t faction_id);
+    int32_t (*prioritize_naval)(int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 38
+local HOST_API_VERSION = 39
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -541,4 +562,31 @@ return {
     has_orbital_drops = function(faction_id) return api.has_orbital_drops(faction_id) ~= 0 end,
     veh_at = function(x, y) return api.veh_at(x, y) end,
     map_target_incr = function(x, y) return api.map_target_incr(x, y) end,
+    map_enemy_rank = function(x, y) return api.map_enemy_rank(x, y) end,
+    map_flags = function(x, y) return api.map_flags(x, y) end,
+    can_arty = function(unit_id, arty) return api.can_arty(unit_id, arty) end,
+    arty_range = function(unit_id) return api.arty_range(unit_id) end,
+    tile_is_airbase = function(x, y) return api.tile_is_airbase(x, y) ~= 0 end,
+    veh_mid_damage = function(veh_id) return api.veh_mid_damage(veh_id) ~= 0 end,
+    update_move_path = function(veh_id, tx, ty) return api.update_move_path(veh_id, tx, ty) end,
+    net_action_destroy = function(veh_id, flag, x, y)
+        return api.net_action_destroy(veh_id, flag, x, y)
+    end,
+    mod_battle_fight = function(veh_id, offset, table_offset, option)
+        return api.mod_battle_fight(veh_id, offset, table_offset, option)
+    end,
+    probe_action = function(veh_id, tgt_base_id, tgt_veh_id, toggle)
+        return api.probe_action(veh_id, tgt_base_id, tgt_veh_id, toggle)
+    end,
+    combat_search_start = function(veh_id, ts_type) return api.combat_search_start(veh_id, ts_type) end,
+    combat_search_next = function(valid, tx, ty, dist, prev_x, prev_y)
+        return api.combat_search_next(valid, tx, ty, dist, prev_x, prev_y)
+    end,
+    combat_search_has_zoc = function(faction_id) return api.combat_search_has_zoc(faction_id) ~= 0 end,
+    main_sea_region = function(faction_id) return api.main_sea_region(faction_id) end,
+    naval_airbase_x = function(faction_id) return api.naval_airbase_x(faction_id) end,
+    naval_airbase_y = function(faction_id) return api.naval_airbase_y(faction_id) end,
+    naval_scout_x = function(faction_id) return api.naval_scout_x(faction_id) end,
+    naval_scout_y = function(faction_id) return api.naval_scout_y(faction_id) end,
+    prioritize_naval = function(faction_id) return api.prioritize_naval(faction_id) end,
 }

@@ -631,6 +631,50 @@ struct LuaHostApi {
     int32_t (*has_orbital_drops)(int32_t faction_id);
     int32_t (*veh_at)(int32_t x, int32_t y);
     void (*map_target_incr)(int32_t x, int32_t y);
+    // combat_move port, remaining engine surface (IMPLEMENTATION_
+    // DETAILS.md 4.15): lands every host-API entry the full function
+    // still needs beyond sub-stages A/B, ahead of assembling the
+    // function itself -- same "engine surface before the dispatcher"
+    // sequencing as every prior mover, just split out as its own step
+    // here because combat_move's ~726 loc don't fit one sitting.
+    // map_enemy_rank/map_flags extend the map_enemy/map_enemy_near/
+    // map_enemy_dist PMTable family (sub-stage A). can_arty/arty_range/
+    // tile_is_airbase/veh_mid_damage are single-purpose engine facts,
+    // same tier as veh_high_damage/veh_need_heals. update_move_path/
+    // net_action_destroy/mod_battle_fight/probe_action are mutators
+    // (probe_action wraps probe.cpp's own `probe()` -- porting-order
+    // item 5, kept opaque, same precedent as evaluate_attack calling
+    // into an unported neighbor domain). combat_search_start/_next is a
+    // *generic*, re-initializable TileSearch iterator -- unlike every
+    // prior mover's single-purpose search pair (crawler_search_*,
+    // colony_search_*, ...), combat_move re-inits and re-scans the same
+    // TileSearch object under several different ts_type values within
+    // one call, so the type is a runtime parameter here, not baked into
+    // the wrapper. _next's prev_x/prev_y follow the route_search_naval_
+    // pickup_next precedent (4.12) for exposing "the matched node's
+    // path-parent coordinates" without exposing the raw PathNode array/
+    // index to Lua. combat_search_has_zoc wraps TileSearch::has_zoc().
+    int32_t (*map_enemy_rank)(int32_t x, int32_t y);
+    int32_t (*map_flags)(int32_t x, int32_t y);
+    int32_t (*can_arty)(int32_t unit_id, int32_t arty);
+    int32_t (*arty_range)(int32_t unit_id);
+    int32_t (*tile_is_airbase)(int32_t x, int32_t y);
+    int32_t (*veh_mid_damage)(int32_t veh_id);
+    void (*update_move_path)(int32_t veh_id, int32_t tx, int32_t ty);
+    int32_t (*net_action_destroy)(int32_t veh_id, int32_t flag, int32_t x, int32_t y);
+    int32_t (*mod_battle_fight)(int32_t veh_id, int32_t offset, int32_t table_offset,
+        int32_t option);
+    int32_t (*probe_action)(int32_t veh_id, int32_t tgt_base_id, int32_t tgt_veh_id, int32_t toggle);
+    void (*combat_search_start)(int32_t veh_id, int32_t ts_type);
+    void (*combat_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* prev_x, int32_t* prev_y);
+    int32_t (*combat_search_has_zoc)(int32_t faction_id);
+    int32_t (*main_sea_region)(int32_t faction_id);
+    int32_t (*naval_airbase_x)(int32_t faction_id);
+    int32_t (*naval_airbase_y)(int32_t faction_id);
+    int32_t (*naval_scout_x)(int32_t faction_id);
+    int32_t (*naval_scout_y)(int32_t faction_id);
+    int32_t (*prioritize_naval)(int32_t faction_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

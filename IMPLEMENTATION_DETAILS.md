@@ -3238,40 +3238,133 @@ chunking one oversized function into reviewable pieces the way
    caller reaches either function until sub-stage C wires
    `combat_move`'s own hook; live verification rides along with
    sub-stage C's, once it exists.
-3. **Sub-stage C — `combat_move` part 1** (`move.cpp:2931-3164`): local
-   setup/constants, the aircraft `max_dist` logic, the ground/sea
-   early-return block (`airdrop_move`, `make_landing`, patrol/waypoint
-   continuation), and the aircraft attack-search `while` loop.
-4. **Sub-stage D — `combat_move` part 2** (`move.cpp:3165-3266`): the
-   non-aircraft attack-search loop and the probe-specific search loop
-   (the one call site to the opaque `probe()` wrapper).
-5. **Sub-stage E — `combat_move` part 3** (`move.cpp:3267-3421`): acting
-   on a found target (`tx`/`px`), aircraft cover/approach positioning,
-   aircraft rebase-to-base scoring, artillery bombardment.
-6. **Sub-stage F — `combat_move` part 4, final assembly**
-   (`move.cpp:3422-3654`): in-base defend/teleport dispatch, patrol,
-   naval invasion stackup/escort, the big final `TileSearch`
-   base-attack/defend loop (`target_priority`-driven), flank/skip
-   logic, `VSTATE_REQUIRES_SUPPORT` cleanup, fallback-to-base. Wire the
-   Class 3 hook in `veh_turn.cpp` + register in `lua/ai/init.lua` here
-   (same shape as every prior mover) — this is the sub-stage that makes
-   the whole function live-testable for the first time, so live
-   verification (per Phase 5's handoff protocol) closes this sub-stage
-   and the whole movement stage 6.
+3. **Sub-stage C — remaining engine surface. ✅ done, build-verified
+   (2026-07-22).** **Correction to the plan above:** the original draft
+   split `combat_move`'s own 726-loc body into 4 sub-stages (C-F) by
+   line range, planning to write each as a separate partial pass over
+   the same eventual Lua function. Reading the body end to end while
+   preparing to write it surfaced why that doesn't work: `combat_move`
+   uses **one** `TileSearch ts` object, initialized once
+   (`move.cpp:3110`), whose cursor state is shared across three
+   separate `while` loops without re-initializing in between (the
+   aircraft attack-search loop, `move.cpp:3112`; the non-aircraft
+   attack-search loop, `3165`; the probe-specific loop that continues
+   scanning the very same object right after, `3229`) before two later
+   points in the function call `ts.init(...)` again for a differently-
+   configured scan (`3503`, `3538`). No prior mover has this shape —
+   every one so far used single-purpose, hardcoded-`ts_type` C++-side
+   search pairs (`crawler_search_*`, `colony_search_*`, ...) because
+   each mover only ever ran one scan configuration. Splitting
+   `combat_move`'s body into independently-committed partial functions
+   would have meant threading this shared cursor (plus ~15 other shared
+   locals — `tx`/`ty`/`px`/`py`/`defend`/`defenders`/`best_odds`/
+   `best_cover`/...) through function-call boundaries, which is exactly
+   the kind of restructuring the plan's own "keep the C++ control flow
+   recognizable" rule (`IMPLEMENTATION_PLAN.md` 4.3) warns against, and
+   a half-written Lua function isn't a real function per this project's
+   own conventions. **Revised: every prior mover's actual precedent
+   already established the right shape** — dependencies first (however
+   many sub-stages that takes), then the mover itself assembled whole,
+   once, in the final sub-stage (`former_move`: 3 dependency sub-stages
+   then one 157-loc assembly; `trans_move`: 1 dependency sub-stage then
+   one 253-loc assembly). Sub-stage C is the last dependency step: it
+   lands every remaining piece of engine surface `combat_move` itself
+   needs, so sub-stage D can be pure Lua-side assembly with zero new
+   C++ work discovered mid-translation.
+   - **New engine surface** (`api_version` 38→39, 19 new `LuaHostApi`
+     entries): a **generic, re-initializable `TileSearch` iterator**
+     (`combat_search_start(veh_id, ts_type)` / `combat_search_next()`
+     → `valid, x, y, dist, prev_x, prev_y` out-params, `prev_x`/`prev_y`
+     following the `route_search_naval_pickup_next` precedent — 4.12 —
+     for exposing "the matched node's path-parent coordinates" without
+     exposing the raw `PathNode` array/index to Lua; internally calls
+     `TileSearch::get_prev()`, an existing C++ method that already does
+     exactly this) plus `combat_search_has_zoc(faction_id)` (wraps
+     `TileSearch::has_zoc()`) — unlike every prior mover's baked-in
+     `ts_type`, `ts_type` is a runtime parameter here since `combat_move`
+     re-inits the same object under several different values within one
+     call. Three more `PMTable` accessors (`map_enemy_rank`, `map_flags`
+     — extends the `map_enemy`/`map_enemy_near`/`map_enemy_dist` family
+     from sub-stage A). Single-purpose engine-fact wrappers, same tier
+     as `veh_high_damage`/`veh_need_heals`: `can_arty`, `arty_range`
+     (both delegate to `conf.long_range_artillery()`/`*MultiplayerActive`
+     internally — kept opaque rather than re-derived, same "cheap engine
+     mechanic" reasoning as `mod_veh_avail`), `tile_is_airbase`,
+     `veh_mid_damage`. Mutators: `update_move_path` (wraps `path.cpp`'s
+     own `update_move_path(mapdata, ...)`), `net_action_destroy`,
+     `mod_battle_fight` (the actual combat-resolution call, artillery
+     branch — internally passes `NULL` for the C++ signature's trailing
+     `int* def_id` out-param, since every `combat_move` call site
+     ignores it), and **`probe_action`** (wraps `probe.cpp`'s own
+     ~1900-line `probe()` — porting-order item 5, the whole AI-probe
+     subsystem, explicitly out of scope here; same precedent as
+     `evaluate_attack` calling into an unported neighbor domain). Six
+     new `AIPlans` accessors (`main_sea_region`, `naval_airbase_x/y`,
+     `naval_scout_x/y`, `prioritize_naval`). Three new `CRules` fields
+     (`max_dmg_percent_arty_base_bunker/open/sea`, the artillery loop's
+     own damage-cap lookup). Three enums compiler-read from
+     `engine_veh.h` (already included): `VSTATE_PACIFISM_FREE_SKIP`,
+     `VSTATE_REQUIRES_SUPPORT`, `BSC_SEALURK`. Four hand-transcribed
+     constants from `path.h`/`move.h` (both pull in `windows.h`
+     transitively, same reason `VEH_SYNC`/`PM_SAFE`/`NODE_*` are
+     hand-transcribed): `TS_SEA_AND_SHORE` (`path.h`'s `TSType` enum,
+     the `BSC_SEALURK` `ts_type` special case — confirmed numerically
+     compatible with the engine's own `TRIAD_LAND`/`SEA`/`AIR` = 0/1/2,
+     which `combat_move` passes as `ts_type` directly in the common
+     case), `NODE_COMBAT_PATROL` (`path.h`'s `NodesetType` enum, default
+     numbering, cross-check `path.h:63-78` if this ever drifts),
+     `QueueSize`, `PathLimit` (both `path.h` `const int`s, the big final
+     base-search loop's own iteration limit and `max_dist` reset).
+   - **Confirmed no new work needed** for several other identifiers
+     found while reading the body, by re-deriving them from
+     already-exposed pieces rather than assuming: `veh->plan()` =
+     `Units[unit_id].plan` (`tech.proto(unit_id).plan`, already
+     exposed), `veh->speed()` = `Chassis[Units[unit_id].chassis_id]
+     .speed` (`tech.proto_speed`, already exposed), `unit_support_plan()`
+     (already ported to `build.lua`, exported as `port.unit_support_plan`),
+     `arty_range`'s own `reactor_type()`-style clamp math (derivable
+     from the already-exposed `reactor_id` field, needed only once
+     `combat_move`'s own artillery loop is written, not here), and
+     `pick_random(const std::set<Point>&)` (`random.h:38-43` — draws one
+     `random(size)` call then advances a `std::set<Point>` iterator;
+     `Point::operator<` sorts by `x` then `y`, `engine.h:86-88` — fully
+     replicable in Lua with a plain sorted array and one `rand.map`
+     call, no host wrapper needed, matching this project's preference
+     to keep real logic in Lua over hiding it opaquely).
+   - Both CMake presets build clean on the first attempt (no include
+     fixups needed beyond adding `net.h`/`veh_combat.h`/`probe.h` to
+     `luaai.cpp`, done proactively before the first build attempt);
+     `lua/ffi/types.lua` confirms every new field/enum/constant at real
+     compiler-verified offsets (e.g. `CRules.max_dmg_percent_arty_
+     base_bunker` at offset 264, `PM_PsiGateBase = 131072` = `0x20000`
+     matching `move.h:18` exactly); native `luajit -bl` syntax-checks
+     every file under `lua/` clean (no new Lua logic landed yet this
+     sub-stage beyond the `funcs.lua` mirror, so this mainly confirms
+     the mirror itself parses).
+4. **Sub-stage D — `combat_move` itself, whole-function assembly + hook
+   wiring. Not yet started.** Every dependency (sub-stages A/B/C) and
+   every already-opaque wrapper from stage 5 (`choose_defender`/
+   `battle_priority`) is now in place; this sub-stage is pure
+   translation of `move.cpp:2931-3654` into one Lua function, wiring
+   the Class 3 hook in `veh_turn.cpp`, and registering it in
+   `lua/ai/init.lua` — same shape as every prior mover's own final
+   sub-stage. This is also the sub-stage that first makes the whole
+   function (plus sub-stage B's `airdrop_move`/`allow_airdrop`, still
+   unexercised) live-testable, so live verification (per Phase 5's
+   handoff protocol) closes sub-stage B, sub-stage D, and the whole of
+   movement stage 6 together.
 
-Sub-stages C-F all write into the same Lua function; the split is for
-reviewable session/commit size (`combat_move` has ~15 return points
-across distinct phases already visually separated by blank lines/
-comments in the original, used as the natural cut points above), not
-an architectural boundary — unlike A/B, which are real prerequisite
-modules. Sequencing C→D→E→F preserves the original's top-to-bottom
-control flow (later parts assume earlier `tx`/`px`/`defend`/`defenders`
-locals are already computed), so they should land in that order.
-
-**Resume point:** sub-stages A and B closed. Next: sub-stage C
-(`combat_move` part 1, `move.cpp:2931-3164`) — this is also the
-sub-stage that first wires a real caller, so it should carry sub-stage
-B's still-pending live verification alongside its own.
+**Resume point:** sub-stages A, B and C closed. Next: sub-stage D
+(`combat_move` itself, `move.cpp:2931-3654`, ~726 loc — read carefully
+in full across sub-stage C's research, ready to translate) — no new
+engine-surface design work expected, only careful 1:1 translation and
+the same class of judgment calls already made repeatedly in this file
+(collapsing `MAP* sq` into `x, y` tile facts at call sites that always
+pass real on-map coordinates, replicating C++ `continue`/early-`break`
+via restructuring, normalizing `int`-as-bool host-wrapper returns with
+explicit `~= 0`/`== 0`). Given the size (larger than any prior single
+function in this project), budget it as its own dedicated session
+rather than folding it into a response already carrying sub-stage C.
 
 ---
 

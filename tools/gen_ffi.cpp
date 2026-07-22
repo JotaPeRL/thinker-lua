@@ -297,6 +297,12 @@ int main() {
         // airdrop_move's own max-range formula and its path_cost call.
         FIELD(CRules, max_airdrop_rng_wo_orbital_insert),
         FIELD(CRules, move_rate_roads),
+        // combat_move port, remaining engine surface (IMPLEMENTATION_
+        // DETAILS.md 4.15): the artillery scoring loop's own damage-cap
+        // lookup.
+        FIELD(CRules, max_dmg_percent_arty_base_bunker),
+        FIELD(CRules, max_dmg_percent_arty_open),
+        FIELD(CRules, max_dmg_percent_arty_sea),
     }});
 
     emit_struct(stdout, {"Faction", sizeof(Faction), alignof(Faction), {
@@ -816,6 +822,12 @@ int main() {
     printf("    PLAN_ARTIFACT = %d,\n", PLAN_ARTIFACT);
     printf("    BSC_FUNGAL_TOWER = %d,\n", BSC_FUNGAL_TOWER);
     printf("    ORDER_CONVOY = %d,\n", ORDER_CONVOY);
+    // combat_move port, remaining engine surface (IMPLEMENTATION_
+    // DETAILS.md 4.15): pacifism/pact-base ts_type special case, and
+    // the VSTATE_REQUIRES_SUPPORT cleanup block near the end.
+    printf("    VSTATE_PACIFISM_FREE_SKIP = %d,\n", VSTATE_PACIFISM_FREE_SKIP);
+    printf("    VSTATE_REQUIRES_SUPPORT = %d,\n", VSTATE_REQUIRES_SUPPORT);
+    printf("    BSC_SEALURK = %d,\n", BSC_SEALURK);
     printf("    GOV_MAY_PROD_TERRAFORMERS = %d,\n", GOV_MAY_PROD_TERRAFORMERS);
     // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12): VEH::at_target().
     printf("    ORDER_NONE = %d,\n", ORDER_NONE);
@@ -1003,6 +1015,24 @@ int main() {
     // Hand-transcribed, same reason as VEH_SYNC/PM_SAFE/VEH_REMOVE_TURNS
     // above -- main.h pulls in windows.h transitively.
     printf("    AerospaceDefenseRange = %d,\n", 2);
+    // combat_move port, remaining engine surface (IMPLEMENTATION_
+    // DETAILS.md 4.15): path.h's TSType enum (TS_SEA_AND_SHORE, the
+    // BSC_SEALURK ts_type special case), NodesetType's NODE_COMBAT_
+    // PATROL (14th/last value, default numbering per path.h:63-78's
+    // own list), and the QueueSize/PathLimit `const int`s (the big
+    // final base-search loop's own iteration limit and max_dist reset).
+    // All hand-transcribed, same reason as VEH_SYNC/PM_SAFE/NODE_* --
+    // path.h pulls in windows.h transitively; cross-check path.h:49-61/
+    // 63-78 directly if any of these ever drift.
+    printf("    TS_SEA_AND_SHORE = %d,\n", 3);
+    printf("    NODE_COMBAT_PATROL = %d,\n", 13);
+    printf("    QueueSize = %d,\n", 8192);
+    printf("    PathLimit = %d,\n", 160);
+    // combat_move port, remaining engine surface (IMPLEMENTATION_
+    // DETAILS.md 4.15): the teleport/gate-port dispatch's own
+    // mapdata[{x,y}].flags & PM_PsiGateBase test (move.h:18, a plain
+    // `const int`). Hand-transcribed, same reason as PM_SAFE above.
+    printf("    PM_PsiGateBase = %d,\n", 0x20000);
     // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the
     // 12 can_*/keep_fungus/plant_fungus tile-eligibility helpers -- item/
     // resource/landmark/altitude/preference-flag constants. All come
