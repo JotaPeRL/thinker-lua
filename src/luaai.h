@@ -658,6 +658,13 @@ struct LuaHostApi {
     int32_t (*map_flags)(int32_t x, int32_t y);
     int32_t (*can_arty)(int32_t unit_id, int32_t arty);
     int32_t (*arty_range)(int32_t unit_id);
+    // combat_move port, sub-stage D (IMPLEMENTATION_DETAILS.md 4.15):
+    // TableRange[] (path.h) is a plain const int[9] lookup table -- not a
+    // struct field gen_ffi can emit and not worth exposing as a raw array
+    // (the only call site is `TableRange[arty_range(unit_id)]`), so this
+    // wrapper folds both steps into one, same "engine mechanic" tier as
+    // can_arty/arty_range themselves.
+    int32_t (*arty_table_range)(int32_t unit_id);
     int32_t (*tile_is_airbase)(int32_t x, int32_t y);
     int32_t (*veh_mid_damage)(int32_t veh_id);
     void (*update_move_path)(int32_t veh_id, int32_t tx, int32_t ty);
@@ -665,7 +672,15 @@ struct LuaHostApi {
     int32_t (*mod_battle_fight)(int32_t veh_id, int32_t offset, int32_t table_offset,
         int32_t option);
     int32_t (*probe_action)(int32_t veh_id, int32_t tgt_base_id, int32_t tgt_veh_id, int32_t toggle);
-    void (*combat_search_start)(int32_t veh_id, int32_t ts_type);
+    // combat_move port, sub-stage D correction (IMPLEMENTATION_DETAILS.md
+    // 4.15): sub-stage C's combat_search_start only wrapped TileSearch's
+    // 3-arg init() overload, but combat_move's own final base-search scan
+    // (move.cpp:3538) needs the 4-arg overload's ts_skip parameter ("skip
+    // pole tiles" for TRIAD_LAND). Found while translating the function
+    // body itself -- every other call site already behaves identically
+    // passing ts_skip=0, since TileSearch::reset() (called by both init()
+    // overloads) always zeroes y_skip first regardless.
+    void (*combat_search_start)(int32_t veh_id, int32_t ts_type, int32_t ts_skip);
     void (*combat_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
         int32_t* prev_x, int32_t* prev_y);
     int32_t (*combat_search_has_zoc)(int32_t faction_id);

@@ -193,6 +193,14 @@ local function proto_defense(unit_id)
     return def_val * u.reactor_id
 end
 
+-- combat_move port, sub-stage D (IMPLEMENTATION_DETAILS.md 4.15):
+-- VEH::reactor_type() (engine_veh.h:535-538), the artillery-loop damage
+-- normalizer -- pure delegation over reactor_id, same tier as
+-- proto_speed/proto_offense_value above.
+local function proto_reactor_type(unit_id)
+    return math.min(4, math.max(1, proto(unit_id).reactor_id))
+end
+
 -- TechOwners is a bitfield byte per tech_id, one bit per faction slot
 -- (MaxPlayerNum=8 fits exactly in a uint8_t).
 local function owners(tech_id)
@@ -229,6 +237,7 @@ return {
     proto_is_police_unit = proto_is_police_unit,
     proto_offense = proto_offense,
     proto_defense = proto_defense,
+    proto_reactor_type = proto_reactor_type,
     owners = owners,
     rules = function() return Rules[0] end,
     recycling_tanks = function()

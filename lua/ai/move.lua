@@ -110,6 +110,10 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         airdrop_move = { file = "src/move.cpp", func = "airdrop_move",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- combat_move port, sub-stage D (IMPLEMENTATION_DETAILS.md 4.15):
+        -- the mover itself, whole-function assembly.
+        combat_move = { file = "src/move.cpp", func = "combat_move",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -2543,10 +2547,823 @@ local function airdrop_move(id)
     return false
 end
 
+-- combat_move port, sub-stage D (IMPLEMENTATION_DETAILS.md 4.15):
+-- move.cpp:2931-3654, whole-function assembly + the Class 3 hook wiring
+-- in veh_turn.cpp -- the largest single function in the project. Every
+-- dependency (sub-stages A/B/C, plus choose_defender/battle_priority from
+-- movement stage 5) is already in place; this is pure translation.
+--
+-- veh_sq collapses into v.x,v.y tile facts throughout, as usual (MAP*
+-- can't cross the FFI boundary); the initial `if (!veh_sq) return
+-- VEH_SYNC` null check is dropped, same rationale as airdrop_move/
+-- search_route/near_landing/make_landing: a dispatched vehicle always
+-- sits on a valid map tile.
+--
+-- combat_search_start/_next (sub-stage C) replace the C++'s single
+-- `TileSearch ts` object directly: ts.rx/ts.ry/ts.dist become _next's
+-- out-params, and ts.get_prev() becomes the same call's prev_x/prev_y.
+-- The commit-message-documented shape this sub-stage exists for -- one
+-- TileSearch shared, cursor-and-all, across three back-to-back scans
+-- (the aircraft loop, the non-aircraft loop, the probe loop immediately
+-- following) before two later points re-init it under a different
+-- ts_type -- is reproduced exactly: combat_search_start is called once
+-- before the first scan, and the probe loop (move.cpp:3229) keeps
+-- calling combat_search_next with NO intervening combat_search_start,
+-- continuing the very same cursor, exactly like the original.
+--
+-- `continue` is replaced by empty-body elseif branches (an elseif whose
+-- condition matched but does nothing still correctly stops the chain and
+-- falls through to the next loop iteration) or by hoisting the
+-- conditionally-assigned C++ local (`score`, `id2`) out of the branch
+-- condition into a plain local computed just above the if/elseif chain --
+-- same "continue-replacing restructuring" this file uses throughout.
+-- `path.prev > 0` (is the matched node's parent something other than the
+-- search root?) becomes `not (best_prev_x == v.x and best_prev_y ==
+-- v.y)`: the root is always the vehicle's own start tile, and TileSearch
+-- never revisits a coordinate (path.cpp's own oldtiles dedup), so no
+-- other node's coordinates can equal it.
+--
+-- pick_random(std::set<Point>) (random.h:38-43: one rand.map(0,#set) draw
+-- advances a sorted-by-(x,y) iterator) is replicated with a plain
+-- deduplicated array sorted the same way, per the precedent recorded in
+-- IMPLEMENTATION_DETAILS.md 4.15 sub-stage C (no host wrapper needed).
+local function combat_move(id)
+    local v = veh.get(id)
+    local faction_id = v.faction_id
+    local f = faction.get(faction_id)
+    local triad = veh.triad(v)
+    local unit_range = tech.proto_range(v.unit_id)
+    local moves = funcs.veh_speed(id, 0) - v.moves_spent
+    local rules = tech.rules()
+    local max_range = max(0, idiv(moves, rules.move_rate_roads))
+    -- Ships have both normal and artillery attack modes available. For
+    -- land-based artillery, skip normal attack evaluation.
+    local combat = veh.is_combat_unit(v)
+    local attack = combat and not funcs.can_arty(v.unit_id, false)
+    local arty = combat and funcs.can_arty(v.unit_id, true) ~= 0
+    local aircraft = triad == E.TRIAD_AIR
+    local ignore_zocs = triad ~= E.TRIAD_LAND or veh.is_probe(v)
+    local veh_tile_owner = funcs.tile_owner(v.x, v.y)
+    local at_home = veh_tile_owner == faction_id or funcs.has_pact(faction_id, veh_tile_owner) ~= 0
+    local at_base = funcs.tile_is_base(v.x, v.y)
+    local at_airbase = funcs.tile_is_airbase(v.x, v.y)
+    local at_enemy = funcs.at_war(faction_id, veh_tile_owner) ~= 0
+    local is_enhanced = veh.is_probe(v) and funcs.has_abil(v.unit_id, E.ABL_ALGO_ENHANCEMENT) ~= 0
+    local high_damage = funcs.veh_high_damage(id)
+    local refuel = funcs.veh_need_refuel(id)
+    local base_only = refuel and (unit_range > 1 or high_damage)
+    local missile = aircraft and tech.proto_is_missile(v.unit_id)
+    local chopper = aircraft and not missile and unit_range == 1
+    local gravship = aircraft and not missile and unit_range == 0
+    local needlejet = aircraft and tech.proto(v.unit_id).chassis_id == E.CHS_NEEDLEJET
+    local teleport = at_base and veh_tile_owner == faction_id
+        and bit.band(funcs.map_flags(v.x, v.y), E.PM_PsiGateBase) ~= 0
+    local hold_tile = needlejet and not refuel and max_range < 4
+        and funcs.map_enemy_rank(v.x, v.y) > rand.map(0, 64)
+        and not needlejet_check(id, v.x, v.y)
+    local pacifism = combat and not aircraft and not at_enemy
+        and tech.proto(v.unit_id).plan < build.unit_support_plan()
+        and bit.band(v.state, E.VSTATE_PACIFISM_FREE_SKIP) == 0
+        and f.SE_police_pending < -2
+        and v.home_base_id >= 0 and build.base_can_riot(v.home_base_id, true)
+        and base_api.get(v.home_base_id).faction_id == faction_id
+        and base_api.get(v.home_base_id).pop_size > 2
+    local look_first = not aircraft and f.base_count == 0
+        and funcs.mod_stack_check(id, 2, E.PLAN_COLONY, -1, -1) ~= 0
+    local function skip_patrol(dist, rx, ry)
+        return look_first and dist <= 2 and v.iter_count < 4 and funcs.goody_at(rx, ry)
+    end
+
+    local coord = ffi.new("int32_t[2]")
+    local out = ffi.new("int32_t[6]")
+    local max_dist
+    local defenders = 0
+
+    if aircraft then
+        max_dist = min(rand.map(0, 4) ~= 0 and 12 or 16, max_range)
+        if not veh.at_target(v) then
+            return E.VEH_SYNC
+        end
+        if not missile and at_airbase and funcs.veh_mid_damage(id) then
+            max_dist = idiv(max_dist, 2)
+        end
+        if hold_tile then
+            max_dist = 1
+        elseif refuel then
+            if at_airbase and base_only then
+                max_dist = 1
+            elseif base_only then
+                return funcs.move_to_base(id, true)
+            elseif chopper and funcs.veh_mid_damage(id) then
+                max_dist = idiv(max_dist, 2)
+            end
+        end
+    else
+        local speed_bonus = tech.proto_speed(v.unit_id) > 1 and 1 or 0
+        max_dist = clamp(
+            rand.map(0, 4 + 4 * speed_bonus)
+                + (at_base and 0 or 2)
+                + ((at_enemy or pacifism) and -4 or 0)
+                + (veh_tile_owner >= 0 and 0 or 2)
+                + (funcs.veh_need_heals(id) and -6 or 0)
+                + idiv(funcs.unknown_factions(faction_id), 2)
+                + (funcs.contacted_factions(faction_id) ~= 0 and 0 or 4),
+            high_damage and 2 or 3, 8 + 4 * speed_bonus)
+        if airdrop_move(id) then
+            return E.VEH_SKIP
+        end
+        if triad == E.TRIAD_LAND and funcs.has_map_node(v.x, v.y, E.NODE_NAVAL_END) then
+            make_landing(id)
+            return E.VEH_SYNC
+        end
+        if triad == E.TRIAD_LAND and funcs.tile_is_ocean(v.x, v.y) and at_base
+            and not funcs.has_transport(v.x, v.y, faction_id) then
+            return funcs.mod_veh_skip(id)
+        end
+        if veh.is_probe(v) and funcs.veh_need_heals(id) then
+            return escape_move(id)
+        end
+        if not veh.at_target(v) and v.iter_count < 4 then
+            if funcs.map_enemy_near(v.x, v.y) == 0 and not funcs.veh_need_heals(id) then
+                for i = 1, 8 do
+                    if funcs.tile_neighbor(v.x, v.y, i, coord, coord + 1) then
+                        local mx, my = coord[0], coord[1]
+                        if funcs.has_map_node(mx, my, E.NODE_PATROL)
+                            and funcs.allow_move(mx, my, faction_id, triad) then
+                            return funcs.set_move_to(id, mx, my)
+                        end
+                    end
+                end
+            end
+            local wx, wy = v.waypoint_x[0], v.waypoint_y[0]
+            local keep_order = true
+            if wx >= 0 then
+                if veh.is_probe(v) and funcs.tile_is_base(wx, wy) and funcs.tile_owner(wx, wy) ~= faction_id
+                    and funcs.has_pact(faction_id, funcs.tile_owner(wx, wy)) == 0
+                    and not allow_probe(faction_id, funcs.tile_owner(wx, wy), is_enhanced) then
+                    keep_order = false
+                elseif combat and not funcs.tile_is_base(wx, wy)
+                    and funcs.map_range(v.x, v.y, wx, wy) < 4
+                    and not allow_combat(wx, wy, faction_id) then
+                    keep_order = false
+                end
+            end
+            if keep_order then
+                return E.VEH_SYNC
+            end
+        end
+        if at_base then
+            if veh_base_check(id) then
+                defenders = 0
+            else
+                defenders = defender_count(v.x, v.y, id)
+            end
+            if defenders == 0 then
+                max_dist = 1
+            end
+        end
+    end
+
+    local defend = false
+    if triad == E.TRIAD_SEA then
+        defend = pacifism
+            or (at_home and imod(game.turn() + id, 8) < 3 and not veh.is_probe(v))
+            or (not funcs.reg_enemy_at(funcs.tile_region(v.x, v.y), veh.is_probe(v))
+                and not funcs.reg_enemy_at(funcs.main_sea_region(faction_id), veh.is_probe(v)))
+    elseif triad == E.TRIAD_LAND then
+        defend = pacifism
+            or (at_home and imod(game.turn() + id, 8) < 4)
+            or (veh.is_probe(v) and tech.proto_speed(v.unit_id) < 2)
+            or not funcs.reg_enemy_at(funcs.tile_region(v.x, v.y), veh.is_probe(v))
+    end
+    local landing_unit = triad == E.TRIAD_LAND and (not at_base or defenders > 0) and funcs.invasion_unit(id)
+    local invasion_ship = triad == E.TRIAD_SEA and (not at_base or defenders > 0)
+        and not veh.is_probe(v) and funcs.invasion_unit(id)
+
+    local tx, ty = -1, -1
+    local bx, by = -1, -1
+    local px, py = -1, -1
+    local port_x, port_y = -1, -1
+    local ts_type = (triad == E.TRIAD_SEA and v.unit_id == E.BSC_SEALURK) and E.TS_SEA_AND_SHORE or triad
+    -- Current minimum odds for the unit to engage in any combat. Tolerate
+    -- worse odds if the faction has many more expendable units available.
+    local best_odds, best_cover
+    if aircraft then
+        best_odds = 1.2 - 0.004 * min(100, funcs.air_combat_units(faction_id))
+        best_cover = at_airbase and rand.map(0, 64 + 64 * (funcs.veh_mid_damage(id) and 1 or 0))
+            or funcs.map_enemy_rank(v.x, v.y)
+    else
+        best_odds = (at_base and defenders < 1 and 1.5 or 1.2)
+            - (at_enemy and 0.15 or 0)
+            - 0.004 * min(100, funcs.map_unit_near(v.x, v.y))
+            - 0.0005 * min(500, funcs.land_combat_units(faction_id) + funcs.sea_combat_units(faction_id))
+        best_cover = (triad == E.TRIAD_LAND and at_base and 2 or 1) * cover_score(v.x, v.y)
+    end
+    funcs.combat_search_start(id, ts_type, 0)
+
+    if aircraft and combat then
+        while true do
+            funcs.combat_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+            if out[0] == 0 then break end
+            local rx, ry, dist = out[1], out[2], out[3]
+            if dist > max_dist then break end
+            local score = funcs.map_enemy_rank(rx, ry) - (funcs.tile_owner(rx, ry) == faction_id and 2 or 4) * dist
+            local id2 = funcs.choose_defender(rx, ry, id)
+            if id2 >= 0 then
+                local v2 = veh.get(id2)
+                local bad_needlejet = not funcs.tile_is_base(rx, ry)
+                    and tech.proto(v2.unit_id).chassis_id == E.CHS_NEEDLEJET
+                    and funcs.has_abil(v.unit_id, E.ABL_AIR_SUPERIORITY) == 0
+                if not bad_needlejet then
+                    if missile and bx < 0 and dist == 1 then
+                        bx, by = rx, ry
+                    end
+                    local bad_missile = missile and not allow_conv_missile(id, id2)
+                    if not bad_missile then
+                        local odds = funcs.battle_priority(id, id2, dist, moves, rx, ry)
+                        if odds > best_odds then
+                            if tx < 0 and not base_only and not hold_tile then
+                                max_dist = min(dist + 2, max_dist)
+                            end
+                            tx, ty = rx, ry
+                            best_odds = odds
+                        end
+                    end
+                end
+            elseif missile or base_only or hold_tile then
+                -- continue
+            elseif gravship and funcs.tile_is_base(rx, ry) and funcs.at_war(faction_id, funcs.tile_owner(rx, ry)) ~= 0
+                and funcs.tile_veh_who(rx, ry) < 0 and funcs.map_target(rx, ry) < 2 + rand.map(0, 16) then
+                return funcs.set_move_to(id, rx, ry)
+            elseif tx < 0 and funcs.has_map_node(rx, ry, E.NODE_COMBAT_PATROL)
+                and not funcs.veh_need_heals(id) and funcs.map_target(rx, ry) < 2 + rand.map(0, 16) then
+                return funcs.set_move_to(id, rx, ry)
+            elseif high_damage or funcs.non_ally_in_tile(rx, ry, faction_id) then
+                -- continue
+            elseif needlejet and not refuel and funcs.map_enemy_rank(rx, ry) > 0
+                and (tx < 0 or funcs.map_range(tx, ty, rx, ry) <= 1)
+                and score > best_cover
+                and funcs.allow_move(rx, ry, faction_id, E.TRIAD_AIR)
+                and not needlejet_check(id, rx, ry) then
+                px, py = rx, ry
+                best_cover = score
+            elseif tx < 0 and px < 0 and funcs.allow_scout(faction_id, rx, ry) then
+                return funcs.set_move_to(id, rx, ry)
+            end
+        end
+    end
+
+    if not aircraft and combat then
+        while true do
+            funcs.combat_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+            if out[0] == 0 then break end
+            local rx, ry, dist = out[1], out[2], out[3]
+            if dist > max_dist then break end
+            local to_base = funcs.tile_is_base(rx, ry)
+            local owner = funcs.tile_owner(rx, ry)
+            local arty_score = cover_score(rx, ry) - 4 * dist
+            local id2 = -1
+            if attack then
+                id2 = funcs.choose_defender(rx, ry, id)
+            end
+
+            if pacifism and owner ~= faction_id and dist > 4 then
+                -- continue
+            elseif attack and id2 >= 0 then
+                local v2 = veh.get(id2)
+                if not ignore_zocs then
+                    max_dist = dist
+                end
+                local bad_needlejet = not to_base and tech.proto(v2.unit_id).chassis_id == E.CHS_NEEDLEJET
+                    and funcs.has_abil(v.unit_id, E.ABL_AIR_SUPERIORITY) == 0
+                if not bad_needlejet then
+                    local odds = funcs.battle_priority(id, id2, dist, moves, rx, ry)
+                    if odds > best_odds then
+                        tx, ty = rx, ry
+                        best_odds = odds
+                    elseif tx < 0 and dist < 2 and v2.faction_id == 0
+                        and (v.moves_spent ~= 0 or v.iter_count >= 4) then
+                        return escape_move(id)
+                    end
+                end
+            elseif to_base and funcs.at_war(faction_id, owner) ~= 0
+                and funcs.tile_veh_who(rx, ry) < 0 and (triad == E.TRIAD_SEA) == funcs.tile_is_ocean(rx, ry)
+                and funcs.map_target(rx, ry) < 2 + rand.map(0, 16) then
+                return funcs.set_move_to(id, rx, ry)
+            elseif arty and v.moves_spent == 0 and arty_score > best_cover
+                and funcs.allow_move(rx, ry, faction_id, triad) then
+                tx, ty = rx, ry
+                best_cover = arty_score
+            elseif tx < 0 and attack and funcs.has_map_node(rx, ry, E.NODE_COMBAT_PATROL)
+                and dist <= (at_base and (1 + min(3, idiv(defenders, 4))) or 3)
+                and funcs.path_cost(v.x, v.y, rx, ry, v.unit_id, faction_id, moves) >= 0 then
+                return funcs.set_move_to(id, rx, ry)
+            elseif skip_patrol(dist, rx, ry) then
+                -- continue
+            elseif tx < 0 and funcs.has_map_node(rx, ry, E.NODE_PATROL) then
+                return funcs.set_move_to(id, rx, ry)
+            elseif px < 0 and funcs.allow_scout(faction_id, rx, ry) then
+                px, py = rx, ry
+            elseif to_base and owner == faction_id and dist <= 6 and port_x < 0
+                and bit.band(funcs.map_flags(rx, ry), E.PM_PsiGateBase) ~= 0 and rand.map(0, 2) ~= 0 then
+                port_x, port_y = rx, ry
+            end
+        end
+    end
+
+    if veh.is_probe(v) and funcs.map_enemy_dist(v.x, v.y) ~= 1 then
+        max_dist = (at_base and defenders < 2) and 1 or max_range
+        while true do
+            funcs.combat_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+            if out[0] == 0 then break end
+            local rx, ry, dist = out[1], out[2], out[3]
+            if dist > max_dist then break end
+            if not funcs.tile_is_base(rx, ry) then
+                local id2 = funcs.choose_defender(rx, ry, id)
+                if id2 >= 0 then
+                    local v2 = veh.get(id2)
+                    if veh.triad(v2) ~= E.TRIAD_AIR then
+                        if veh.is_probe(v2) then
+                            local odds = funcs.battle_priority(id, id2, dist, moves, rx, ry)
+                            if odds > best_odds then
+                                tx, ty = rx, ry
+                                best_odds = odds
+                            end
+                        elseif dist == 1
+                            and allow_probe(faction_id, v2.faction_id, is_enhanced)
+                            and f.energy_credits > clamp(idiv(game.turn() * f.base_count, 8), 100, 500)
+                            and stack_search(rx, ry, faction_id, E.ST_EnemyOneUnit, E.WMODE_COMBAT)
+                            and funcs.has_abil(v2.unit_id, E.ABL_POLY_ENCRYPTION) == 0 then
+                            local num = veh.count()
+                            local reserve = faction.get(faction_id).energy_credits
+                            local value = funcs.probe_action(id, -1, id2, 1)
+                            local cost = reserve - faction.get(faction_id).energy_credits
+                            log.debug("combat_probe %2d %2d -> %2d %2d cost: %d value: %d",
+                                v.x, v.y, rx, ry, cost, value)
+                            if value ~= 0 or num ~= veh.count() then
+                                return E.VEH_SKIP
+                            end
+                            return E.VEH_SYNC
+                        end
+                    end
+                end
+            end
+            if tx < 0 and funcs.has_map_node(rx, ry, E.NODE_PATROL)
+                and funcs.allow_move(rx, ry, faction_id, triad) and not skip_patrol(dist, rx, ry) then
+                tx, ty = rx, ry
+            end
+        end
+    end
+
+    if aircraft and not at_airbase and tx < 0 and bx >= 0 and max_range <= 1 then
+        log.debug("combat_change %2d %2d -> %2d %2d", v.x, v.y, bx, by)
+        return funcs.set_move_to(id, bx, by)
+    end
+
+    if tx >= 0 then
+        if aircraft then
+            local range = funcs.map_range(v.x, v.y, tx, ty)
+            if not missile and range >= 1 and range <= 4 and range < max_range then
+                local best_score = -math.huge
+                bx, by = -1, -1
+                for i = 0, 8 do
+                    if funcs.tile_neighbor(v.x, v.y, i, coord, coord + 1) then
+                        local mx, my = coord[0], coord[1]
+                        if not funcs.tile_is_base(mx, my) and not funcs.non_ally_in_tile(mx, my, faction_id) then
+                            local score
+                            if needlejet then
+                                score = (needlejet_check(id, mx, my) and 0 or (i == 0 and 24 or 16))
+                                    + funcs.map_enemy_rank(mx, my)
+                                    - 32 * funcs.map_range(mx, my, tx, ty)
+                            else
+                                score = funcs.map_enemy_rank(mx, my)
+                                    - 64 * funcs.map_range(mx, my, tx, ty) + rand.map(0, 16)
+                            end
+                            if score > best_score then
+                                best_score = score
+                                bx, by = mx, my
+                            end
+                        end
+                    end
+                end
+                if bx >= 0 and not (bx == v.x and by == v.y) then
+                    log.debug("combat_cover %2d %2d -> %2d %2d / %d %d", v.x, v.y, bx, by,
+                        funcs.map_enemy_rank(bx, by), best_score)
+                    return funcs.set_move_to(id, bx, by)
+                end
+            elseif range > 1 and not at_airbase and (not missile or v.moves_spent ~= 0) then
+                for i = 1, 8 do
+                    if funcs.tile_neighbor(v.x, v.y, i, coord, coord + 1) then
+                        local mx, my = coord[0], coord[1]
+                        if not funcs.tile_is_base(mx, my) and not funcs.non_ally_in_tile(mx, my, faction_id)
+                            and funcs.map_range(mx, my, tx, ty) < range then
+                            return funcs.set_move_to(id, mx, my)
+                        end
+                    end
+                end
+            end
+        end
+        log.debug("combat_attack %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+        return funcs.set_move_to(id, tx, ty)
+    end
+
+    if px >= 0 then
+        log.debug("combat_scout %2d %2d -> %2d %2d", v.x, v.y, px, py)
+        return funcs.set_move_to(id, px, py)
+    end
+
+    if aircraft then
+        if hold_tile then
+            return funcs.mod_veh_skip(id)
+        end
+        if at_airbase and (refuel or funcs.veh_need_heals(id)) then
+            return funcs.mod_veh_skip(id)
+        end
+        local naval_airbase_x = funcs.naval_airbase_x(faction_id)
+        local naval_airbase_y = funcs.naval_airbase_y(faction_id)
+        local move_naval = naval_airbase_x >= 0 and funcs.invasion_unit(id)
+            and funcs.map_range(v.x, v.y, naval_airbase_x, naval_airbase_y) >= 20
+        local move_other = imod(game.turn() + id, 8) < 3
+        local best_score = -math.huge
+
+        if move_naval and not missile and (not chopper or not funcs.veh_need_heals(id)) then
+            log.debug("combat_invade %2d %2d -> %2d %2d", v.x, v.y, naval_airbase_x, naval_airbase_y)
+            return funcs.set_move_to(id, naval_airbase_x, naval_airbase_y)
+        end
+        tx, ty = -1, -1
+        if move_naval or move_other then
+            for i = 0, base_api.count() - 1 do
+                local b = base_api.get(i)
+                if b.faction_id == faction_id or funcs.has_pact(faction_id, b.faction_id) ~= 0 then
+                    local base_value = clamp(b.faction_id == faction_id and b.defend_goal or 2, 1, 5)
+                    local base_range = funcs.map_range(v.x, v.y, b.x, b.y)
+                    if base_range <= max_range * ((missile or base_only) and 1 or 2) then
+                        local score
+                        if move_naval then
+                            score = rand.map(0, 8) + min(8, idiv(cover_score(b.x, b.y), 16))
+                                - funcs.map_range(b.x, b.y, naval_airbase_x, naval_airbase_y)
+                                    * (b.faction_id == faction_id and 1 or 2)
+                        else
+                            score = rand.map(0, 8) + 4 * base_value
+                                + min(8, idiv(cover_score(b.x, b.y), 16))
+                                - base_range * (b.faction_id == faction_id and 1 or 2)
+                        end
+                        if score > best_score then
+                            tx, ty = b.x, b.y
+                            best_score = score
+                        end
+                    end
+                end
+            end
+        end
+        if tx >= 0 and not (v.x == tx and v.y == ty) then
+            log.debug("combat_rebase %2d %2d -> %2d %2d score: %d", v.x, v.y, tx, ty, best_score)
+            return funcs.set_move_to(id, tx, ty)
+        end
+        if not at_airbase and (not gravship or (not veh.is_probe(v) and rand.map(0, 8) == 0)) then
+            return funcs.move_to_base(id, true)
+        end
+        if at_airbase and funcs.has_abil(v.unit_id, E.ABL_AIR_SUPERIORITY) ~= 0
+            and not high_damage and rand.map(0, 2) ~= 0 then
+            return funcs.set_order_none(id)
+        end
+    end
+
+    if arty then
+        local offset = 0
+        local best_score = 0
+        tx, ty = -1, -1
+        local range_limit = funcs.arty_table_range(v.unit_id)
+        for i = 1, range_limit - 1 do
+            if funcs.tile_neighbor(v.x, v.y, i, coord, coord + 1) then
+                local x2, y2 = coord[0], coord[1]
+                if funcs.map_enemy(x2, y2) > 0 then
+                    local arty_limit
+                    if funcs.tile_is_base(x2, y2) or bit.band(funcs.tile_items(x2, y2), E.BIT_BUNKER) ~= 0 then
+                        arty_limit = idiv(rules.max_dmg_percent_arty_base_bunker, 10)
+                    else
+                        arty_limit = idiv(funcs.tile_is_ocean(x2, y2)
+                            and rules.max_dmg_percent_arty_sea or rules.max_dmg_percent_arty_open, 10)
+                    end
+                    local score = 0
+                    local owner2 = funcs.tile_owner(x2, y2)
+                    local is_base2 = funcs.tile_is_base(x2, y2)
+                    for j = 0, veh.count() - 1 do
+                        local v2 = veh.get(j)
+                        if v2.x == x2 and v2.y == y2 and funcs.at_war(faction_id, v2.faction_id) ~= 0
+                            and (veh.triad(v2) ~= E.TRIAD_AIR or is_base2) then
+                            local damage = idiv(v2.damage_taken, tech.proto_reactor_type(v2.unit_id))
+                            score = score + max(0, arty_limit - damage)
+                                * (v2.faction_id > 0 and 2 or 1)
+                                * (veh.is_combat_unit(v2) and 2 or 1)
+                                * (owner2 == faction_id and 2 or 1)
+                        end
+                    end
+                    if score ~= 0 then
+                        score = score * (is_base2 and 2 or 3) * (arty_limit == 10 and 2 or 1) + rand.map(0, 32)
+                        log.debug("arty_score %2d %2d -> %2d %2d score: %d", v.x, v.y, x2, y2, score)
+                        if score > best_score then
+                            best_score = score
+                            offset = i
+                            tx, ty = x2, y2
+                        end
+                    end
+                end
+            end
+        end
+        if tx >= 0 and ((at_base and defenders == 0) or rand.map(0, 256) < min(224, best_score)) then
+            log.debug("combat_arty %2d %2d -> %2d %2d score: %d", v.x, v.y, tx, ty, best_score)
+            funcs.mod_battle_fight(id, offset, 1, 1)
+            return E.VEH_SYNC
+        end
+    end
+
+    if not aircraft and combat and at_enemy
+        and bit.band(funcs.tile_items(v.x, v.y), bit.bor(E.BIT_SENSOR, E.BIT_AIRBASE, E.BIT_THERMAL_BORE)) ~= 0
+        and (max_range <= 1 or rand.map(0, 2) ~= 0) then
+        return funcs.net_action_destroy(id, 0, -1, -1)
+    end
+
+    if at_base and (defenders == 0 or defenders < defender_goal(v.x, v.y, faction_id, triad)) then
+        log.debug("combat_defend %2d %2d", v.x, v.y)
+        return funcs.set_order_none(id)
+    end
+
+    if funcs.veh_need_heals(id) then
+        return escape_move(id)
+    end
+
+    if teleport and v.moves_spent == 0 then
+        local source = funcs.base_at(v.x, v.y)
+        local target = -1
+        if source >= 0 and base_api.get(source).faction_id == faction_id and funcs.can_use_teleport(source) then
+            local best_score = teleport_score(source) + rand.map(0, 256)
+            for i = 0, base_api.count() - 1 do
+                local b = base_api.get(i)
+                if b.faction_id == faction_id and source ~= i
+                    and funcs.has_fac_built(E.FAC_PSI_GATE, i) ~= 0
+                    and ((triad == E.TRIAD_LAND and funcs.is_ocean(i) == 0)
+                        or (triad == E.TRIAD_SEA and funcs.coast_tiles(b.x, b.y) ~= 0)
+                        or (triad == E.TRIAD_AIR and funcs.map_range(v.x, v.y, b.x, b.y) > 2 * max_range)) then
+                    local score = teleport_score(i) - 16 * funcs.map_target(b.x, b.y)
+                    if score > best_score then
+                        best_score = score
+                        target = i
+                    end
+                end
+            end
+        end
+        if target >= 0 then
+            local b = base_api.get(target)
+            log.debug("action_gate %2d %2d -> %2d %2d", v.x, v.y, b.x, b.y)
+            funcs.map_target_incr(b.x, b.y)
+            funcs.net_action_gate(id, target)
+            return E.VEH_SYNC
+        end
+    end
+
+    if not aircraft and at_base and not veh.at_target(v) and v.iter_count >= 4 then
+        return funcs.mod_veh_skip(id)
+    end
+    if aircraft and not gravship then
+        return funcs.mod_veh_skip(id)
+    end
+
+    if triad == E.TRIAD_SEA then
+        local naval_scout_x = funcs.naval_scout_x(faction_id)
+        local naval_scout_y = funcs.naval_scout_y(faction_id)
+        local naval_end_x = funcs.naval_end_x(faction_id)
+        local naval_end_y = funcs.naval_end_y(faction_id)
+        if naval_scout_x >= 0
+            and (naval_end_x < 0 or funcs.map_range(v.x, v.y, naval_end_x, naval_end_y) > 15)
+            and rand.map(0, funcs.enemy_factions(faction_id) ~= 0 and 16 or 8) == 0 then
+            for i = 0, 8 do
+                if funcs.tile_neighbor(naval_scout_x, naval_scout_y, i, coord, coord + 1) then
+                    local mx, my = coord[0], coord[1]
+                    if funcs.allow_move(mx, my, faction_id, E.TRIAD_SEA) and rand.map(0, 4) == 0 then
+                        log.debug("combat_patrol %2d %2d -> %2d %2d", v.x, v.y, mx, my)
+                        return funcs.set_move_to(id, mx, my)
+                    end
+                end
+            end
+        end
+    end
+
+    -- Check if the unit should move to stackup point or board naval transport.
+    if landing_unit then
+        local naval_start_x = funcs.naval_start_x(faction_id)
+        local naval_start_y = funcs.naval_start_y(faction_id)
+        tx, ty = naval_start_x, naval_start_y
+        if v.x == tx and v.y == ty then
+            return funcs.mod_veh_skip(id)
+        elseif defender_count(tx, ty, -1) + idiv(funcs.map_target(tx, ty), 2)
+            < defender_goal(tx, ty, faction_id, E.TRIAD_LAND) then
+            log.debug("combat_stack %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+            return funcs.set_move_to(id, tx, ty)
+        end
+    end
+
+    -- Provide cover for naval transports.
+    if invasion_ship and v.moves_spent == 0 then
+        local naval_end_x = funcs.naval_end_x(faction_id)
+        local naval_end_y = funcs.naval_end_y(faction_id)
+        if funcs.map_range(v.x, v.y, naval_end_x, naval_end_y) > rand.map(0, 16)
+            and cover_score(v.x, v.y) < cover_score(naval_end_x, naval_end_y) then
+            log.debug("combat_escort %2d %2d -> %2d %2d", v.x, v.y, naval_end_x, naval_end_y)
+            return funcs.set_move_to(id, naval_end_x, naval_end_y)
+        end
+    end
+
+    tx, ty = -1, -1
+    if triad == E.TRIAD_SEA and arty and not at_base then
+        local best_score = cover_score(v.x, v.y) + rand.map(0, 64)
+        max_dist = clamp(max_dist + 4, 8, 16)
+        funcs.combat_search_start(id, E.TRIAD_SEA, 0)
+        while true do
+            funcs.combat_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+            if out[0] == 0 then break end
+            local rx, ry, dist = out[1], out[2], out[3]
+            if dist > max_dist then break end
+            local score = cover_score(rx, ry) - 4 * dist
+            if score > best_score and funcs.allow_move(rx, ry, faction_id, triad) then
+                tx, ty = rx, ry
+                best_score = score
+            end
+        end
+        if tx >= 0 then
+            log.debug("combat_adjust %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+            return funcs.set_move_to(id, tx, ty)
+        end
+    end
+
+    -- Find a base to attack or defend own base on the same region.
+    local tolerance = (ignore_zocs and 4 or 2) + (triad == E.TRIAD_LAND and 0 or 2)
+    local limit
+    if imod(game.turn() + id, 4) ~= 0 then
+        limit = idiv(E.QueueSize, defend and 20 or 4)
+    else
+        limit = idiv(E.QueueSize, defend and 5 or 1)
+    end
+    local check_zocs = not ignore_zocs and funcs.map_enemy_near(v.x, v.y) ~= 0
+    local base_found = at_base
+    max_dist = E.PathLimit
+    local best_score = -math.huge
+    tx, ty = -1, -1
+    px, py = -1, -1
+    local best_dist, best_prev_x, best_prev_y
+
+    if triad == E.TRIAD_SEA and (veh.is_probe(v) or v.unit_id == E.BSC_SEALURK) then
+        funcs.combat_search_start(id, E.TS_SEA_AND_SHORE, 0)
+    else
+        -- Skip pole tiles.
+        funcs.combat_search_start(id, triad, triad == E.TRIAD_LAND and 1 or 0)
+    end
+    local iter = 0
+    while iter < limit do
+        iter = iter + 1
+        funcs.combat_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+        if out[0] == 0 then break end
+        local rx, ry, dist, prev_x, prev_y = out[1], out[2], out[3], out[4], out[5]
+        if dist > max_dist then break end
+        local is_base_here = funcs.tile_is_base(rx, ry)
+        base_found = base_found or is_base_here
+        if is_base_here and not (check_zocs and funcs.combat_search_has_zoc(faction_id)) then
+            local owner = funcs.tile_owner(rx, ry)
+            if defend and owner == faction_id then
+                if defender_goal(rx, ry, faction_id, triad)
+                    > defender_count(rx, ry, -1) + idiv(funcs.map_target(rx, ry), 2) then
+                    log.debug("combat_defend %2d %2d -> %2d %2d", v.x, v.y, rx, ry)
+                    return funcs.set_move_to(id, rx, ry)
+                end
+            elseif not defend and (combat or veh.is_probe(v))
+                and allow_attack(faction_id, owner, veh.is_probe(v), is_enhanced) then
+                if tx < 0 then
+                    max_dist = dist + tolerance
+                end
+                local score = target_priority(rx, ry, faction_id) - 16 * dist + rand.map(0, 80)
+                if score > best_score then
+                    best_score = score
+                    best_dist, best_prev_x, best_prev_y = dist, prev_x, prev_y
+                    tx, ty = rx, ry
+                end
+            end
+        end
+    end
+
+    if not teleport and port_x >= 0
+        and defender_count(port_x, port_y, -1) + idiv(funcs.map_target(port_x, port_y), 2) < 4 then
+        if tx < 0 or clamp(funcs.map_range(v.x, v.y, tx, ty) - 6, 0, 16) > rand.map(0, 32) then
+            log.debug("combat_gate %2d %2d -> %2d %2d", v.x, v.y, port_x, port_y)
+            return funcs.set_move_to(id, port_x, port_y)
+        end
+    end
+
+    if tx >= 0 then
+        local native = veh.is_native_unit(v) or funcs.has_project(E.FAC_PHOLUS_MUTAGEN, faction_id) ~= 0
+        local flank = not defend and best_dist < 20 and rand.map(0, 16) < min(12, funcs.map_target(tx, ty))
+        local skip = false
+        if not defend and best_dist < 8 and not veh.is_probe(v) then
+            local skip_id2 = funcs.choose_defender(tx, ty, id)
+            if skip_id2 >= 0 and funcs.battle_priority(id, skip_id2, best_dist, moves, tx, ty) < 0.7 then
+                skip = true
+            end
+        end
+        if skip then
+            log.debug("combat_skip %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+        end
+        if flank or skip then
+            px, py = -1, -1
+            local best_score4 = flank_score(v.x, v.y, native)
+            local veh_region = funcs.tile_region(v.x, v.y)
+            for i = 1, 24 do
+                if funcs.tile_neighbor(v.x, v.y, i, coord, coord + 1) then
+                    local mx, my = coord[0], coord[1]
+                    if not funcs.tile_is_base(mx, my) and funcs.tile_region(mx, my) == veh_region
+                        and funcs.allow_move(mx, my, faction_id, triad) then
+                        local score = flank_score(mx, my, native)
+                        if score > best_score4 then
+                            px, py = mx, my
+                            best_score4 = score
+                        end
+                    end
+                end
+            end
+            if px >= 0 then
+                log.debug("combat_flank %2d %2d -> %2d %2d", v.x, v.y, px, py)
+                funcs.update_move_path(id, px, py)
+                return funcs.set_move_to(id, px, py)
+            end
+        end
+        if not defend and not veh.is_probe(v) and not (best_prev_x == v.x and best_prev_y == v.y) then
+            if best_dist > 3 and rand.map(0, 16) < funcs.map_enemy_near(tx, ty) then
+                -- Points tiles (random.h): a deduplicated, (x,y)-sorted set;
+                -- pick_random draws one rand.map(0,#tiles) then advances
+                -- that many steps into it (IMPLEMENTATION_DETAILS.md 4.15).
+                local tiles = { { x = best_prev_x, y = best_prev_y } }
+                local seen = { [best_prev_x * 65536 + best_prev_y] = true }
+                for i = 1, 8 do
+                    if funcs.tile_neighbor(best_prev_x, best_prev_y, i, coord, coord + 1) then
+                        local mx, my = coord[0], coord[1]
+                        if funcs.allow_move(mx, my, faction_id, triad) then
+                            local key = mx * 65536 + my
+                            if not seen[key] then
+                                seen[key] = true
+                                tiles[#tiles + 1] = { x = mx, y = my }
+                            end
+                        end
+                    end
+                end
+                table.sort(tiles, function(a, b)
+                    return a.x < b.x or (a.x == b.x and a.y < b.y)
+                end)
+                local t = tiles[rand.map(0, #tiles) + 1]
+                tx, ty = t.x, t.y
+            else
+                tx, ty = best_prev_x, best_prev_y
+            end
+        end
+        log.debug("combat_search %2d %2d -> %2d %2d", v.x, v.y, tx, ty)
+        funcs.update_move_path(id, tx, ty)
+        return funcs.set_move_to(id, tx, ty)
+    end
+
+    if not base_found or veh_tile_owner < 0 then
+        if triad == E.TRIAD_LAND then
+            local rtx, rty = search_route(id)
+            if rtx then
+                log.debug("combat_route %2d %2d -> %2d %2d", v.x, v.y, rtx, rty)
+                funcs.update_move_path(id, rtx, rty)
+                return funcs.set_move_to(id, rtx, rty)
+            end
+        end
+    end
+
+    if not veh.plr_owner(v) and game.turn() > E.VEH_REMOVE_TURNS
+        and bit.band(v.state, E.VSTATE_REQUIRES_SUPPORT) ~= 0 and rand.map(0, 4) == 0 then
+        if not base_found and triad == E.TRIAD_SEA then
+            return funcs.mod_veh_kill(id)
+        end
+        if at_base and v.home_base_id >= 0 then
+            local hb = base_api.get(v.home_base_id)
+            if hb.mineral_surplus < 2 and hb.mineral_consumption > max(2, idiv(hb.mineral_intake_2, 2))
+                and hb.faction_id == faction_id and defender_count(hb.x, hb.y, -1) > 2
+                and ((hb.x == v.x and hb.y == v.y) or defender_count(v.x, v.y, -1) > 2) then
+                return funcs.mod_veh_kill(id)
+            end
+        end
+    end
+
+    if base_found and not at_base and rand.map(0, 4) == 0 then
+        return funcs.move_to_base(id, true)
+    end
+    return funcs.mod_veh_skip(id)
+end
+
 port.artifact_move = artifact_move
 port.crawler_move = crawler_move
 port.colony_move = colony_move
 port.former_move = former_move
 port.escape_move = escape_move
 port.trans_move = trans_move
+port.combat_move = combat_move
 return port

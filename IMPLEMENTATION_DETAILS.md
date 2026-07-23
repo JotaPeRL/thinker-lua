@@ -3342,29 +3342,142 @@ chunking one oversized function into reviewable pieces the way
      sub-stage beyond the `funcs.lua` mirror, so this mainly confirms
      the mirror itself parses).
 4. **Sub-stage D — `combat_move` itself, whole-function assembly + hook
-   wiring. Not yet started.** Every dependency (sub-stages A/B/C) and
-   every already-opaque wrapper from stage 5 (`choose_defender`/
-   `battle_priority`) is now in place; this sub-stage is pure
-   translation of `move.cpp:2931-3654` into one Lua function, wiring
-   the Class 3 hook in `veh_turn.cpp`, and registering it in
-   `lua/ai/init.lua` — same shape as every prior mover's own final
-   sub-stage. This is also the sub-stage that first makes the whole
-   function (plus sub-stage B's `airdrop_move`/`allow_airdrop`, still
-   unexercised) live-testable, so live verification (per Phase 5's
-   handoff protocol) closes sub-stage B, sub-stage D, and the whole of
-   movement stage 6 together.
+   wiring. Done, build-verified (2026-07-22).** Every dependency
+   (sub-stages A/B/C) and every already-opaque wrapper from stage 5
+   (`choose_defender`/`battle_priority`) was already in place; this
+   sub-stage is pure translation of `move.cpp:2931-3654` (~726 loc) into
+   one Lua function (`lua/ai/move.lua`'s `combat_move`), wiring the
+   Class 3 hook in `veh_turn.cpp` (`lua_ai_command_hook("combat_move",
+   ...)`, same shape as every prior mover's own seam) and registering it
+   in `lua/ai/init.lua` — same shape as every prior mover's own final
+   sub-stage.
 
-**Resume point:** sub-stages A, B and C closed. Next: sub-stage D
-(`combat_move` itself, `move.cpp:2931-3654`, ~726 loc — read carefully
-in full across sub-stage C's research, ready to translate) — no new
-engine-surface design work expected, only careful 1:1 translation and
-the same class of judgment calls already made repeatedly in this file
-(collapsing `MAP* sq` into `x, y` tile facts at call sites that always
-pass real on-map coordinates, replicating C++ `continue`/early-`break`
-via restructuring, normalizing `int`-as-bool host-wrapper returns with
-explicit `~= 0`/`== 0`). Given the size (larger than any prior single
-function in this project), budget it as its own dedicated session
-rather than folding it into a response already carrying sub-stage C.
+   **Two small engine-surface gaps found only while translating the body
+   end to end** (the plan above expected none, and both are narrow,
+   single-purpose corrections rather than new design work):
+   - `TableRange[arty_range(unit_id)]` (the artillery loop's own scan
+     radius, `path.h:11`'s plain `const int[9]`): rather than expose the
+     raw array to Lua (no struct-field precedent for a bare array, and
+     the only call site is this one lookup), folded both steps into one
+     new host wrapper, `arty_table_range(unit_id)`, same "engine
+     mechanic" tier as `can_arty`/`arty_range` themselves.
+   - `combat_search_start`'s sub-stage C signature only wrapped
+     `TileSearch::init`'s 3-arg overload; `combat_move`'s own final
+     base-search scan (`move.cpp:3538`) needs the 4-arg overload's
+     `ts_skip` parameter ("skip pole tiles" for `TRIAD_LAND`). Corrected
+     in place (added a `ts_skip` parameter, always calling the 4-arg
+     `init` — behavior-preserving for every other call site, since
+     `TileSearch::reset()` already zeroes `y_skip` regardless of which
+     overload is used) rather than adding a second wrapper, since the
+     function wasn't live yet (sub-stage C's own note: "not yet
+     live-verified, no caller until sub-stage D").
+   `api_version` bumped 39→40 for these two (1 new entry, 1 changed
+   signature). `TableRange[arty_range(...)]`'s `pick_random`-equivalent
+   (`random.h:38-43`) and `path.prev > 0`'s "does this node have a
+   parent that isn't the search root" check both needed no new engine
+   surface at all, exactly as sub-stage C's own research anticipated:
+   `path.prev > 0` becomes `not (best_prev_x == v.x and best_prev_y ==
+   v.y)` (the root is always the vehicle's own start tile, and
+   `TileSearch` never revisits a coordinate — `path.cpp`'s own
+   `oldtiles` dedup — so no other node's coordinates can equal it);
+   `pick_random(std::set<Point>)` becomes a plain deduplicated,
+   `(x,y)`-sorted Lua array plus one `rand.map(0, #tiles)` draw, per the
+   precedent sub-stage C's own write-up already recorded.
+
+   One new Lua-only helper, no host wrapper: `tech.proto_reactor_type`
+   (`lua/api/tech.lua`), re-deriving `VEH::reactor_type()`
+   (`engine_veh.h:535-538`, `clamp(reactor_id, 1, 4)`) the same way every
+   other dropped inline method in this project was re-exposed.
+
+   **Verified:** both CMake presets build clean; native `luajit -bl`
+   syntax-checks every file under `lua/` clean; every `funcs.*` call
+   site in the new function was cross-checked by hand against its
+   `funcs.lua` cdef arity (73 distinct host-API functions called, all
+   matched) and every `E.*` enum name against the generated
+   `types.lua` (29 distinct names, all present) — the same "3 scripted
+   sweeps" stand-in discipline sub-stages A/B/C used, since no committed
+   sweep script exists in `tools/`. **Not live-verified** — this session
+   has no `DISPLAY` and cannot drive Wine (Phase 5 intro's standing
+   note); live verification, which closes sub-stage B's own two
+   still-unexercised functions (`airdrop_move`/`allow_airdrop`) together
+   with sub-stage D and the whole of movement stage 6, is handed off to
+   the maintainer's next in-game/`--lua-shadow` autoplay session.
+
+**First live-testing attempt (2026-07-22): a real crash found and
+fixed, native code, not the Lua port itself.** A manual-play session hit
+a hard `assert()` abort after ~144 turns:
+`Assertion Failed: veh1->faction_id != veh2->faction_id
+/home/jp/Projetos/thinker/src/move.cpp 219` — inside `battle_priority`
+(`move.cpp:211-299`), an already-opaque host wrapper unchanged since
+movement stage 5 (4.14), called by `combat_move` in Lua exactly as the
+native `combat_move` always called it. `lua.log`/`debug.txt` both showed
+**zero** hook errors/mismatches up to the crash line — this was not a
+Lua-side defect.
+
+Root cause traced to `choose_defender` (`move.cpp:301-323`): its final
+sanity check (`!at_war(faction_id, Vehs[veh_id_def].faction_id)`) used
+to be skipped whenever the target tile was an enemy-owned base
+(`!is_base` guard), trusting `mod_best_defender`/`find_defender`
+(`veh_combat.cpp:432-511`) to have picked a genuinely hostile unit.
+Reading `find_defender` in full showed it doesn't filter by
+faction/hostility at all — it walks the tile's *entire* physical stack
+(`veh_top`/`next_veh_id_stack`, the engine's own stacking list) and
+scores every unit present, attacker's-own-faction or pact-partner
+included. When a faction's own (or an allied) unit is garrisoned
+alongside the actual hostile defender in a partner's base, and it scores
+better as "best defender" than the real target, `choose_defender`
+returned it unfiltered — and `battle_priority` received an attacker and
+"defender" of the same faction, tripping its own assert. Confirmed this
+assert is live in every build preset (debug/develop/release): none of
+the three defines `NDEBUG` (`CMakeLists.txt`'s `CMAKE_CXX_FLAGS_DEVELOP`/
+`_RELEASE` are both custom strings that don't inherit CMake's default
+`-DNDEBUG` injection), so this was never a "debug-only" latent risk.
+
+**Fix (user-directed, 2026-07-22):** `choose_defender`'s `at_war` check
+is now unconditional — the `!is_base` escape is removed entirely, one
+line, `move.cpp:319` (see the inline comment left at the fix site for
+the full rationale). This closes the gap for every caller uniformly (5
+native call sites in `move.cpp` plus the Lua host wrapper
+`host_choose_defender`), including the exact crash case: `at_war` is
+`false` for `faction_id == faction_id` by construction
+(`faction.cpp:153-156`), so a same-faction pick is now rejected the same
+way a pact-partner pick already is. Both CMake presets rebuild clean;
+deployed (`tools/deploy.sh debug`) for the next test. Not yet
+re-verified live — awaiting the maintainer's next session.
+
+**Live-verified clean (2026-07-23), 151-turn `--lua-shadow` autoplay run
+(`lua_ai=1 lua_shadow=1 lua_strict=0 autoplay=1`, confirmed from the
+logged config line):** no crash, no `Assertion Failed`, zero real
+error/mismatch/exception/traceback lines in either `lua.log` (52797
+lines) or `debug.txt` (291524 lines) — the initial word-boundary-free
+grep for "error" returned 414 hits, all false positives from the base
+name "Terror's Delight" containing the substring "error"; re-checked
+with `\berror\b` and explicit patterns (`Assertion Failed`, `lua/cpp`,
+`mismatch`, `traceback`, `exception`), all zero. The `choose_defender`
+fix held under sustained real play: turns progressed 2→151
+uninterrupted, no stall.
+
+Nearly the whole `combat_move` decision surface fired for real:
+`combat_attack` 15591, `combat_defend` 5359, `arty_score`/`combat_arty`
+3207/560, `combat_probe` 2838, `combat_search` 1339, `combat_scout`
+1157, `combat_skip` 276, `combat_flank` 354, `combat_stack` 169,
+`combat_cover` 152, `combat_adjust` 99, `combat_rebase` 39,
+`combat_route` 18, `combat_escort` 4, `combat_patrol` 1. **Two narrow
+branches did not fire this run** (coverage gap, not a known defect,
+per this file's own "absence of a mismatch is not evidence of
+correctness" caveat): `combat_change` (aircraft adjacent-tile backup
+attack, needs `bx>=0 && max_range<=1`) and `combat_gate`/`action_gate`
+(the Psi Gate teleport-adjacent branches). **Sub-stage B's own
+`airdrop_move` also did not fire** (0 occurrences) — still unexercised;
+its narrow eligibility window (an at-war base 3..max_range tiles away,
+airdrop-tech-gated) apparently didn't come up in this game's 151 turns.
+Revisit opportunistically on a later run rather than block on it, same
+disposition the project already gave `select_build`'s 5 late-tier
+facility branches (Phase 4.2 item 3's status).
+
+**Movement stage 6 (`combat_move`) is closed.** Porting-order item 4
+(Movement) is complete except `nuclear_move`, deliberately ordered last
+(plan 4.2, movement stage 7).
 
 ---
 

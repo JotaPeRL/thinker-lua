@@ -547,8 +547,10 @@ enable Lua by default on the branch → next.
    territory: largest, most performance-sensitive, ported last with the
    C++ baseline already measured.
 
-   **Status: 🔨 stages 0-3 done and live-verified; the `route_score`/
-   `search_route` pending item (below) is now fully resolved and closed
+   **Status: 🔨 stages 0-6 done and live-verified (`artifact_move`
+   through `combat_move`); only `nuclear_move` (stage 7) remains for
+   Movement to be complete.** The `route_score`/`search_route` pending
+   item (below) is now fully resolved and closed
    (2026-07-22) — sub-stage A (`route_score` + its two `Bases[]` scans)
    and sub-stage B (the three `TileSearch` scans, full reassembly, hook
    wiring into `artifact_move`/`colony_move`) both done, build-verified
@@ -625,9 +627,37 @@ enable Lua by default on the branch → next.
    **Revised and back on every prior mover's own precedent instead:
    sub-stage C (remaining engine surface — a generic re-initializable
    `TileSearch` iterator, `api_version` 38→39, 19 new entries) is done
-   and build-verified; sub-stage D (`combat_move` itself, whole-function
-   assembly + hook wiring) is next and not yet started** — full detail
-   and rationale in `IMPLEMENTATION_DETAILS.md` 4.15.**
+   and build-verified. Sub-stage D (`combat_move` itself, whole-function
+   assembly + the Class 3 hook in `veh_turn.cpp`) is done and
+   build-verified (2026-07-22)** — pure translation of `move.cpp:2931-
+   3654`, plus two small engine-surface gaps found only while
+   translating (a new `arty_table_range` wrapper folding
+   `TableRange[arty_range(...)]` into one call; `combat_search_start`
+   gained a `ts_skip` parameter for the final base-search scan's "skip
+   pole tiles" case), `api_version` 39→40. Native `luajit` syntax-check
+   and a full manual `funcs.*`/`E.*` arity and enum-coverage
+   cross-check stand in for live testing, same as sub-stages A-C — **not
+   yet live-verified** (no `DISPLAY` in this session); live verification
+   is handed off to the maintainer and, once clean, closes sub-stage B's
+   still-unexercised `airdrop_move`/`allow_airdrop` together with
+   sub-stage D and the whole of movement stage 6. **First live-testing
+   attempt found a real crash (2026-07-22)** — a native `assert()` abort
+   in `battle_priority`, unrelated to the Lua port itself (`lua.log`/
+   `debug.txt` showed zero hook errors up to the crash): `choose_defender`
+   could return a same-faction or pact-partner unit as "defender" when
+   the target was an enemy-owned base, because `find_defender`
+   (`veh_combat.cpp`) scores every unit in a tile's stack with no
+   hostility filter at all. **Fixed at the root** — `choose_defender`'s
+   `at_war` check is now unconditional, closing the gap for every caller
+   (native and Lua alike). **Re-verified live and closed (2026-07-23):**
+   a 151-turn `--lua-shadow` autoplay run, 0 crashes, 0 errors/mismatches
+   in `lua.log`/`debug.txt`, nearly the entire `combat_move` decision
+   surface exercised (`combat_attack` 15591, `combat_defend` 5359,
+   `arty_score`/`combat_arty` 3207/560, `combat_probe` 2838, and more).
+   Two narrow branches (`combat_change`, `combat_gate`) and sub-stage
+   B's `airdrop_move` didn't fire this run — a coverage gap, not a known
+   defect, revisit opportunistically. **Movement stage 6 is closed** —
+   full detail and rationale in `IMPLEMENTATION_DETAILS.md` 4.15.**
    Stage 3 (`colony_move`, plus its own `escape_score`/
    `search_escape`/`search_base`/`escape_move`/`base_tile_score`
    dependencies) closed 2026-07-22: 613 real decision-trace lines across

@@ -1568,6 +1568,10 @@ static int32_t host_arty_range(int32_t unit_id) {
     return arty_range(unit_id);
 }
 
+static int32_t host_arty_table_range(int32_t unit_id) {
+    return TableRange[arty_range(unit_id)];
+}
+
 static int32_t host_tile_is_airbase(int32_t x, int32_t y) {
     MAP* sq = mapsq(x, y);
     return sq && sq->is_airbase();
@@ -1608,9 +1612,9 @@ int32_t toggle) {
 // call, so ts_type is a runtime parameter here, not baked in.
 static TileSearch g_combat_ts;
 
-static void host_combat_search_start(int32_t veh_id, int32_t ts_type) {
+static void host_combat_search_start(int32_t veh_id, int32_t ts_type, int32_t ts_skip) {
     VEH* veh = &Vehs[veh_id];
-    g_combat_ts.init(veh->x, veh->y, ts_type);
+    g_combat_ts.init(veh->x, veh->y, ts_type, ts_skip);
 }
 
 static void host_combat_search_next(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
@@ -1660,7 +1664,7 @@ static int32_t host_prioritize_naval(int32_t faction_id) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 39,
+    /* api_version          */ 40,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1889,6 +1893,7 @@ static LuaHostApi g_host_api = {
     /* map_flags                    */ host_map_flags,
     /* can_arty                     */ host_can_arty,
     /* arty_range                   */ host_arty_range,
+    /* arty_table_range             */ host_arty_table_range,
     /* tile_is_airbase              */ host_tile_is_airbase,
     /* veh_mid_damage               */ host_veh_mid_damage,
     /* update_move_path             */ host_update_move_path,

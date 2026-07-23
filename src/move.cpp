@@ -316,7 +316,23 @@ int choose_defender(int x, int y, int veh_id_atk, MAP* sq) {
         return -1;
     }
     veh_id_def = mod_best_defender(veh_id_def, veh_id_atk, 0);
-    if (veh_id_def >= 0 && !is_base && !at_war(faction_id, Vehs[veh_id_def].faction_id)) {
+    /*
+    Bug fix: find_defender() (veh_combat.cpp) walks the whole physical
+    stack at (x, y) via the engine's own stacking list and scores every
+    unit present, with no faction/hostility filter at all -- it happily
+    returns the attacker's own unit, or a pact partner's, if either scores
+    as "best defender" (e.g. a strong ally garrisoned in a partner's base
+    alongside a weak actual hostile). The `is_base` exception below used
+    to skip this check entirely when attacking an enemy-owned base,
+    trusting mod_best_defender to have picked a real target -- which it
+    doesn't guarantee. Un-conditioning the check (removing the `!is_base`
+    escape) closes that gap for every caller uniformly, including the
+    same-faction case (`at_war` is false for faction_id == faction_id by
+    construction), which used to reach battle_priority() and trip its own
+    `assert(veh1->faction_id != veh2->faction_id)` -- a real in-game crash
+    found live-testing combat_move (IMPLEMENTATION_DETAILS.md 4.15).
+    */
+    if (veh_id_def >= 0 && !at_war(faction_id, Vehs[veh_id_def].faction_id)) {
         return -1;
     }
     return veh_id_def;

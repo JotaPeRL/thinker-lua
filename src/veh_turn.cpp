@@ -230,6 +230,13 @@ int __cdecl mod_enemy_move(int veh_id) {
         } else if (veh->is_planet_buster()) {
             return nuclear_move(veh_id);
         } else {
+            // Movement port, stage 6 (IMPLEMENTATION_DETAILS.md 4.15):
+            // Class 3 hook, same shape as trans_move/former_move/
+            // colony_move/crawler_move/artifact_move's own seams.
+            int value;
+            if (lua_ai_command_hook("combat_move", &value, veh_id)) {
+                return value;
+            }
             return combat_move(veh_id);
         }
     }

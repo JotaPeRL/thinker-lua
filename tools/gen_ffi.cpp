@@ -828,6 +828,14 @@ int main() {
     printf("    VSTATE_PACIFISM_FREE_SKIP = %d,\n", VSTATE_PACIFISM_FREE_SKIP);
     printf("    VSTATE_REQUIRES_SUPPORT = %d,\n", VSTATE_REQUIRES_SUPPORT);
     printf("    BSC_SEALURK = %d,\n", BSC_SEALURK);
+    // combat_move port, sub-stage D (IMPLEMENTATION_DETAILS.md 4.15):
+    // native-unit check, the sensor/airbase/thermal-bore destroy branch,
+    // and the enhanced-probe stack-search filter -- all three already
+    // visible via headers included above (engine_enums.h/engine_veh.h),
+    // compiler-read like every other enum in this block.
+    printf("    FAC_PHOLUS_MUTAGEN = %d,\n", FAC_PHOLUS_MUTAGEN);
+    printf("    ABL_POLY_ENCRYPTION = %d,\n", ABL_POLY_ENCRYPTION);
+    printf("    BIT_AIRBASE = %d,\n", BIT_AIRBASE);
     printf("    GOV_MAY_PROD_TERRAFORMERS = %d,\n", GOV_MAY_PROD_TERRAFORMERS);
     // Movement port, stage 1 (IMPLEMENTATION_DETAILS.md 4.12): VEH::at_target().
     printf("    ORDER_NONE = %d,\n", ORDER_NONE);
