@@ -1660,11 +1660,196 @@ static int32_t host_prioritize_naval(int32_t faction_id) {
     return plans[faction_id].prioritize_naval;
 }
 
+// Movement stage 7A (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan/
+// invasion_plan/update_main_region's own AIPlans field writes -- the first
+// Lua-side writes to plans[], mirroring the read/write asymmetry rule the
+// same way every other engine mutation already does.
+static int32_t host_naval_beach_x(int32_t faction_id) {
+    return plans[faction_id].naval_beach_x;
+}
+
+static int32_t host_naval_beach_y(int32_t faction_id) {
+    return plans[faction_id].naval_beach_y;
+}
+
+static void host_set_main_region(int32_t faction_id, int32_t region, int32_t x, int32_t y) {
+    plans[faction_id].main_region = region;
+    plans[faction_id].main_region_x = x;
+    plans[faction_id].main_region_y = y;
+}
+
+static void host_set_main_sea_region(int32_t faction_id, int32_t region) {
+    plans[faction_id].main_sea_region = region;
+}
+
+static void host_set_target_land_region(int32_t faction_id, int32_t region) {
+    plans[faction_id].target_land_region = region;
+}
+
+static void host_set_prioritize_naval(int32_t faction_id, int32_t value) {
+    plans[faction_id].prioritize_naval = value;
+}
+
+static void host_set_naval_scout(int32_t faction_id, int32_t x, int32_t y) {
+    plans[faction_id].naval_scout_x = x;
+    plans[faction_id].naval_scout_y = y;
+}
+
+static void host_set_naval_airbase(int32_t faction_id, int32_t x, int32_t y) {
+    plans[faction_id].naval_airbase_x = x;
+    plans[faction_id].naval_airbase_y = y;
+}
+
+static void host_set_naval_start(int32_t faction_id, int32_t x, int32_t y) {
+    plans[faction_id].naval_start_x = x;
+    plans[faction_id].naval_start_y = y;
+}
+
+static void host_set_naval_end(int32_t faction_id, int32_t x, int32_t y) {
+    plans[faction_id].naval_end_x = x;
+    plans[faction_id].naval_end_y = y;
+}
+
+static void host_set_naval_beach(int32_t faction_id, int32_t x, int32_t y) {
+    plans[faction_id].naval_beach_x = x;
+    plans[faction_id].naval_beach_y = y;
+}
+
+// land_raise_plan/invasion_plan/update_main_region's own TileSearch scans
+// (move.cpp). Distinct static instance from g_combat_ts: faction-level
+// planning and per-vehicle movement dispatch never interleave (same
+// sequential-turn-processing assumption g_mutation_issued already relies
+// on), so a second file-local static TileSearch is safe.
+static TileSearch g_region_ts;
+
+static void host_region_search_start(int32_t x, int32_t y, int32_t ts_type, int32_t ts_dist) {
+    if (ts_dist < 0) {
+        g_region_ts.init(x, y, ts_type);
+    } else {
+        g_region_ts.init(x, y, ts_type, ts_dist);
+    }
+}
+
+static void host_region_search_start_multi(int32_t count, int32_t* xs, int32_t* ys,
+int32_t ts_type, int32_t ts_dist) {
+    PointList points;
+    for (int32_t i = 0; i < count; i++) {
+        points.push_back({xs[i], ys[i]});
+    }
+    g_region_ts.init(points, (TSType)ts_type, ts_dist);
+}
+
+static void host_region_search_next(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+int32_t* prev_x, int32_t* prev_y) {
+    if (g_region_ts.get_next() == NULL) {
+        *valid = 0;
+        return;
+    }
+    *valid = 1;
+    *tx = g_region_ts.rx;
+    *ty = g_region_ts.ry;
+    *dist = g_region_ts.dist;
+    PathNode& prev = g_region_ts.get_prev();
+    *prev_x = prev.x;
+    *prev_y = prev.y;
+}
+
+static void host_region_search_get_route(int32_t* out_count, int32_t* xs, int32_t* ys,
+int32_t max_count) {
+    PointList path;
+    g_region_ts.get_route(path);
+    int32_t n = 0;
+    for (auto& pp : path) {
+        if (n >= max_count) {
+            break;
+        }
+        xs[n] = pp.x;
+        ys[n] = pp.y;
+        n++;
+    }
+    *out_count = n;
+}
+
+static void host_region_search_adjust_roads(int32_t value) {
+    g_mutation_issued = true;
+    g_region_ts.adjust_roads(mapdata, value);
+}
+
+// goal.cpp accessors (IMPLEMENTATION_DETAILS.md 4.16): pure queries, no
+// mutation, unlike add_goal.
+static int32_t host_has_goal(int32_t faction_id, int32_t type, int32_t x, int32_t y) {
+    return has_goal(faction_id, type, x, y);
+}
+
+static void host_find_priority_goal(int32_t faction_id, int32_t type,
+int32_t* px, int32_t* py) {
+    int x = -1, y = -1;
+    find_priority_goal(faction_id, type, &x, &y);
+    *px = x;
+    *py = y;
+}
+
+static int32_t host_can_alter_level(int32_t x, int32_t y, int32_t faction_id, int32_t raise) {
+    return can_alter_level(x, y, faction_id, raise != 0);
+}
+
+static void host_mapdata_set_overlay(int32_t x, int32_t y, int32_t value) {
+    g_mutation_issued = true;
+    mapdata[{x, y}].overlay = value;
+}
+
+// land_raise_plan's own mapdata scan (move.cpp:598-619, IMPLEMENTATION_
+// DETAILS.md 4.16). g_land_raise_it walks the real mapdata unordered_map
+// directly across calls -- same object/iteration the original C++ uses,
+// not reconstructed in Lua.
+static PMTable::iterator g_land_raise_it;
+static int32_t g_land_raise_max_size = 0;
+
+static void host_land_raise_search_start(int32_t max_size) {
+    g_land_raise_max_size = max_size;
+    g_land_raise_it = mapdata.begin();
+}
+
+static void host_land_raise_search_next(int32_t faction_id, int32_t* valid,
+int32_t* x, int32_t* y, int32_t* nx, int32_t* ny) {
+    for (; g_land_raise_it != mapdata.end(); ++g_land_raise_it) {
+        auto& mp = *g_land_raise_it;
+        if (!(mp.second.flags & PM_LandBaseRds)) {
+            continue;
+        }
+        if (mp.first.y < 2 || mp.first.y >= *MapAreaY - 2) {
+            continue;
+        }
+        MAP* sq = mapsq(mp.first.x, mp.first.y);
+        if (!sq || is_ocean(sq)) {
+            continue;
+        }
+        if (!coast_tiles(mp.first.x, mp.first.y)) {
+            continue;
+        }
+        if (!can_alter_level(mp.first.x, mp.first.y, faction_id, true)) {
+            continue;
+        }
+        for (auto& m : iterate_tiles(mp.first.x, mp.first.y, 1, 9)) {
+            if (is_ocean(m.sq) && Continents[m.sq->region].tile_count <= g_land_raise_max_size) {
+                *valid = 1;
+                *x = mp.first.x;
+                *y = mp.first.y;
+                *nx = m.x;
+                *ny = m.y;
+                ++g_land_raise_it;
+                return;
+            }
+        }
+    }
+    *valid = 0;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 40,
+    /* api_version          */ 42,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -1909,6 +2094,28 @@ static LuaHostApi g_host_api = {
     /* naval_scout_x                */ host_naval_scout_x,
     /* naval_scout_y                */ host_naval_scout_y,
     /* prioritize_naval             */ host_prioritize_naval,
+    /* naval_beach_x                */ host_naval_beach_x,
+    /* naval_beach_y                */ host_naval_beach_y,
+    /* set_main_region              */ host_set_main_region,
+    /* set_main_sea_region          */ host_set_main_sea_region,
+    /* set_target_land_region       */ host_set_target_land_region,
+    /* set_prioritize_naval         */ host_set_prioritize_naval,
+    /* set_naval_scout              */ host_set_naval_scout,
+    /* set_naval_airbase            */ host_set_naval_airbase,
+    /* set_naval_start              */ host_set_naval_start,
+    /* set_naval_end                */ host_set_naval_end,
+    /* set_naval_beach              */ host_set_naval_beach,
+    /* region_search_start          */ host_region_search_start,
+    /* region_search_start_multi    */ host_region_search_start_multi,
+    /* region_search_next           */ host_region_search_next,
+    /* region_search_get_route      */ host_region_search_get_route,
+    /* region_search_adjust_roads   */ host_region_search_adjust_roads,
+    /* has_goal                     */ host_has_goal,
+    /* find_priority_goal           */ host_find_priority_goal,
+    /* can_alter_level               */ host_can_alter_level,
+    /* mapdata_set_overlay           */ host_mapdata_set_overlay,
+    /* land_raise_search_start       */ host_land_raise_search_start,
+    /* land_raise_search_next        */ host_land_raise_search_next,
 };
 
 static lua_State* L = NULL;
@@ -2286,6 +2493,64 @@ bool lua_ai_command_hook(const char* name, int* out, int veh_id) {
     static std::unordered_set<std::string> logged_first_command_call;
     if (handled && logged_first_command_call.insert(name).second) {
         lua_logf("lua_ai_command_hook: '%s' invoked and handled (result=%d)\n", name, *out);
+    }
+    return handled;
+}
+
+// See luaai.h for the full contract. Same taxonomy as lua_ai_command_hook
+// (Class 3, no-fallback-after-first-mutation) but for the faction-level
+// planners (land_raise_plan/invasion_plan, IMPLEMENTATION_DETAILS.md 4.16):
+// (faction_id) -> void instead of (veh_id) -> int, and no per-unit
+// mod_veh_skip exists to recover with once state has already changed --
+// there is no single vehicle this call is "about". Return protocol mirrors
+// Class 1/2: a Lua return of exactly `false` means "not handled, run the
+// C++ body" (only meaningful before any mutation); anything else --
+// including no return at all -- means handled, matching how these
+// functions are naturally written (most of their own early-return branches
+// are legitimate no-ops, not failures, so defaulting to "handled" avoids
+// forcing every trivial early exit to spell out `return true`).
+bool lua_ai_command_hook_faction(const char* name, int faction_id) {
+    if (!conf.lua_ai || disabled_for_session || !L) {
+        return false;
+    }
+    auto it = hook_refs.find(name);
+    if (it == hook_refs.end()) {
+        return false;
+    }
+
+    g_mutation_issued = false;
+    lua_pushcfunction(L, traceback_handler);
+    int errfunc = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, it->second);
+    lua_pushinteger(L, faction_id);
+    if (lua_pcall(L, 1, 1, errfunc) != 0) {
+        const char* msg = lua_tostring(L, -1);
+        handle_lua_error(name, msg);
+        lua_settop(L, errfunc - 1);
+        if (g_mutation_issued) {
+            // Real state already changed -- cannot fall back to the
+            // caller's own C++ body over partially-mutated plans[]/
+            // goals[]. Nothing to "finish safely" the way a single
+            // vehicle can be skipped; just accept the partial state and
+            // report handled so the caller doesn't re-run its own body.
+            return true;
+        }
+        return false;
+    }
+
+    bool handled = !(lua_isboolean(L, -1) && !lua_toboolean(L, -1));
+    lua_settop(L, errfunc - 1);
+
+    if (!handled && g_mutation_issued) {
+        // Lua mutated state but then returned false -- same no-fallback
+        // rule applies; a late "not handled" is not evidence "nothing
+        // happened" once a mutation already did.
+        handled = true;
+    }
+
+    static std::unordered_set<std::string> logged_first_command_call_faction;
+    if (handled && logged_first_command_call_faction.insert(name).second) {
+        lua_logf("lua_ai_command_hook_faction: '%s' invoked and handled\n", name);
     }
     return handled;
 }

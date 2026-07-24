@@ -276,10 +276,37 @@ typedef struct {
     int32_t (*naval_scout_x)(int32_t faction_id);
     int32_t (*naval_scout_y)(int32_t faction_id);
     int32_t (*prioritize_naval)(int32_t faction_id);
+    int32_t (*naval_beach_x)(int32_t faction_id);
+    int32_t (*naval_beach_y)(int32_t faction_id);
+    void (*set_main_region)(int32_t faction_id, int32_t region, int32_t x, int32_t y);
+    void (*set_main_sea_region)(int32_t faction_id, int32_t region);
+    void (*set_target_land_region)(int32_t faction_id, int32_t region);
+    void (*set_prioritize_naval)(int32_t faction_id, int32_t value);
+    void (*set_naval_scout)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_airbase)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_start)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_end)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_beach)(int32_t faction_id, int32_t x, int32_t y);
+    void (*region_search_start)(int32_t x, int32_t y, int32_t ts_type, int32_t ts_dist);
+    void (*region_search_start_multi)(int32_t count, int32_t* xs, int32_t* ys,
+        int32_t ts_type, int32_t ts_dist);
+    void (*region_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* prev_x, int32_t* prev_y);
+    void (*region_search_get_route)(int32_t* out_count, int32_t* xs, int32_t* ys,
+        int32_t max_count);
+    void (*region_search_adjust_roads)(int32_t value);
+    int32_t (*has_goal)(int32_t faction_id, int32_t type, int32_t x, int32_t y);
+    void (*find_priority_goal)(int32_t faction_id, int32_t type,
+        int32_t* px, int32_t* py);
+    int32_t (*can_alter_level)(int32_t x, int32_t y, int32_t faction_id, int32_t raise);
+    void (*mapdata_set_overlay)(int32_t x, int32_t y, int32_t value);
+    void (*land_raise_search_start)(int32_t max_size);
+    void (*land_raise_search_next)(int32_t faction_id, int32_t* valid,
+        int32_t* x, int32_t* y, int32_t* nx, int32_t* ny);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 40
+local HOST_API_VERSION = 42
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -593,4 +620,50 @@ return {
     naval_scout_x = function(faction_id) return api.naval_scout_x(faction_id) end,
     naval_scout_y = function(faction_id) return api.naval_scout_y(faction_id) end,
     prioritize_naval = function(faction_id) return api.prioritize_naval(faction_id) end,
+    naval_beach_x = function(faction_id) return api.naval_beach_x(faction_id) end,
+    naval_beach_y = function(faction_id) return api.naval_beach_y(faction_id) end,
+    set_main_region = function(faction_id, region, x, y)
+        return api.set_main_region(faction_id, region, x, y)
+    end,
+    set_main_sea_region = function(faction_id, region)
+        return api.set_main_sea_region(faction_id, region)
+    end,
+    set_target_land_region = function(faction_id, region)
+        return api.set_target_land_region(faction_id, region)
+    end,
+    set_prioritize_naval = function(faction_id, value)
+        return api.set_prioritize_naval(faction_id, value)
+    end,
+    set_naval_scout = function(faction_id, x, y) return api.set_naval_scout(faction_id, x, y) end,
+    set_naval_airbase = function(faction_id, x, y)
+        return api.set_naval_airbase(faction_id, x, y)
+    end,
+    set_naval_start = function(faction_id, x, y) return api.set_naval_start(faction_id, x, y) end,
+    set_naval_end = function(faction_id, x, y) return api.set_naval_end(faction_id, x, y) end,
+    set_naval_beach = function(faction_id, x, y) return api.set_naval_beach(faction_id, x, y) end,
+    region_search_start = function(x, y, ts_type, ts_dist)
+        return api.region_search_start(x, y, ts_type, ts_dist)
+    end,
+    region_search_start_multi = function(count, xs, ys, ts_type, ts_dist)
+        return api.region_search_start_multi(count, xs, ys, ts_type, ts_dist)
+    end,
+    region_search_next = function(valid, tx, ty, dist, prev_x, prev_y)
+        return api.region_search_next(valid, tx, ty, dist, prev_x, prev_y)
+    end,
+    region_search_get_route = function(out_count, xs, ys, max_count)
+        return api.region_search_get_route(out_count, xs, ys, max_count)
+    end,
+    region_search_adjust_roads = function(value) return api.region_search_adjust_roads(value) end,
+    has_goal = function(faction_id, type, x, y) return api.has_goal(faction_id, type, x, y) end,
+    find_priority_goal = function(faction_id, type, px, py)
+        return api.find_priority_goal(faction_id, type, px, py)
+    end,
+    can_alter_level = function(x, y, faction_id, raise)
+        return api.can_alter_level(x, y, faction_id, raise) ~= 0
+    end,
+    mapdata_set_overlay = function(x, y, value) return api.mapdata_set_overlay(x, y, value) end,
+    land_raise_search_start = function(max_size) return api.land_raise_search_start(max_size) end,
+    land_raise_search_next = function(faction_id, valid, x, y, nx, ny)
+        return api.land_raise_search_next(faction_id, valid, x, y, nx, ny)
+    end,
 }

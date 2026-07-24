@@ -1,5 +1,6 @@
 
 #include "move.h"
+#include "luaai.h"
 
 /*
 Priority Map Tables contain values calculated for each map square
@@ -1140,7 +1141,13 @@ void move_upkeep(int faction_id, UpdateMode mode) {
         return;
     }
     if (mode == UM_Full) {
-        land_raise_plan(faction_id);
+        // Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): Class 3
+        // hook at the call site, same convention as the per-vehicle
+        // movers' own seams in veh_turn.cpp (mod_enemy_move) -- land_raise_
+        // plan's own body stays untouched C++ fallback.
+        if (!lua_ai_command_hook_faction("land_raise_plan", faction_id)) {
+            land_raise_plan(faction_id);
+        }
         invasion_plan(faction_id);
     }
     if (p.naval_start_x >= 0 && p.naval_end_x >= 0) {

@@ -82,4 +82,10 @@ return {
     -- Class 3 contract as artifact_move/crawler_move/colony_move/
     -- former_move/trans_move.
     combat_move = move.combat_move,
+    -- Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): first faction-
+    -- level Class 3 hook (lua_ai_command_hook_faction, not
+    -- lua_ai_command_hook -- (faction_id) -> void, not (veh_id) -> int).
+    -- Hooked at the call site in move_upkeep (C++), not inside
+    -- land_raise_plan's own body -- see move.cpp's move_upkeep.
+    land_raise_plan = move.land_raise_plan,
 }

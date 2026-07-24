@@ -449,14 +449,21 @@ enable Lua by default on the branch → next.
    territory: largest, most performance-sensitive, ported last with the
    C++ baseline already measured.
 
-   **Status: 🔨 stages 0–6 closed and live-verified** (Class 3 hook
-   infrastructure, then `artifact_move`, `crawler_move`, `colony_move`,
-   `former_move`, `trans_move`, `combat_move`, in that order — including a
-   deferred fix for a `route_score`/`search_route` scoring-formula-wrapped-
-   opaquely defect found partway through, resolved as its own stage before
-   `former_move`). **Remaining, both fully unported:** the faction-level
-   orchestration (`move_upkeep`'s planning half + `invasion_plan`/
-   `land_raise_plan`/`update_main_region` + `goal.cpp`) and `nuclear_move`
+   **Status: 🔨 stages 0–6 closed and live-verified**, stage 7 (faction-
+   level orchestration) in progress (Class 3 hook infrastructure, then
+   `artifact_move`, `crawler_move`, `colony_move`, `former_move`,
+   `trans_move`, `combat_move`, in that order — including a deferred fix
+   for a `route_score`/`search_route` scoring-formula-wrapped-opaquely
+   defect found partway through, resolved as its own stage before
+   `former_move`). **Stage 7, sub-staged 7A–7D:** 7A (engine surface: 9
+   `AIPlans` setters, multi-point `TileSearch` init, full-route retrieval,
+   `goal.cpp` accessors, `pick_scout_target`/`compare_might`/
+   `faction_might`) and 7B (`land_raise_plan`, plus the first faction-level
+   Class 3 hook, `lua_ai_command_hook_faction`, for the `(faction_id) ->
+   void` shape none of the per-vehicle movers have) are done — **built and
+   build-verified only, not yet live-tested** (see Phase 5's testing
+   protocol note). 7C (`invasion_plan`) and 7D (`update_main_region`'s
+   `prioritize_naval` decision) remain, plus `nuclear_move`
    (deliberately last — its real complexity, a full diplomatic/threat
    scoring pass plus a secret-project iteration, is closer to
    `find_project`/`select_build` than an isolated mover). Native life
@@ -465,7 +472,7 @@ enable Lua by default on the branch → next.
    (an engine-level missing hostility filter in `choose_defender`, not a
    Lua defect) was root-caused and fixed for every caller, not just the Lua
    path. Full staging, real function sizes, and per-stage classification
-   decisions: `IMPLEMENTATION_DETAILS.md` 4.12–4.15.
+   decisions: `IMPLEMENTATION_DETAILS.md` 4.12–4.16.
 5. **AI probe decisions** (`probe.cpp`, partial — target/action choices only;
    resolution mechanics stay in C++). **Not started.**
 
@@ -789,8 +796,8 @@ as Movement closes).
   subsequent domain requires, same generate-validate discipline.
 - **M5 — Production/social in Lua:** porting-order items 2 and 3 mostly done
   (item 3's four unsurveyed functions remain — see item 3's status).
-- **M6 — Movement in Lua:** 🔨 in progress — stages 0-6 closed (item 4's
-  status above); the faction-level orchestration stage and `nuclear_move`
-  remain.
+- **M6 — Movement in Lua:** 🔨 in progress — stages 0-6 closed, stage 7
+  (faction-level orchestration) sub-stage 7A/7B done pending live test
+  (item 4's status above); 7C/7D and `nuclear_move` remain.
 - **M7 — Fork release:** docs, zips with `lua/`, "Hello AI" example. Not
   started.

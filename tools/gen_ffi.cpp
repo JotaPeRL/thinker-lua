@@ -411,6 +411,11 @@ int main() {
         // BASE::plr_owner/gov_config).
         FIELD(Faction, base_id_attack_target),
         FIELD(Faction, corner_market_turn),
+        // Movement stage 7A (IMPLEMENTATION_DETAILS.md 4.16): pick_scout_target's
+        // own dependencies (move.cpp:634-657), not previously exposed.
+        FIELD(Faction, atrocities),
+        FIELD(Faction, diplo_friction),
+        FIELD(Faction, diplo_stolen_techs),
     }});
 
     // production/plans port, first slice (porting-order item 3,
@@ -971,6 +976,9 @@ int main() {
     // 4.12): add_goal's own goal-type constant (engine_enums.h, already
     // included above) -- compiler-read, not hand-typed.
     printf("    AI_GOAL_NAVAL_PICK = %d,\n", AI_GOAL_NAVAL_PICK);
+    // Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan's
+    // own goal type, same compiler-read discipline.
+    printf("    AI_GOAL_RAISE_LAND = %d,\n", AI_GOAL_RAISE_LAND);
     // trans_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.14):
     // near_landing/make_landing's own markers.
     printf("    NODE_NAVAL_BEACH = %d,\n", 8);
@@ -1001,6 +1009,10 @@ int main() {
     printf("    BIT_FARM = %d,\n", BIT_FARM);
     printf("    BIT_SENSOR = %u,\n", (unsigned)BIT_SENSOR);
     printf("    LM_JUNGLE = %d,\n", LM_JUNGLE);
+    // Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan's
+    // own shore-goal scoring, same compiler-read discipline as LM_JUNGLE.
+    printf("    LM_CRATER = %d,\n", LM_CRATER);
+    printf("    LM_URANIUM = %d,\n", LM_URANIUM);
     printf("    LM_SARGASSO = %d,\n", LM_SARGASSO);
     printf("    LM_DUNES = %d,\n", LM_DUNES);
     printf("    LM_UNITY = %d,\n", LM_UNITY);
@@ -1036,11 +1048,21 @@ int main() {
     printf("    NODE_COMBAT_PATROL = %d,\n", 13);
     printf("    QueueSize = %d,\n", 8192);
     printf("    PathLimit = %d,\n", 160);
+    // Movement stage 7A (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan's
+    // (TS_TERRITORY_LAND) and update_main_region's (TS_TERRITORY_SHORE) own
+    // TileSearch types, same hand-transcription reason as TS_SEA_AND_SHORE
+    // above -- path.h:53-61.
+    printf("    TS_TERRITORY_LAND = %d,\n", 4);
+    printf("    TS_TERRITORY_SHORE = %d,\n", 5);
     // combat_move port, remaining engine surface (IMPLEMENTATION_
     // DETAILS.md 4.15): the teleport/gate-port dispatch's own
     // mapdata[{x,y}].flags & PM_PsiGateBase test (move.h:18, a plain
     // `const int`). Hand-transcribed, same reason as PM_SAFE above.
     printf("    PM_PsiGateBase = %d,\n", 0x20000);
+    // Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan's
+    // own mapdata[{x,y}].flags & PM_LandBaseRds test (move.h:19). Same
+    // hand-transcription reason as PM_SAFE/PM_PsiGateBase above.
+    printf("    PM_LandBaseRds = %d,\n", 0x40000);
     // former_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.13): the
     // 12 can_*/keep_fungus/plant_fungus tile-eligibility helpers -- item/
     // resource/landmark/altitude/preference-flag constants. All come
@@ -1064,6 +1086,11 @@ int main() {
     printf("    LM_VOLCANO = %d,\n", LM_VOLCANO);
     printf("    ALT_TWO_ABOVE_SEA = %d,\n", ALT_TWO_ABOVE_SEA);
     printf("    PREF_AUTO_FORMER_BUILD_ADV = %d,\n", PREF_AUTO_FORMER_BUILD_ADV);
+    // Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan
+    // itself now reads this preference directly (can_bridge, which used to
+    // be the only reader, stays opaque) -- see the note above this printf
+    // block explaining why it was skipped before.
+    printf("    PREF_AUTO_FORMER_RAISE_LWR_TERRAIN = %d,\n", PREF_AUTO_FORMER_RAISE_LWR_TERRAIN);
     printf("    PREF_AUTO_FORMER_PLANT_FORESTS = %d,\n", PREF_AUTO_FORMER_PLANT_FORESTS);
     printf("    MPREF_AUTO_FORMER_BUILD_SENSORS = %d,\n", MPREF_AUTO_FORMER_BUILD_SENSORS);
     printf("    MPREF_AUTO_FORMER_CANT_BUILD_ROADS = %d,\n", MPREF_AUTO_FORMER_CANT_BUILD_ROADS);

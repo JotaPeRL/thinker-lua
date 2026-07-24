@@ -690,6 +690,93 @@ struct LuaHostApi {
     int32_t (*naval_scout_x)(int32_t faction_id);
     int32_t (*naval_scout_y)(int32_t faction_id);
     int32_t (*prioritize_naval)(int32_t faction_id);
+
+    // Movement stage 7A (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan/
+    // invasion_plan/update_main_region are the first Lua code to *write*
+    // AIPlans fields -- every accessor above this point is read-only.
+    // naval_beach_x/y had no getter yet either (nothing needed it before
+    // combat_move); added here alongside its setter for symmetry with its
+    // naval_start/naval_end/naval_airbase/naval_scout siblings.
+    int32_t (*naval_beach_x)(int32_t faction_id);
+    int32_t (*naval_beach_y)(int32_t faction_id);
+    // Coordinate-pair fields are set together at every call site in the
+    // C++ source (never independently), so one setter per pair rather than
+    // per scalar -- same spirit as the one-field-per-wrapper rule, just at
+    // the granularity the source itself actually uses.
+    void (*set_main_region)(int32_t faction_id, int32_t region, int32_t x, int32_t y);
+    void (*set_main_sea_region)(int32_t faction_id, int32_t region);
+    void (*set_target_land_region)(int32_t faction_id, int32_t region);
+    void (*set_prioritize_naval)(int32_t faction_id, int32_t value);
+    void (*set_naval_scout)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_airbase)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_start)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_end)(int32_t faction_id, int32_t x, int32_t y);
+    void (*set_naval_beach)(int32_t faction_id, int32_t x, int32_t y);
+    // (Continents[] was already exposed directly, lua/api/map.lua's
+    // `map.continent(region)` -- no new wrapper needed for it here.)
+
+    // land_raise_plan/invasion_plan/update_main_region's own TileSearch
+    // scans (move.cpp, IMPLEMENTATION_DETAILS.md 4.16). Same file-local-
+    // static-TileSearch start/next pattern as combat_search_*
+    // (IMPLEMENTATION_DETAILS.md 3.3) but a distinct instance: faction-
+    // level planning runs strictly sequentially with movement dispatch
+    // (never interleaved, same assumption g_mutation_issued already
+    // relies on), so a second static TileSearch is safe. Two start
+    // overloads because both a single origin point (update_main_region)
+    // and a caller-built point list (land_raise_plan's second scan,
+    // invasion_plan) are real call shapes in the source -- ts_dist<0 means
+    // "use the 3-arg init()" the same way the two real C++ overloads
+    // differ only in whether ts_skip is passed.
+    void (*region_search_start)(int32_t x, int32_t y, int32_t ts_type, int32_t ts_dist);
+    void (*region_search_start_multi)(int32_t count, int32_t* xs, int32_t* ys,
+        int32_t ts_type, int32_t ts_dist);
+    void (*region_search_next)(int32_t* valid, int32_t* tx, int32_t* ty, int32_t* dist,
+        int32_t* prev_x, int32_t* prev_y);
+    // get_route()'s full parent-chain -- unlike every prior TileSearch port
+    // (which only ever needed the immediate get_prev(), exposed as prev_x/
+    // prev_y out-params), land_raise_plan iterates the *entire* route to
+    // place a goal at every tile along it, so the whole PointList has to
+    // cross into Lua here. Capped at PathLimit (the same bound the engine
+    // itself uses for a reconstructed route, path.h) -- out_count is the
+    // real length actually written into xs/ys.
+    void (*region_search_get_route)(int32_t* out_count, int32_t* xs, int32_t* ys,
+        int32_t max_count);
+    void (*region_search_adjust_roads)(int32_t value);
+
+    // goal.cpp accessors needed by land_raise_plan (has_goal) and
+    // invasion_plan (find_priority_goal). add_goal already existed
+    // (combat_move's naval-pickup path). Both are pure queries over
+    // Factions[faction_id].goals[] -- no mutation, unlike add_goal.
+    int32_t (*has_goal)(int32_t faction_id, int32_t type, int32_t x, int32_t y);
+    void (*find_priority_goal)(int32_t faction_id, int32_t type,
+        int32_t* px, int32_t* py);
+
+    // Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan's
+    // own remaining dependencies. can_alter_level (move.cpp:408-430) is a
+    // structural eligibility gate -- terraform-altitude arithmetic plus a
+    // fixed-radius neighbor scan, no scoring/randomness -- same opaque tier
+    // as can_bridge/has_base_sites.
+    int32_t (*can_alter_level)(int32_t x, int32_t y, int32_t faction_id, int32_t raise);
+    // mapdata[{x,y}].overlay is debug/visualization-only (read only by
+    // move_upkeep's own UM_Visual block, never by AI decisions), but
+    // land_raise_plan writes it unconditionally for every popped
+    // shore-goal candidate -- kept for exact 1:1 fidelity anyway.
+    void (*mapdata_set_overlay)(int32_t x, int32_t y, int32_t value);
+    // land_raise_plan's own mapdata scan (move.cpp:598-619): finds land
+    // tiles with PM_LandBaseRds, in y-bounds, non-ocean, coastal,
+    // alterable, that have an adjacent ocean tile whose region is small
+    // enough to fill -- all structural facts, no scoring, so the whole
+    // filter (including the inner iterate_tiles break-on-first-match) is
+    // one host-side iterator, same "opaque scan, Lua scores the yielded
+    // candidates" split as every prior TileSearch-based mover. Walks the
+    // real mapdata (an unordered_map) directly, same object and iteration
+    // the original C++ used -- not reimplemented in Lua, so this can't
+    // drift from upstream's own (formally unordered, but deterministic
+    // for a given run) traversal. Yields (x, y) plus (nx, ny), the specific
+    // matching ocean neighbor tile the score formula also reads.
+    void (*land_raise_search_start)(int32_t max_size);
+    void (*land_raise_search_next)(int32_t faction_id, int32_t* valid,
+        int32_t* x, int32_t* y, int32_t* nx, int32_t* ny);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3
@@ -709,6 +796,21 @@ struct LuaHostApi {
 // int), so this is a dedicated function rather than reusing lua_ai_hook's
 // generic args-list contract.
 bool lua_ai_command_hook(const char* name, int* out, int veh_id);
+
+// Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): the faction-level
+// planning functions (land_raise_plan/invasion_plan) are Class 3 too --
+// they mutate plans[]/goals[] directly as they run -- but their C++ shape
+// is (faction_id) -> void, not (veh_id) -> int, so they don't fit
+// lua_ai_command_hook's contract. Same no-fallback-after-first-mutation
+// rule, but the recovery action differs: there is no single vehicle to
+// mod_veh_skip once something has already been mutated, so an error after
+// a mutation is just logged and reported "handled" (the caller's C++ body
+// must not re-run over already-mutated plans[]/goals[] state, same
+// reasoning as the veh_id version, just without a per-unit fallback
+// action to take). Returns whether the hook ran (registered and callable),
+// not a proposal to validate -- the caller has nothing left to do either
+// way once this returns, unlike Class 2's propose-then-commit.
+bool lua_ai_command_hook_faction(const char* name, int faction_id);
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai
 // is 0), applies any pending reload request, then returns. No AI hooks are

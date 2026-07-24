@@ -114,6 +114,19 @@ local port = {
         -- the mover itself, whole-function assembly.
         combat_move = { file = "src/move.cpp", func = "combat_move",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- Movement stage 7A (IMPLEMENTATION_DETAILS.md 4.16): engine
+        -- surface plus the small formula helpers land_raise_plan/
+        -- invasion_plan need. faction_might/compare_might are defined in
+        -- src/plan.cpp, not move.cpp -- ported here anyway since Movement
+        -- is their only consumer so far (ai/plan.lua doesn't exist yet).
+        faction_might = { file = "src/plan.cpp", func = "faction_might",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        compare_might = { file = "src/plan.cpp", func = "compare_might",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        pick_scout_target = { file = "src/move.cpp", func = "pick_scout_target",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        land_raise_plan = { file = "src/move.cpp", func = "land_raise_plan",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -3379,6 +3392,205 @@ local function combat_move(id)
     return funcs.mod_veh_skip(id)
 end
 
+-- Movement stage 7A (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan/
+-- invasion_plan's own small dependencies, ported ahead of the movers that
+-- use them (same precedent as target_priority/cover_score in stage 6).
+-- src/plan.cpp:365-371 -- trivial enough (2-line arithmetic formulas) to
+-- port as real Lua rather than an opaque host wrapper, same tier as
+-- target_priority.
+local function faction_might(faction_id)
+    return funcs.mil_strength(faction_id) + 8 * faction.get(faction_id).pop_total
+end
+
+local function compare_might(faction_id, faction_id_tgt)
+    return 4 * faction_might(faction_id) >= 3 * faction_might(faction_id_tgt)
+end
+
+-- move.cpp:634-657. Picks a rival faction to send extra scout ships
+-- toward -- a real (if thin) AI choice, not a structural fact, so ported
+-- rather than left opaque.
+local function pick_scout_target(faction_id)
+    local p_enemy_mil_factor = funcs.enemy_mil_factor(faction_id)
+    local p_enemy_factions = funcs.enemy_factions(faction_id)
+    if p_enemy_mil_factor > 2 or p_enemy_factions > 1 then
+        return 0
+    end
+    local target = 0
+    local best_score = 15
+    local f = faction.get(faction_id)
+    for i = 1, types.counts.MaxPlayerNum - 1 do
+        if i ~= faction_id and faction.get(i).base_count ~= 0 then
+            local fi = faction.get(i)
+            local score = rand.map(0, 16)
+                + (funcs.has_treaty(faction_id, i, bit.bor(E.DIPLO_PACT, E.DIPLO_TREATY)) ~= 0
+                    and -10 or 0)
+                + f.diplo_friction[i]
+                + 8 * fi.diplo_stolen_techs[faction_id]
+                + 5 * fi.integrity_blemishes
+                + 5 * fi.atrocities
+                + min(16, idiv(4 * faction_might(faction_id), max(1, faction_might(i))))
+            if score > best_score then
+                target = i
+                best_score = score
+            end
+        end
+    end
+    return target
+end
+
+-- min_range (map.cpp:70-76): "no points yet" sentinel is 9999 in the
+-- original (not INT_MAX/huge), matched exactly since it's compared
+-- against a small threshold (>= 2) where the exact sentinel value could
+-- in principle matter for a pathological input.
+local function min_range_over(points, x, y)
+    local v = 9999
+    for _, p in ipairs(points) do
+        v = min(v, funcs.map_range(x, y, p.x, p.y))
+    end
+    return v
+end
+
+-- Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan
+-- (move.cpp:519-629), Class 3, hooked at the call site in move_upkeep
+-- (C++, faction-level orchestration stays there) rather than inside this
+-- function's own body -- same convention as the per-vehicle movers'
+-- seams in veh_turn.cpp's mod_enemy_move.
+local function land_raise_plan(faction_id)
+    local main_region = funcs.main_region(faction_id)
+    if main_region < 0 then
+        return
+    end
+    if not funcs.has_terra(E.FORMER_RAISE_LAND, E.TRIAD_LAND, faction_id)
+        or (funcs.is_human(faction_id)
+            and bit.band(GamePreferences[0], E.PREF_AUTO_FORMER_RAISE_LWR_TERRAIN) == 0) then
+        return
+    end
+    local main_region_x = funcs.main_region_x(faction_id)
+    local main_region_y = funcs.main_region_y(faction_id)
+    local expand = funcs.allow_expand(faction_id)
+    local best_score = 0
+    local goal_count = 0
+
+    local out = ffi.new("int32_t[6]")
+    local i, v, b = 0, 0, 0
+    local coastal = {}
+    funcs.region_search_start(main_region_x, main_region_y, E.TS_TERRITORY_LAND, 4)
+    while true do
+        i = i + 1
+        if i > 2000 then break end
+        funcs.region_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+        if out[0] == 0 then break end
+        local rx, ry = out[1], out[2]
+        if funcs.tile_is_base(rx, ry) then
+            b = b + 1
+        else
+            if funcs.can_build_base(rx, ry, faction_id, E.TRIAD_LAND) then
+                v = v + 1
+            end
+            if funcs.coast_tiles(rx, ry) > 0 then
+                coastal[#coastal + 1] = {x = rx, y = ry}
+            end
+        end
+    end
+    local max_dist = idiv(clamp(idiv(b, 4) + max(0, 10 - idiv(v, 4)), 6, 12),
+        (v > max(b + 20, idiv(i, 4)) and 2 or 1))
+    log.debug("raise_plan %d region: %d tiles: %d dist: %d expand: %d",
+        faction_id, main_region, map.continent(main_region).tile_count, max_dist,
+        expand and 1 or 0)
+
+    local count = #coastal
+    local seed_xs = ffi.new("int32_t[?]", count)
+    local seed_ys = ffi.new("int32_t[?]", count)
+    for idx = 1, count do
+        seed_xs[idx - 1] = coastal[idx].x
+        seed_ys[idx - 1] = coastal[idx].y
+    end
+    funcs.region_search_start_multi(count, seed_xs, seed_ys, E.TS_SEA_AND_SHORE, 4)
+
+    local route_count = ffi.new("int32_t[1]")
+    local route_xs = ffi.new("int32_t[?]", E.PathLimit)
+    local route_ys = ffi.new("int32_t[?]", E.PathLimit)
+    while true do
+        funcs.region_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+        if out[0] == 0 then break end
+        local rx, ry, dist = out[1], out[2], out[3]
+        if dist > max_dist then break end
+        local region = funcs.tile_region(rx, ry)
+        local owner = funcs.tile_owner(rx, ry)
+        if dist < 2 or not funcs.tile_is_land_region(rx, ry)
+            or region == main_region or (owner < 0 and not expand) then
+            -- continue
+        elseif owner ~= faction_id and owner >= 0 and funcs.has_pact(faction_id, owner) == 0
+            and not compare_might(faction_id, owner) then
+            -- continue
+        else
+            funcs.region_search_get_route(route_count, route_xs, route_ys, E.PathLimit)
+            if route_count[0] == 0
+                or not funcs.can_alter_level(route_xs[0], route_ys[0], faction_id, true) then
+                -- continue
+            else
+                local multiplier = (owner < 0 or owner == faction_id) and 3 or 2
+                local score = min(400, idiv(map.continent(region).tile_count * multiplier, 2))
+                    + (funcs.has_goal(faction_id, E.AI_GOAL_RAISE_LAND, rx, ry) ~= 0 and 40 or 0)
+                    - dist * dist
+                if score > best_score then
+                    best_score = score
+                    log.debug("raise_goal %2d %2d -> %2d %2d dist: %2d size: %3d owner: %d score: %d",
+                        route_xs[0], route_ys[0], rx, ry, dist,
+                        map.continent(region).tile_count, owner, score)
+                    for idx = 0, route_count[0] - 1 do
+                        funcs.add_goal(faction_id, E.AI_GOAL_RAISE_LAND, 3,
+                            route_xs[idx], route_ys[idx], -1)
+                        goal_count = goal_count + 1
+                    end
+                end
+                if goal_count > 15 then
+                    break
+                end
+            end
+        end
+    end
+
+    local max_size = clamp(idiv(faction.get(faction_id).base_count, 4), 4, 10)
+    local candidates = {}
+    funcs.land_raise_search_start(max_size)
+    local sv = ffi.new("int32_t[5]")
+    while true do
+        funcs.land_raise_search_next(faction_id, sv, sv + 1, sv + 2, sv + 3, sv + 4)
+        if sv[0] == 0 then break end
+        local x, y, nx, ny = sv[1], sv[2], sv[3], sv[4]
+        local score = funcs.map_former(x, y)
+            + (funcs.region_at(x, y) == main_region and 10 or 0)
+            + 4 * funcs.coast_tiles(x, y)
+            + (bit.band(funcs.tile_items(x, y), E.BIT_ROAD) ~= 0 and 4 or 0)
+            - (bit.band(funcs.tile_lm_items(x, y),
+                bit.bor(E.LM_CRATER, E.LM_JUNGLE, E.LM_URANIUM)) ~= 0 and 16 or 0)
+            - (bit.band(funcs.tile_items(nx, ny),
+                bit.bor(E.BIT_FARM, E.BIT_MINE, E.BIT_SOLAR)) ~= 0 and 4 or 0)
+            - funcs.map_range(x, y, main_region_x, main_region_y)
+        candidates[#candidates + 1] = {x = x, y = y, score = score}
+    end
+    -- Matches point_max_queue_t's MItem::operator< ordering (plan.h:19-32):
+    -- score descending, ties broken by x then y, both descending.
+    table.sort(candidates, function(a, b)
+        if a.score ~= b.score then return a.score > b.score end
+        if a.x ~= b.x then return a.x > b.x end
+        return a.y > b.y
+    end)
+    local added = {}
+    for idx = 1, min(8, #candidates) do
+        local c = candidates[idx]
+        funcs.mapdata_set_overlay(c.x, c.y, c.score)
+        if c.score > 0 and min_range_over(added, c.x, c.y) >= 2 then
+            goal_count = goal_count + 1
+            if goal_count < 20 then
+                funcs.add_goal(faction_id, E.AI_GOAL_RAISE_LAND, 2, c.x, c.y, -1)
+                added[#added + 1] = {x = c.x, y = c.y}
+            end
+        end
+    end
+end
+
 port.artifact_move = artifact_move
 port.crawler_move = crawler_move
 port.colony_move = colony_move
@@ -3386,4 +3598,5 @@ port.former_move = former_move
 port.escape_move = escape_move
 port.trans_move = trans_move
 port.combat_move = combat_move
+port.land_raise_plan = land_raise_plan
 return port

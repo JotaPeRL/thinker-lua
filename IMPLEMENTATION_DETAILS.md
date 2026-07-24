@@ -405,11 +405,11 @@ counts): `DEVELOPMENT_DIARY.md`, 2026-07-14 through 2026-07-20.
 
 ---
 
-### 4.12–4.15 Movement (porting-order item 4) — stages 0–6 closed; nuclear_move is the resume point
+### 4.12–4.16 Movement (porting-order item 4) — stages 0–6 closed; stage 7 (7A/7B done, pending live test) in progress; stage 8 (nuclear_move) not started
 
 Full narrative for every stage below (exact field/enum/wrapper catalogs,
 `api_version` history, verification run counts, files-touched lists, every
-bug hunt): `DEVELOPMENT_DIARY.md`, 2026-07-20 through 2026-07-23. What
+bug hunt): `DEVELOPMENT_DIARY.md`, 2026-07-20 through 2026-07-24. What
 follows is what still matters for resuming or extending this work.
 
 **Dispatch:** `mod_enemy_move` (`veh_turn.cpp:147`) routes each vehicle to
@@ -432,9 +432,10 @@ for base-target search, and several new primitives
 (`veh_drop`/`veh_lift`/`ally_near_tile`/`min_range`/a `VEH*`↔`BASE*`
 `map_range` overload). `move_upkeep` ~354 (unported — table fills stay C++
 per plan 4.3; the invasion/naval planning that consumes them is what would
-port). Faction-level: `land_raise_plan` ~115, `invasion_plan` ~106,
-`update_main_region` ~61, `goal.cpp` ~180 (small state helpers, consumed by
-this planning, not by movers) — **all unported**.
+port). Faction-level: `land_raise_plan` ~115 (✅ ported, stage 7B),
+`invasion_plan` ~106, `update_main_region` ~61, `goal.cpp` ~180 (small
+state helpers, consumed by this planning, not by movers) — the latter
+three still unported, see 4.16.
 
 **Status per stage:**
 - Stage 0 (Class 3 hook infra) — ✅ done (4.1 above).
@@ -493,15 +494,84 @@ this planning, not by movers) — **all unported**.
   run** — coverage gap, not a known defect, revisit opportunistically
   (same disposition as `select_build`'s deprioritized facilities).
 
-**Resume point:** two pieces remain, neither started (confirmed against
-`lua/ai/move.lua`/`init.lua` — the only trace of either is one `add_goal`
-host-API call added ahead of need by stage 6's own naval-pickup path):
-stage 7, the faction-level orchestration (`move_upkeep`'s planning half +
-`invasion_plan`/`land_raise_plan`/`update_main_region` + `goal.cpp`), and
-stage 8, `nuclear_move` (deliberately ordered last — see its size note
-above). `IMPLEMENTATION_PLAN.md` describes both without committing to a
-stage number; this file's own 0–8 numbering above is the authoritative
-staging if a number is needed.
+### 4.16 Stage 7 — faction-level orchestration (`land_raise_plan`/`invasion_plan`/`update_main_region`/`goal.cpp`)
+
+Sub-staged 7A–7D (this file's own numbering, `IMPLEMENTATION_PLAN.md`
+doesn't commit to sub-stage letters).
+
+- **7A (engine surface)** — ✅ done, build-verified. First Lua *writes* to
+  `plans[]` (9 setters: `main_region`/`main_sea_region`/
+  `target_land_region`/`prioritize_naval`/`naval_scout`/`naval_airbase`/
+  `naval_start`/`naval_end`/`naval_beach`, the last of these also missing
+  its getter until now). New `TileSearch` primitives: `region_search_start`
+  (single point) / `region_search_start_multi` (point-list init, `land_
+  raise_plan`/`invasion_plan`'s own need — no prior mover used the list
+  overload) / `region_search_next` / `region_search_get_route` (first time
+  a full `PointList` route crosses into Lua, not just `get_prev()` —
+  `land_raise_plan` iterates the whole route, not just the last step) /
+  `region_search_adjust_roads`. `goal.cpp` accessors `has_goal`/
+  `find_priority_goal` (`add_goal` already existed). `Continents[]` turned
+  out to already be fully exposed (`lua/api/map.lua`'s `map.continent`) —
+  no new work needed there. `compare_might`/`faction_might` (`src/
+  plan.cpp:365-371`, 2-line formulas, ported as real Lua not opaque, same
+  tier as `target_priority`) and `pick_scout_target` (`move.cpp:634-657`)
+  ported in `lua/ai/move.lua`, not a new `ai/plan.lua` (Movement is their
+  only consumer so far). `api_version` 40→41.
+- **7B (`land_raise_plan`)** — ✅ done, **build-verified only, not yet
+  live-tested**. `move.cpp:519-629`. New engine surface: `can_alter_level`
+  (opaque, pure altitude arithmetic + neighbor scan), `mapdata_set_overlay`
+  (new setter — the field is debug/visualization-only, read only by
+  `move_upkeep`'s `UM_Visual` block, but written unconditionally in the
+  original for every popped shore candidate, kept for 1:1 fidelity),
+  `land_raise_search_start`/`_next` (a host-side iterator over the real
+  `mapdata` unordered_map doing every structural check from `move.cpp:598-
+  619` including the inner `iterate_tiles` break-on-first-ocean-match —
+  Lua only scores the yielded candidates). New constants: `AI_GOAL_RAISE_
+  LAND`, `PM_LandBaseRds`, `PREF_AUTO_FORMER_RAISE_LWR_TERRAIN` (previously
+  *deliberately* unexposed — `can_bridge` was its only reader and stayed
+  opaque; `land_raise_plan` now reads it directly), `LM_CRATER`/
+  `LM_URANIUM`. `api_version` 41→42.
+  - **New hook shape:** `lua_ai_command_hook_faction(name, faction_id)` —
+    every prior Class 3 hook is `(veh_id) -> int`; this is the first
+    `(faction_id) -> void` one. Same no-fallback-after-first-mutation rule,
+    but no per-unit `mod_veh_skip` exists to recover with, so an error
+    after a mutation is just logged and reported handled. Return protocol:
+    a Lua `false` means "not handled" (mirrors Class 1/2's nil), anything
+    else (including no return) means handled — chosen so the function's
+    own legitimate early-return branches don't all need `return true`.
+  - **Hook site:** unlike the generic seam example in `IMPLEMENTATION_
+    PLAN.md` Phase 4.1 (hook inside the function body), this follows
+    Movement's own actual precedent — hooked at the *call site*
+    (`move_upkeep`, `move.cpp`, where `land_raise_plan`/`invasion_plan`
+    are invoked), same as the per-vehicle movers' seams in `veh_turn.cpp`'s
+    `mod_enemy_move`. `land_raise_plan`'s own C++ body is untouched
+    fallback.
+  - **`point_max_queue_t` → `table.sort`:** `MItem::operator<` (`plan.h:19-
+    32`) orders by `(score, x, y)` ascending, so `top()`/`pop()` yields
+    descending score, ties broken by descending x then y. Verified this
+    ordering is a total order over the candidate set (no two tiles share
+    `(x,y)`), so the *result* of "top 8" is insertion-order-independent —
+    Lua doesn't need to replicate the C++ `unordered_map`'s own iteration
+    order to get identical output, just collect every candidate then sort.
+  - `min_range`'s empty-set sentinel is `9999` (`map.cpp:70-76`), not
+    `INT_MAX`/`math.huge` — matched exactly in the Lua port
+    (`min_range_over`) even though the difference can't matter against the
+    `>= 2` comparison it's used in, for exact fidelity.
+- **7C (`invasion_plan`)** and **7D (`update_main_region`'s `prioritize_
+  naval` decision)** — not started. `invasion_plan` reuses `target_priority`
+  (already ported, stage 6) and 7A's `pick_scout_target`/multi-point search/
+  route-retrieval primitives directly; expect fewer new primitives needed
+  than 7B took.
+- `move_upkeep`'s own map/unit/base sweep (`move.cpp:852-1141`) and its
+  goal→mapnode bookkeeping tail (`1157-1180`) stay C++ (fact computation,
+  Phase 4.3) — only the `land_raise_plan(faction_id); invasion_plan
+  (faction_id);` call site (`UM_Full` branch) gets a hook.
+
+**Resume point:** stage 7C (`invasion_plan`, `move.cpp:662-762`) next, then
+7D, then stage 8 (`nuclear_move`, deliberately ordered last — see its size
+note above). `IMPLEMENTATION_PLAN.md` describes stage 7 as one unit without
+committing to sub-stage letters; this file's own 7A–7D / 0–8 numbering is
+the authoritative staging if a number is needed.
 
 ---
 
