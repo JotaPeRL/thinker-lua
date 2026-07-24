@@ -2851,7 +2851,27 @@ local function combat_move(id)
                 and funcs.map_target(rx, ry) < 2 + rand.map(0, 16) then
                 return funcs.set_move_to(id, rx, ry)
             elseif arty and v.moves_spent == 0 and arty_score > best_cover
-                and funcs.allow_move(rx, ry, faction_id, triad) then
+                and funcs.allow_move(rx, ry, faction_id, triad)
+                -- Fix (UPSTREAM_BUGS.md #3): allow_move() doesn't know
+                -- about ZOC. order_veh (veh_action.cpp) unconditionally
+                -- blocks a move whose source and target are both
+                -- ZOC-restricted; skip such a candidate here instead of
+                -- picking it and retrying forever.
+                -- This alone is not sufficient (single-sided ZOC and other
+                -- execution-time rejections this branch can't predict
+                -- still happen) -- iter_count below is the actual backstop.
+                and (ignore_zocs or funcs.mod_zoc_move(v.x, v.y, faction_id) == 0
+                    or funcs.mod_zoc_move(rx, ry, faction_id) == 0)
+                -- Backstop: iter_count only increments in order_veh's
+                -- MOV_END on a failed move (veh_action.cpp), so it's a
+                -- genuine "this unit's current decision has failed N times
+                -- in a row" signal, the same one this function already
+                -- uses at its own at_base-gated bailout further down. That
+                -- bailout never fires for a unit that isn't at a base,
+                -- which is exactly the stuck cases found live -- stop
+                -- repicking this kind of candidate once repeatedly
+                -- rejected.
+                and v.iter_count < 4 then
                 tx, ty = rx, ry
                 best_cover = arty_score
             elseif tx < 0 and attack and funcs.has_map_node(rx, ry, E.NODE_COMBAT_PATROL)

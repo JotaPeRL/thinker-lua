@@ -3216,7 +3216,24 @@ int combat_move(const int id) {
 
         } else if (arty && !veh->moves_spent
         && (score = cover_score(ts.rx, ts.ry) - 4*ts.dist) > best_cover
-        && allow_move(ts.rx, ts.ry, faction_id, triad)) {
+        && allow_move(ts.rx, ts.ry, faction_id, triad)
+        // Fix (UPSTREAM_BUGS.md #3): allow_move() doesn't know about ZOC.
+        // order_veh (veh_action.cpp) unconditionally blocks a move whose
+        // source and target are both ZOC-restricted; skip such a
+        // candidate here instead of picking it and retrying forever.
+        // This alone is not sufficient (single-sided ZOC and other
+        // execution-time rejections this branch can't predict still
+        // happen) -- iter_count below is the actual backstop.
+        && (ignore_zocs || !mod_zoc_move(veh->x, veh->y, faction_id)
+            || !mod_zoc_move(ts.rx, ts.ry, faction_id))
+        // Backstop: iter_count only increments in order_veh's MOV_END on
+        // a failed move (veh_action.cpp), so it's a genuine "this unit's
+        // current decision has failed N times in a row" signal, the same
+        // one this function already uses at its own at_base-gated bailout
+        // further down. That bailout never fires for a unit that isn't at
+        // a base, which is exactly the stuck cases found live -- stop
+        // repicking this kind of candidate once repeatedly rejected.
+        && veh->iter_count < 4) {
             tx = ts.rx;
             ty = ts.ry;
             best_cover = score;

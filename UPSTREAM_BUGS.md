@@ -257,3 +257,255 @@ behavior). If/when this is fixed upstream, the corresponding
 one call site in `search_route`'s Lua port should be removed/simplified to
 match — see `IMPLEMENTATION_DETAILS.md` 4.12–4.15 and
 `DEVELOPMENT_DIARY.md`, 2026-07-22, for where that lives in this fork.
+
+---
+
+## 3. `combat_move`'s artillery repositioning branch has no way to know a chosen move will fail, and no backstop when it keeps failing — units get stuck retrying the same rejected move forever
+
+**Status:** ✅ fixed in this fork (`src/move.cpp` and `lua/ai/move.lua`,
+uncommitted at time of writing), in two layers — see "Fix applied". Not yet
+reported/PR'd upstream.
+
+**Files:**
+- `src/move.cpp:3217-3231`, inside `combat_move`, the
+  `arty && !veh->moves_spent && ...` branch (candidate repositioning score
+  for artillery-mode units). Lua port: `lua/ai/move.lua:2853-2871`
+  (identical shape).
+- `src/move.cpp:376-390`, `allow_move()` — the only filter that branch used
+  before this fix; doesn't know about Zone of Control.
+- `src/veh_action.cpp:2120-2129`, inside `order_veh` — one confirmed
+  runtime gate that silently blocks the move for AI-controlled factions
+  when source and target are both under enemy ZOC. Not the only one that
+  can reject this branch's chosen move — see "Confirmed via live
+  instrumentation", round 3.
+- `src/path.cpp:226-232`, `mod_zoc_move(x, y, faction_id)` — returns
+  faction_id+1 (truthy) when tile `(x, y)` is not a base and is under enemy
+  Zone of Control, 0 otherwise.
+- `src/veh_action.cpp` `MOV_END` (the label every `order_veh` exit path
+  reaches): on a failed move, for a non-human faction, increments
+  `veh->iter_count`. This is the signal the second fix layer relies on.
+- `src/move.cpp:3484` (Lua: `move.lua:3141`) — `combat_move`'s *existing*
+  `iter_count >= 4` give-up check, gated on `at_base`. Never fires for the
+  stuck units found live (all had `at_base == false`), which is why the
+  loop wasn't already bounded before this fix.
+
+**Note on how this was found:** the user first reported a repeating
+`AMPHIBBASE2` popup ("the channel between a sea base and land can only be
+crossed by units with the Amphibious Pods ability..."), which pointed
+initial investigation at `has_transport()`/`MOV_NAVAL`'s naval-transport
+check. That angle turned out to be a dead end — live instrumentation
+(below) showed the actually-reproducing stuck units were never at a base or
+on an ocean tile at all, so the amphibious-specific gate could never have
+applied to them. The real mechanism, confirmed by the same instrumentation,
+is Zone of Control, unrelated to sea crossings — the popup symptom may have
+had a separate, not-yet-reproduced cause, or may not have been this bug at
+all. Recorded here since the ZOC bug is real, confirmed, and fixed;
+revisit if the original popup resurfaces with a save where a unit is
+genuinely stuck at a sea base.
+
+### The bug
+
+`combat_move`'s artillery-mode candidate scan picks a repositioning tile
+using only `allow_move()` as a filter:
+
+```cpp
+// src/move.cpp:3217
+} else if (arty && !veh->moves_spent
+&& (score = cover_score(ts.rx, ts.ry) - 4*ts.dist) > best_cover
+&& allow_move(ts.rx, ts.ry, faction_id, triad)) {
+    tx = ts.rx;
+    ty = ts.ry;
+    best_cover = score;
+```
+
+`allow_move()` (`move.cpp:376`) checks terrain/triad compatibility,
+ownership/diplomacy, and tile occupancy — **it has no notion of Zone of
+Control**:
+
+```cpp
+bool allow_move(int x, int y, int faction_id, int triad) {
+    MAP* sq;
+    if (!(sq = mapsq(x, y)) || non_ally_in_tile(x, y, faction_id)) {
+        return false;
+    }
+    if (triad != TRIAD_AIR && is_ocean(sq) != (triad == TRIAD_SEA)) {
+        return false;
+    }
+    return !sq->is_owned() || sq->owner == faction_id
+        || has_pact(faction_id, sq->owner)
+        || (at_war(faction_id, sq->owner) && !sq->is_base());
+}
+```
+
+But the actual per-step move execution does enforce ZOC, unconditionally,
+for AI-controlled factions:
+
+```cpp
+// src/veh_action.cpp:2120 — inside order_veh
+if (!veh_at_sea && !tgt_at_sea) {
+    if (Vehs[veh_id].triad() == TRIAD_LAND
+    && Vehs[veh_id].plan() != PLAN_PROBE
+    && !(Units[Vehs[veh_id].unit_id].ability_flags & ABL_CLOAKED)
+    && stack_veh_id < 0
+    && mod_zoc_move(veh_x, veh_y, veh_fc_id)
+    && mod_zoc_move(tgt_x, tgt_y, veh_fc_id)) {
+        if (veh_fc_id != MapWin->cOwner || move_delay || !(*VehAttackFlags & 1)) {
+            goto MOV_END; // blocked — this is the branch AI factions take
+        }
+        ...
+    }
+}
+```
+
+When **both** the unit's current tile and the chosen target tile are under
+enemy Zone of Control (`mod_zoc_move` nonzero for both), the move is
+rejected outright. The neighboring `attack`-mode branch in `combat_move`
+already accounts for ZOC (`if (!ignore_zocs) { max_dist = ts.dist; }`, right
+above the arty branch) — but the arty repositioning branch has no equivalent
+check, so it can select exactly such a doubly-ZOC-restricted tile.
+
+### Impact
+
+`set_move_to` only queues `ORDER_MOVE_TO`; it does not itself validate the
+move. When `order_veh` later tries to execute that order and hits the ZOC
+block above, the move fails silently (no state change), and nothing marks
+the decision as invalid. Since the unit's position, the enemy's position,
+and therefore the ZOC condition are all unchanged, `combat_move` picks the
+same (or an equally-blocked) candidate again the next time it's evaluated —
+repeatedly within the same turn (the engine keeps revisiting a unit with
+unspent moves) and again every subsequent turn, until the ZOC condition
+changes (the enemy unit causing it moves or dies) or the stuck unit itself
+dies by unrelated means.
+
+### Confirmed via live instrumentation
+
+Three rounds of temporary diagnostic logging (added to `lua/ai/move.lua`,
+removed after confirmation each round) were used to test hypotheses against
+real gameplay data rather than static reading alone — two of the three
+hypotheses tested this way turned out wrong, which is itself the reason a
+third round happened:
+
+- **Round 1** logged `tile_is_ocean`/`tile_is_base`/`has_transport`/the
+  low-level naval-transport stack check at `combat_move`'s pre-move guard.
+  Result: for every reproduced stuck unit, both `ocean` and `base` were
+  `false` — ruling out any sea-base/amphibious mechanism for these cases
+  (the angle the user's original `AMPHIBBASE2` report pointed at).
+- **Round 2** logged `path_cost` (route existence), `mod_zoc_move` for both
+  source and target tile, `attack`/`arty` mode, and target occupancy, at
+  the point `combat_attack` issues `set_move_to`. Across 378 samples from a
+  stuck-unit reproduction: `arty:true` in 96%, `attack:false` in 100%
+  (consistent with land artillery skipping normal-attack evaluation),
+  `zoc_src:true` (unit's own tile under enemy ZOC) in 88%, `zoc_tgt:true`
+  in 82%, target `occupied:false` in 71% (confirming this is repositioning,
+  not a real attack on a defended tile). This produced the first fix layer
+  below (source-and-target ZOC check) — deployed, but the loop **did not
+  stop**: the same units kept retrying the same targets.
+- **Round 3**, after the first fix didn't work, logged the raw
+  `mod_zoc_move` return values (not just truthiness) at the same point.
+  Across 505 fresh samples, the dominant pattern (350/505, ~69%) had the
+  unit's own tile under ZOC but the *target* tile not
+  (`src=<nonzero> tgt=0`) — exactly the case the first fix's "both sides"
+  rule correctly does **not** block, yet the move still failed. Root cause:
+  `set_move_to` only queues `ORDER_MOVE_TO` (`veh.cpp:3185-3201`) — no
+  pathfinding happens at that point. The actual attempt goes through
+  `action()`/`order_veh`, which uses the full pathfinder (`Path::find`,
+  `path.cpp`, with its own ZOC-aware routing via `TileSearch::has_zoc`,
+  `path.cpp:83-90`) across every intermediate tile of a multi-tile route —
+  not just a same-turn direct check between the unit's tile and a distant
+  final target several tiles away. Replicating that from inside
+  `combat_move`'s target-scoring loop would mean re-implementing the
+  pathfinder's own ZOC logic; the original C++ `combat_move` doesn't do
+  this either (same `allow_move()`-only filter). This is what motivated the
+  second, unconditional fix layer below.
+
+### Fix applied
+
+Two layers, both mirrored identically in `src/move.cpp` and
+`lua/ai/move.lua`:
+
+1. **Source-and-target ZOC check** (kept — correct per the one confirmed
+   execution-time rule, just not sufficient alone): skip a candidate when
+   both the unit's own tile and the candidate tile are under enemy ZOC,
+   mirroring `order_veh`'s own check, respecting `ignore_zocs` (already
+   computed earlier in the function for probes/non-land triads).
+2. **`iter_count` backstop** (the layer that actually breaks the loop):
+   `veh->iter_count` increments specifically when a move fails in
+   `order_veh`'s `MOV_END` for a non-human faction — a genuine "this unit's
+   current decision has failed N times in a row" signal already relied on
+   elsewhere in this same function (`move.cpp:3484`, `move.lua:3141`), just
+   gated there on `at_base`, which the stuck units never satisfy. Requiring
+   `iter_count < 4` (the same threshold used throughout this file) to even
+   consider an arty-repositioning candidate means that once a target keeps
+   getting rejected — for *any* reason, ZOC or otherwise — the branch stops
+   proposing it and the function falls through to its normal
+   no-candidate-found path instead of repeating the same failed order.
+
+```cpp
+// src/move.cpp
+} else if (arty && !veh->moves_spent
+&& (score = cover_score(ts.rx, ts.ry) - 4*ts.dist) > best_cover
+&& allow_move(ts.rx, ts.ry, faction_id, triad)
+&& (ignore_zocs || !mod_zoc_move(veh->x, veh->y, faction_id)
+    || !mod_zoc_move(ts.rx, ts.ry, faction_id))
+&& veh->iter_count < 4) {
+    tx = ts.rx;
+    ty = ts.ry;
+    best_cover = score;
+```
+
+```lua
+-- lua/ai/move.lua (funcs.mod_zoc_move is an unwrapped int32 host call —
+-- faction_id+1 or 0 — so `== 0`/`~= 0`, never bare truthy)
+elseif arty and v.moves_spent == 0 and arty_score > best_cover
+    and funcs.allow_move(rx, ry, faction_id, triad)
+    and (ignore_zocs or funcs.mod_zoc_move(v.x, v.y, faction_id) == 0
+        or funcs.mod_zoc_move(rx, ry, faction_id) == 0)
+    and v.iter_count < 4 then
+    tx, ty = rx, ry
+    best_cover = arty_score
+```
+
+Verified: both presets build clean with the C++ change; the Lua change
+passes a native-`luajit` syntax check. Live-tested through three
+instrumented rounds during investigation, then a fourth live run of the
+final (both-layer) version — see "Known remaining limitation" below for
+what that run showed.
+
+### Known remaining limitation — not fixed further, by design
+
+The fourth live-tested round confirmed the `iter_count` backstop works
+exactly as designed (retries per turn dropped from 16-18 to a hard cap of
+4, confirmed in `debug.txt`: four `combat_attack`/`set_move_to` lines per
+stuck vehicle per turn, then silence for the rest of that turn). It does
+**not** stop the underlying unit from being stuck — `veh->iter_count` is
+reset to 0 every turn in `mod_repair_phase` (`game.cpp:1696`), so the exact
+same 4-attempt cycle repeats every subsequent turn until the unit dies by
+unrelated means. The reduction is real (roughly 16-18x/turn down to 4x/turn
+— a ~75% cut in wasted Lua hook calls and log volume) but the AI still
+never successfully repositions these units.
+
+Going further requires understanding *why* `Path_move` (the function that
+actually decides the next step, called from `action_go_to`,
+`veh_action.cpp:458`) rejects the move even when this project's own
+`allow_move()`/`mod_zoc_move()`/`path_cost()` all report it as viable.
+`Path_move` is a raw, un-decompiled engine entry point (only its patched
+address exists in `patch.cpp:469`, redirecting the original `0x4CB310` to
+Thinker's own `action_go_to` — but `Path_move` itself is never
+recompiled/exposed as C++ source anywhere in this tree) — its exact
+algorithm (route caching, per-step ZOC/stacking checks, tie-breaking) isn't
+available to read or replicate. No function in `combat_move`'s own target
+scoring, in either language, can predict its answer with certainty; this
+was already true of the original C++ `combat_move` before any of this
+investigation started, since it uses the same `allow_move()`-only filter
+this fix started from.
+
+**Deliberately not pursued further:** a mechanism that lets a unit
+remember "this specific target failed repeatedly, avoid it for several
+turns" would close this gap, but it's a genuine AI behavior change (new
+cross-turn memory that neither the original C++ nor this fork's Lua port
+have ever had), not a 1:1-fidelity bug fix — out of scope per this
+project's own rule (`IMPLEMENTATION_PLAN.md`: "the port must be 1:1 at
+first; AI improvements come later, on top of the Lua base"). The
+`iter_count < 4` backstop is the practical floor reachable within that
+constraint; the maintainer explicitly chose to accept it rather than
+extend scope (2026-07-24).
