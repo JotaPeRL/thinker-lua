@@ -653,3 +653,157 @@ allied unit garrisoned alongside the real target could be returned as
 native and Lua alike, not just the Lua port. Re-verified live over 151
 turns, 0 crashes, the vast majority of `combat_move`'s decision surface
 exercised. This closes movement stage 6.
+
+## 2026-07-24
+
+### Probe-mission popup flood: `NetMsg_pop`/`NetMsg_pop_2` gated on `MapWin->cOwner`, not `is_human` (supports `IMPLEMENTATION_DETAILS.md` 5.3)
+
+Live autoplay still showed dozens of popups per run once probe teams
+became common, invisible in `autoplay.log` — proof they bypassed every
+existing shim. Traced to `probe.cpp`'s *mission-report* messages
+(`BUSTED`, `STOLENOTHING`, `PROBECAUGHT`, `ASSASSINATED`, …), which go
+through `NetMsg_pop`/`NetMsg_pop_2` gated on `veh_fc_id == MapWin->cOwner
+|| tgt_fc_id == MapWin->cOwner` — the viewpoint faction from New Game
+setup, never touched by `autoplay_demote_human()`'s human-bit clear. The
+*decision* dialogs (`EXCUSE`/`PACTEXCUSE`, `BasePop_exec_2`/`_3`) were
+never the problem — those really are `is_human`-gated and demotion
+already neutralizes them; the report-only banners use a completely
+different, cOwner-based gate. Fixed by promoting `NetMsg_pop`/
+`NetMsg_pop_2` to a 10th/11th shimmed primitive (`src/autoplay.h`/`.cpp`,
+`src/engine.h`/`.cpp`) — safe as a uniform default since no caller
+anywhere in the codebase consumes either function's return value.
+`NetMsg_pop` is also the general "flash a message" primitive used ~150
+places outside `probe.cpp`, so this quieted a lot more than just probe.
+Live-confirmed clean.
+
+### The tech-acquisition popup false trail: five rounds chasing `tech_achieved`, the real path was `tech_advance` (supports `IMPLEMENTATION_DETAILS.md` 5.3)
+
+A single announcement ("your faction has acquired technology X") survived
+fix after fix, and untangling why became the session's main lesson in not
+trusting a plausible-looking root cause. `tech_achieved` (`0x5BB000`,
+entirely un-decompiled) turned out to have its own embedded raw popup
+calls, same "redirecting the variable isn't redirecting the function" gap
+from 2026-07-14 — `objdump`-ing its address range found 15 internal popup
+calls, three of them `NetMsg_pop` with resolvable labels
+(`TECHOBTAINED`/`FREEFACTECH`/`FREEABILTECH`) that read exactly like the
+reported bug. Patching those three, then a fourth (`BasePop_exec_3`, the
+branch taken when the achieving faction isn't a single specific tracked
+global — the common case with 7 AI factions), still didn't stop it: a
+live run showed zero matching log lines despite confirmed tech
+completions. The actual answer came from checking `SkipTechScreenA`
+(`0x945F40`) — a real engine flag, "non-zero skips popups, used in
+tech_achieved and tech_advance," already used by `game.cpp` for the
+turn-1 starting-tech grant — and confirming by disassembly
+(`0x5BB490`/`0x5BB49D`) that setting it skips `tech_achieved`'s *entire*
+popup-bearing middle section in one jump, not one branch. `tech_advance`
+(`0x5BE530`, a different raw function, called every turn per faction once
+research completes — `tech.cpp:178`/`:191`) was the actual dominant path
+all along; wrapping its two call sites (plus `base.cpp`'s
+`FAC_UNIVERSAL_TRANSLATOR` facility) with `conf.autoplay`-gated
+`SkipTechScreenA` needed no reverse engineering at all. Even that wasn't
+complete: `tech_achieved` is *also* called directly (not via
+`tech_advance`) from `veh.cpp` (pod tech grants), `probe.cpp`
+(probe-stolen tech), `faction.cpp` (diplomatic tech sharing, initial-spawn
+bonus techs), and `net.cpp` (`net_tech`) — none of those call sites were
+guarded either, and each needed the same `SkipTechScreenA` wrap.
+**Lesson: grep every direct caller of the suspected function before
+reaching for a disassembler** — the fix that actually worked needed none,
+and the existing `SkipTechScreenA` convention was sitting in the codebase
+the whole time. The four `write_call` patches from the false trail were
+kept (harmless, redundant once the flag is set correctly) rather than
+reverted.
+
+## 2026-07-25
+
+### `mon_tech_discovered`/`monument`: the popup was never `tech_achieved` at all, and "found the function" wasn't the same as "found every caller" (supports `IMPLEMENTATION_DETAILS.md` 5.3)
+
+Two more clean-looking fixes still didn't stop the popup. The break came
+from asking the user for the literal on-screen text instead of guessing
+another call site: "WE HAVE ACQUIRED TECHNOLOGY!" turned out to live in
+`labels.txt` line 553, an older index-based text system entirely
+different from the named labels `tech_achieved` uses — proof the whole
+five-round investigation had been aimed at the wrong function. Traced it
+to `mon_tech_discovered` (`0x476C90`, called from `tech.cpp` right after
+`tech_advance`, outside the `SkipTechScreenA`-guarded block, with no such
+check of its own), whose one real call targets `monument` (`0x476A50`) —
+a function already declared in this codebase with zero callers until now
+(upstream had named/typed it but never wired it up). Patching that one
+call site *still* wasn't enough: `objdump -d terranx.exe | grep
+'call.*0x476a50'` over the *whole* binary (not just one function's
+address range) found 18 total call sites, a whole family of sibling
+"first to achieve X" world-event announcers sharing the same sink, only
+one of which had been patched. Redirected all 17 remaining sites at once
+— safe uniformly since `monument` returns `void` everywhere, and for
+autoplay specifically it doesn't matter which achievement triggered it.
+**Lesson: "found the function" and "found every path that reaches it"
+are different claims** — a `grep`/`objdump` sweep for every caller,
+scoped to the whole binary rather than one function's disassembly
+window, should be the default the first time, not the fallback after a
+narrower patch turns out incomplete.
+
+### Live gdb debugging under Wine's WoW64 doesn't work for this; pivoted to dismissing dialogs generically instead of chasing sources (supports `IMPLEMENTATION_DETAILS.md` 5.3)
+
+With the popup still recurring after six rounds of disassembly, tried
+attaching `gdb` to the running Wine process to catch it in the act
+(`sudo gdb -p <pid>`, needed because `ptrace_scope=1` blocks attaching to
+a non-child process otherwise). Breakpoints resolved at the correct
+addresses, but Wine ≥ 11's WoW64 architecture broke gdb's
+resume-after-breakpoint step (`warning: Selected architecture
+i386:x86-64 is not compatible with reported target architecture
+i386:x64-32`) — continuing past a real, correctly-caught hit
+(`X_pop_engine`/`PLANETFALL`, unrelated to the bug being chased) crashed
+the process with SIGSEGV at the breakpoint's own address. The game's own
+crash handler caught it and recovered cleanly (confirmed after the fact:
+the autoplay session continued normally to its full planned length) — an
+earlier draft of this investigation wrongly assumed the crash had left
+the process in a corrupted state, which the user corrected. A passive,
+read-only attach (no breakpoints) worked fine and confirmed a live "WE
+HAVE ACQUIRED TECHNOLOGY!" popup was genuine (not a stale artifact) by
+reading `StrBuffer`/`ParseStrBuffer` directly, but background threads
+were all parked in symbol-less Wine host binaries with no usable
+backtrace, so it didn't identify a new root cause. **Conclusion: don't
+set software breakpoints on this WoW64 build** — hardware watchpoints
+(`watch`, not `break`) were never tried and might survive a resume since
+they don't patch code bytes, worth trying first if this is ever revisited.
+
+Given six rounds of chasing individual sources still left the door open
+for the next not-yet-found announcement, changed strategy instead of
+continuing to disassemble: `autoplay_dismiss_dialog()` (`src/
+autoplay.h`/`.cpp`) detects "some window other than the map/base/design
+screen has focus" via `Win_get_key_window()` (previously read-only,
+`gui.cpp`'s own `current_window()`) and posts a synthetic Enter keypress
+via `PostMessage`, reusing a pattern already proven elsewhere in
+`gui.cpp` (`WM_MOUSEWHEEL`-to-arrow-key translation). Wired into
+`mod_blink_timer` alongside `autoplay_try_end_turn`, same idle-callback
+cadence, same "experimental, unverified" framing that function shipped
+with. **Live-verified: 3 separate autoplay runs, zero blocking popups,
+zero crashes.** This is now the standing mechanism — a genuinely new
+announcement should be caught by construction, not require another
+disassembly round.
+
+### Planetary Council: found a scenario-rules flag instead of reverse-engineering `CouncilWindow`; unattended autoplay achieved (supports `IMPLEMENTATION_DETAILS.md` 5.3)
+
+One of the three clean dismiss-mechanism runs still needed a manual
+click for a Planetary Council interaction — confirmed live that the
+generic Enter-dismiss does not resolve it, unlike every popup so far.
+Rather than reverse-engineer `CouncilWindow` (`0x6FEC80`, zero prior
+investigation in this codebase, unlike `BasePop`/`Popup`'s dozens of
+already-mapped methods) to simulate a real vote, found that
+`can_call_council` (`0x52C670`) already tests a real scenario-rules
+flag — `MRULES_NO_PLANETARY_COUNCIL` (`GameMoreRules`/`0x9A681C`, bit
+`0x4`) — and returns false unconditionally when it's set, confirmed by
+disassembly. Forcing this flag whenever `conf.autoplay` is on
+(`autoplay_demote_human()`, alongside the existing monolith-popup
+preference force) disables Planetary Council outright for the session —
+a different kind of tradeoff than every other autoplay fix here, since
+it removes an actual game mechanic rather than just hiding its UI.
+User-confirmed as acceptable: autoplay's job is unattended testing, not
+full mechanic fidelity, and this is far lower-risk than simulating a vote
+through a UI class with no prior investigation. Also fixed in passing:
+`call_council` (`0x52C880`, called unconditionally for every non-human
+faction every eligible turn) had its own embedded, unshimmed `NetMsg_pop`
+call, same bypass pattern as everywhere else, patched the same way.
+
+**Milestone: a 100-turn autoplay run completed with zero manual
+intervention** — closing out the popup-blocking investigation that ran
+across both of these dates.
