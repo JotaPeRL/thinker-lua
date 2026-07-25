@@ -127,6 +127,9 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         land_raise_plan = { file = "src/move.cpp", func = "land_raise_plan",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- Movement stage 7C (IMPLEMENTATION_DETAILS.md 4.16).
+        invasion_plan = { file = "src/move.cpp", func = "invasion_plan",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -3591,6 +3594,134 @@ local function land_raise_plan(faction_id)
     end
 end
 
+-- Movement stage 7C (IMPLEMENTATION_DETAILS.md 4.16): invasion_plan
+-- (move.cpp:663-763), Class 3, hooked at the call site in move_upkeep --
+-- same convention as land_raise_plan (7B). Reuses target_priority
+-- (stage 6), pick_scout_target/compare_might and the multi-point
+-- TileSearch/route-retrieval primitives (7A) directly, as anticipated
+-- when those were built.
+local function invasion_plan(faction_id)
+    if funcs.has_ships(faction_id) == 0 or funcs.is_human(faction_id) then
+        return
+    end
+    local main_region = funcs.main_region(faction_id)
+    local enemy = false
+    local seed_xs, seed_ys = {}, {}
+    for i = 0, base_api.count() - 1 do
+        local b = base_api.get(i)
+        if funcs.tile_region(b.x, b.y) == main_region
+            and b.faction_id == faction_id and funcs.coast_tiles(b.x, b.y) ~= 0 then
+            seed_xs[#seed_xs + 1] = b.x
+            seed_ys[#seed_ys + 1] = b.y
+        elseif funcs.at_war(faction_id, b.faction_id) ~= 0 and funcs.tile_is_ocean(b.x, b.y) == 0 then
+            enemy = true
+        end
+    end
+
+    local out = ffi.new("int32_t[6]")
+    funcs.find_priority_goal(faction_id, E.AI_GOAL_NAVAL_END, out, out + 1)
+    local px, py = out[0], out[1]
+    funcs.find_priority_goal(faction_id, E.AI_GOAL_NAVAL_SCOUT, out, out + 1)
+    local naval_scout_x, naval_scout_y = out[0], out[1]
+    funcs.set_naval_scout(faction_id, naval_scout_x, naval_scout_y)
+
+    local scout_target = 0
+    if naval_scout_x < 0 then
+        scout_target = pick_scout_target(faction_id)
+    end
+    if main_region < 0 or not enemy then
+        return
+    end
+
+    local count = #seed_xs
+    local seed_xs_c = ffi.new("int32_t[?]", count)
+    local seed_ys_c = ffi.new("int32_t[?]", count)
+    for idx = 1, count do
+        seed_xs_c[idx - 1] = seed_xs[idx]
+        seed_ys_c[idx - 1] = seed_ys[idx]
+    end
+    funcs.region_search_start_multi(count, seed_xs_c, seed_ys_c, E.TS_SEA_AND_SHORE, 0)
+
+    local best_score = -1000
+    local route_count = ffi.new("int32_t[1]")
+    local route_xs = ffi.new("int32_t[?]", E.PathLimit)
+    local route_ys = ffi.new("int32_t[?]", E.PathLimit)
+    while true do
+        funcs.region_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+        if out[0] == 0 then break end
+        local rx, ry, dist, prev_x, prev_y = out[1], out[2], out[3], out[4], out[5]
+
+        local do_continue = false
+        if funcs.tile_is_land_region(rx, ry) ~= 0 then
+            local enemy_dist = funcs.map_enemy_dist(rx, ry)
+            if enemy_dist > 0 and enemy_dist < 10
+                and funcs.allow_move(prev_x, prev_y, faction_id, E.TRIAD_SEA) ~= 0
+                and funcs.allow_move(rx, ry, faction_id, E.TRIAD_LAND) ~= 0 then
+                funcs.region_search_get_route(route_count, route_xs, route_ys, E.PathLimit)
+                local region = funcs.tile_region(rx, ry)
+                local owner = funcs.tile_owner(rx, ry)
+                if region == main_region
+                    and (dist < 6 or owner == faction_id
+                        or funcs.map_range(rx, ry, route_xs[0], route_ys[0]) + 1 < dist) then
+                    do_continue = true
+                else
+                    local score = min(0, idiv(funcs.map_safety(rx, ry), 2))
+                        + target_priority(rx, ry, faction_id)
+                        + (funcs.coast_tiles(prev_x, prev_y) < 7 and 200 or 0)
+                        + (funcs.ocean_coast_tiles(prev_x, prev_y) > 0 and 600 or 0)
+                        + (region == main_region and 0 or 400)
+                        - 32 * enemy_dist
+                        - 16 * dist + rand.map(0, 32)
+                    if px >= 0 then
+                        score = score - 4 * funcs.map_range(px, py, prev_x, prev_y)
+                    end
+                    if score > best_score then
+                        best_score = score
+                        funcs.set_target_land_region(faction_id, region)
+                        funcs.set_naval_start(faction_id, route_xs[0], route_ys[0])
+                        funcs.set_naval_end(faction_id, prev_x, prev_y)
+                        funcs.set_naval_beach(faction_id, rx, ry)
+                        log.debug("invasion %d -> %d start: %2d %2d end: %2d %2d " ..
+                            "coast: %d ocean: %d dist: %2d score: %d",
+                            faction_id, owner, route_xs[0], route_ys[0], rx, ry,
+                            funcs.coast_tiles(prev_x, prev_y), funcs.ocean_coast_tiles(prev_x, prev_y),
+                            dist, score)
+                    end
+                end
+            end
+        end
+        if not do_continue and naval_scout_x < 0 and funcs.tile_is_land_region(rx, ry) ~= 0
+            and funcs.tile_owner(rx, ry) == scout_target
+            and funcs.tile_region(rx, ry) == funcs.main_region(scout_target)
+            and funcs.tile_is_base_radius(rx, ry) ~= 0 then
+            if funcs.tile_is_base_radius(prev_x, prev_y) ~= 0
+                and funcs.tile_owner(prev_x, prev_y) == scout_target
+                and rand.map(0, 8) == 0 then
+                naval_scout_x, naval_scout_y = prev_x, prev_y
+                funcs.set_naval_scout(faction_id, prev_x, prev_y)
+                funcs.add_goal(faction_id, E.AI_GOAL_NAVAL_SCOUT, 5, prev_x, prev_y, -1)
+            end
+        end
+    end
+
+    local naval_end_x, naval_end_y = funcs.naval_end_x(faction_id), funcs.naval_end_y(faction_id)
+    if naval_end_x >= 0 then
+        local min_dist = 25
+        for i = 0, base_api.count() - 1 do
+            local b = base_api.get(i)
+            if b.faction_id == faction_id then
+                local dist = funcs.map_range(b.x, b.y, naval_end_x, naval_end_y)
+                    - (funcs.has_facility(E.FAC_AEROSPACE_COMPLEX, i) ~= 0 and 5 or 0)
+                    + rand.map(0, 4)
+                if dist < min_dist then
+                    funcs.set_naval_airbase(faction_id, b.x, b.y)
+                    min_dist = dist
+                end
+            end
+        end
+    end
+end
+
 port.artifact_move = artifact_move
 port.crawler_move = crawler_move
 port.colony_move = colony_move
@@ -3599,4 +3730,5 @@ port.escape_move = escape_move
 port.trans_move = trans_move
 port.combat_move = combat_move
 port.land_raise_plan = land_raise_plan
+port.invasion_plan = invasion_plan
 return port

@@ -88,4 +88,8 @@ return {
     -- Hooked at the call site in move_upkeep (C++), not inside
     -- land_raise_plan's own body -- see move.cpp's move_upkeep.
     land_raise_plan = move.land_raise_plan,
+    -- Movement stage 7C (IMPLEMENTATION_DETAILS.md 4.16): same
+    -- faction-level Class 3 contract as land_raise_plan (7B), same hook
+    -- site in move_upkeep.
+    invasion_plan = move.invasion_plan,
 }

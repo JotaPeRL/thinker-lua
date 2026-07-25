@@ -1148,7 +1148,11 @@ void move_upkeep(int faction_id, UpdateMode mode) {
         if (!lua_ai_command_hook_faction("land_raise_plan", faction_id)) {
             land_raise_plan(faction_id);
         }
-        invasion_plan(faction_id);
+        // Movement stage 7C (IMPLEMENTATION_DETAILS.md 4.16): same
+        // convention as land_raise_plan above.
+        if (!lua_ai_command_hook_faction("invasion_plan", faction_id)) {
+            invasion_plan(faction_id);
+        }
     }
     if (p.naval_start_x >= 0 && p.naval_end_x >= 0) {
         add_goal(faction_id, AI_GOAL_NAVAL_START, 3, p.naval_start_x, p.naval_start_y, -1);

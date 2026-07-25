@@ -557,21 +557,49 @@ doesn't commit to sub-stage letters).
     `INT_MAX`/`math.huge` — matched exactly in the Lua port
     (`min_range_over`) even though the difference can't matter against the
     `>= 2` comparison it's used in, for exact fidelity.
-- **7C (`invasion_plan`)** and **7D (`update_main_region`'s `prioritize_
-  naval` decision)** — not started. `invasion_plan` reuses `target_priority`
-  (already ported, stage 6) and 7A's `pick_scout_target`/multi-point search/
-  route-retrieval primitives directly; expect fewer new primitives needed
-  than 7B took.
+- **7C (`invasion_plan`)** — ✅ done, **build-verified only, not yet
+  live-tested**. `move.cpp:663-763`. Confirmed the 7A prediction: reused
+  `target_priority` (stage 6) and 7A's `pick_scout_target`/
+  `region_search_start_multi`/`region_search_next`/`region_search_get_route`/
+  `find_priority_goal`/every `naval_*` plans[] setter directly — **zero new
+  host-API surface**, only two hand-added enum constants
+  (`AI_GOAL_NAVAL_END`/`AI_GOAL_NAVAL_SCOUT`, `engine_enums.h`, compiler-read
+  like `AI_GOAL_RAISE_LAND`, not hand-transcribed numeric literals since
+  that header isn't windows.h-blocked). Same hook shape/site convention as
+  7B (`lua_ai_command_hook_faction`, hooked at the `move_upkeep` call site).
+  - **A real C++ `continue` inside the `while` loop skips a *second,
+    independent* check** (the scout-target block, written after/outside the
+    scoring `if`) — not just the scoring itself. Lua has no `continue`;
+    replicated with a `do_continue` flag set inside the scoring branch and
+    checked before the scout-target block, rather than restructuring into
+    nested `if/elseif` (this file's usual no-`goto` idiom) since the two
+    blocks aren't mutually exclusive branches of the same condition. Read
+    the *whole* function's control flow before assuming an `if/elseif`
+    restatement is sufficient — this is the kind of gap the
+    `former_move`/`combat_move` bug hunts were caused by.
+  - **`p.naval_end_x`/`_y` read back via their getter after the loop**,
+    not tracked in a local Lua variable — matches the original reading
+    a *persistent* `plans[]` field (set on a previous call, possibly
+    turns ago, if this call's loop never found a better score) rather
+    than a fresh per-call local. A local shadow variable initialized to
+    `-1` each call would have silently diverged from the original the
+    first time a turn's `invasion_plan` call didn't update it.
+  - `random(n)` → `rand.map(0, n)`, not `rand.map(n)` — confirmed against
+    `pick_scout_target`'s own already-verified `random(16)` →
+    `rand.map(0, 16)` translation before reusing the pattern here.
+- **7D (`update_main_region`'s `prioritize_naval` decision)** — not started.
 - `move_upkeep`'s own map/unit/base sweep (`move.cpp:852-1141`) and its
   goal→mapnode bookkeeping tail (`1157-1180`) stay C++ (fact computation,
   Phase 4.3) — only the `land_raise_plan(faction_id); invasion_plan
-  (faction_id);` call site (`UM_Full` branch) gets a hook.
+  (faction_id);` call site (`UM_Full` branch) gets a hook (now both calls
+  hooked as of 7C).
 
-**Resume point:** stage 7C (`invasion_plan`, `move.cpp:662-762`) next, then
-7D, then stage 8 (`nuclear_move`, deliberately ordered last — see its size
-note above). `IMPLEMENTATION_PLAN.md` describes stage 7 as one unit without
-committing to sub-stage letters; this file's own 7A–7D / 0–8 numbering is
-the authoritative staging if a number is needed.
+**Resume point:** stage 7D (`update_main_region`'s `prioritize_naval`
+decision, `move.cpp:769-830`ish) next, then stage 8 (`nuclear_move`,
+deliberately ordered last — see its size note above). `IMPLEMENTATION_
+PLAN.md` describes stage 7 as one unit without committing to sub-stage
+letters; this file's own 7A–7D / 0–8 numbering is the authoritative
+staging if a number is needed.
 
 ---
 

@@ -979,6 +979,10 @@ int main() {
     // Movement stage 7B (IMPLEMENTATION_DETAILS.md 4.16): land_raise_plan's
     // own goal type, same compiler-read discipline.
     printf("    AI_GOAL_RAISE_LAND = %d,\n", AI_GOAL_RAISE_LAND);
+    // Movement stage 7C (IMPLEMENTATION_DETAILS.md 4.16): invasion_plan's
+    // own goal types.
+    printf("    AI_GOAL_NAVAL_END = %d,\n", AI_GOAL_NAVAL_END);
+    printf("    AI_GOAL_NAVAL_SCOUT = %d,\n", AI_GOAL_NAVAL_SCOUT);
     // trans_move port, sub-stage 1 (IMPLEMENTATION_DETAILS.md 4.14):
     // near_landing/make_landing's own markers.
     printf("    NODE_NAVAL_BEACH = %d,\n", 8);
