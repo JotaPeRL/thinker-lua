@@ -763,7 +763,10 @@ int __cdecl steal_tech(int faction_id, int faction_id_tgt, int is_steal) {
             parse_says(1, StrBuffer, -1, -1);
             NetMsg_pop(NetMsg, "STOLETECH", 5000, 0, 0);
         }
+        // conf.autoplay: suppress tech_achieved's popups -- see autoplay.h
+        if (conf.autoplay) *SkipTechScreenA = 1;
         tech_achieved(faction_id, tech_id, faction_id_tgt, 0);
+        if (conf.autoplay) *SkipTechScreenA = 0;
         if (!is_human(faction_id) && tech_id != 9999) {
             mod_bases_reset(-1, faction_id, 0);
         }
@@ -2184,6 +2187,8 @@ int __cdecl mod_setup_player(int faction_id, int setup_id, int is_probe) {
         }
         int recon_unit_id = BSC_SCOUT_PATROL;
         if (initial_spawn) {
+            // conf.autoplay: suppress the tech_achieved calls below's popups -- see autoplay.h
+            if (conf.autoplay) *SkipTechScreenA = 1;
             int bonus_count = m->faction_bonus_count;
             for (int i = 0; i < bonus_count; i++) {
                 if (m->faction_bonus_id[i] == RULE_TECH) {
@@ -2205,6 +2210,7 @@ int __cdecl mod_setup_player(int faction_id, int setup_id, int is_probe) {
                 }
                 plr->energy_credits += m->rule_energy / 2;
             }
+            if (conf.autoplay) *SkipTechScreenA = 0;
             consider_designs(faction_id);
             for (int i = 0; i < MaxProtoFactionNum; i++) {
                 int unit_id = i + faction_id * MaxProtoFactionNum;

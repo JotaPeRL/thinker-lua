@@ -175,7 +175,10 @@ void __cdecl mod_tech_research(int faction_id, int value) {
                 plr.tech_accumulated += value;
             }
             if (plr.tech_accumulated >= mod_tech_rate(faction_id)) {
+                // conf.autoplay: suppress tech_advance's popups -- see autoplay.h
+                if (conf.autoplay) *SkipTechScreenA = 1;
                 int tech_id = tech_advance(faction_id);
+                if (conf.autoplay) *SkipTechScreenA = 0;
                 debug("tech_advance %d %d %d %s\n", *CurrentTurn, faction_id, tech_id, tech_str(tech_id));
                 if (tech_id >= 0) {
                     mon_tech_discovered(faction_id, tech_id);
@@ -188,7 +191,10 @@ void __cdecl mod_tech_research(int faction_id, int value) {
             }
             if (plr.player_flags & PFLAG_FIRST_SECRETS) {
                 plr.player_flags &= ~PFLAG_FIRST_SECRETS;
+                // conf.autoplay: suppress tech_advance's popups -- see autoplay.h
+                if (conf.autoplay) *SkipTechScreenA = 1;
                 int tech_id = tech_advance(faction_id);
+                if (conf.autoplay) *SkipTechScreenA = 0;
                 debug("tech_secrets %d %d %d %s\n", *CurrentTurn, faction_id, tech_id, tech_str(tech_id));
                 if (tech_id >= 0) {
                     mon_tech_discovered(faction_id, tech_id);

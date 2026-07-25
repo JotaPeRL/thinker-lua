@@ -121,7 +121,10 @@ void __cdecl net_tech(int a1, int a2, int a3, int wait_diplo) {
             NetDaemon_await_diplo(NetState, 0x44B);
         }
     } else {
+        // conf.autoplay: suppress tech_achieved's popups -- see autoplay.h
+        if (conf.autoplay) *SkipTechScreenA = 1;
         tech_achieved(a1, a2, a3, 0);
+        if (conf.autoplay) *SkipTechScreenA = 0;
     }
 }
 

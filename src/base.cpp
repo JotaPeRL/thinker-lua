@@ -3972,9 +3972,12 @@ int __cdecl mod_base_production() {
             *GameState |= STATE_GAME_DONE;
             return 0;
         case FAC_UNIVERSAL_TRANSLATOR:
+            // conf.autoplay: suppress tech_advance's popups -- see autoplay.h
+            if (conf.autoplay) *SkipTechScreenA = 1;
             for (int i = 0; i < UniversalTranslatorTechs; i++) {
                 tech_advance(faction_id);
             }
+            if (conf.autoplay) *SkipTechScreenA = 0;
             break;
         case FAC_PLANETARY_TRANSIT_SYSTEM:
             for (int i = 0; i < *BaseCount; i++) {

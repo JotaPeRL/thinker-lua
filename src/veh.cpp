@@ -1608,7 +1608,10 @@ GOODY_START:
                                 }
                                 NetMsg_pop(NetMsg, StrBuffer, is_sea ? 5000 : -5000, 0, "supply_sm.pcx");
                             }
+                            // conf.autoplay: suppress tech_achieved's popups -- see autoplay.h
+                            if (conf.autoplay) *SkipTechScreenA = 1;
                             tech_achieved(faction_id, tech_id, 0, 0);
+                            if (conf.autoplay) *SkipTechScreenA = 0;
                             if (landing_site_pod) {
                                 f->tech_ranking--;
                             }
@@ -1951,7 +1954,10 @@ int __cdecl mod_study_artifact(int veh_id) {
         }
     }
     if (best_tech_id >= 0) {
+        // conf.autoplay: suppress tech_achieved's popups -- see autoplay.h
+        if (conf.autoplay) *SkipTechScreenA = 1;
         tech_achieved(faction_id, best_tech_id, 0, 0);
+        if (conf.autoplay) *SkipTechScreenA = 0;
     }
     return 1;
 }

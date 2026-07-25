@@ -1246,7 +1246,10 @@ MOV_DEFEND:
                 }
                 NetMsg_pop_2(StrBuffer, infil_img);
             }
+            // conf.autoplay: suppress tech_achieved's popups -- see autoplay.h
+            if (conf.autoplay) *SkipTechScreenA = 1;
             tech_achieved(veh_fc_id, prb_tech_id, tgt_fc_id, 0);
+            if (conf.autoplay) *SkipTechScreenA = 0;
         } else {
             steal_tech(veh_fc_id, tgt_fc_id, 1);
         }
