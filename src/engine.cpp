@@ -2435,12 +2435,14 @@ FSetupWin_operator_delete SetupWin_operator_delete = (FSetupWin_operator_delete)
 FNetMsg NetMsg_close = (FNetMsg)0x47A7D0;
 FNetMsg_timer_daemon NetMsg_timer_daemon = (FNetMsg_timer_daemon)0x47A800;
 FNetMsg_on_button_clicked NetMsg_on_button_clicked = (FNetMsg_on_button_clicked)0x47A860;
-FNetMsg_pop NetMsg_pop = (FNetMsg_pop)0x47A890;
+FNetMsg_pop NetMsg_pop_engine = (FNetMsg_pop)0x47A890;
+FNetMsg_pop NetMsg_pop = autoplay_netmsg_pop;
 FNetMsg_ctor NetMsg_ctor = (FNetMsg_ctor)0x47ACF0;
 FNetMsg_scalar_dtor NetMsg_scalar_dtor = (FNetMsg_scalar_dtor)0x47AD70;
 FNetMsg NetMsg_dtor = (FNetMsg)0x47ADA0;
 FNetMsg_operator_delete NetMsg_operator_delete = (FNetMsg_operator_delete)0x47AFE0;
-FNetMsg_pop_2 NetMsg_pop_2 = (FNetMsg_pop_2)0x50B9E0;
+FNetMsg_pop_2 NetMsg_pop_2_engine = (FNetMsg_pop_2)0x50B9E0;
+FNetMsg_pop_2 NetMsg_pop_2 = autoplay_netmsg_pop_2;
 
 FSound Sound_fade = (FSound)0x4C65E0;
 FSound_fade_2 Sound_fade_2 = (FSound_fade_2)0x4C6600;

@@ -8,6 +8,13 @@ enum WinFlag {
 
 enum GameWinState {GW_None, GW_World, GW_Base, GW_Design};
 
+extern HWND* phWnd;
+// Thin wrapper over gui.cpp's own static current_window() -- true
+// whenever neither the main map, the base screen, nor the design screen
+// has focus, i.e. some other window (almost always a blocking modal
+// dialog) is on top. See autoplay.cpp's autoplay_dismiss_dialog().
+bool win_dialog_open();
+
 const uint32_t WM_WINDOWED = (WM_USER + 3);
 const uint32_t WM_MOVIEOVER = (WM_USER + 6);
 const uint32_t AC_WS_WINDOWED = (WS_OVERLAPPED | WS_CLIPCHILDREN);

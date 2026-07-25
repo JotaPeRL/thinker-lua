@@ -2,6 +2,7 @@
 #include "patch.h"
 #include "patchdata.h"
 #include "patchveh.h"
+#include "autoplay.h"
 #include <mutex>
 
 static std::mutex FileLock;
@@ -760,6 +761,62 @@ bool patch_setup(Config* cf) {
     write_call(0x54F532, (int)mod_threaten);
     write_call(0x54F702, (int)mod_threaten);
     write_call(0x5BBEB0, (int)tech_achieved_pop3);
+    // tech_achieved's own NetMsg_pop calls (TECHOBTAINED/FREEFACTECH/
+    // FREEABILTECH labels, found by disassembly 2026-07-24) are baked into
+    // this un-decompiled function's machine code -- they call the raw
+    // address directly, bypassing the redirectable NetMsg_pop global
+    // (autoplay.h's "redirecting the variable is not the same as
+    // redirecting the function"). Route them through the same
+    // autoplay-aware shim explicitly; behavior when conf.autoplay==0 is
+    // unchanged (autoplay_netmsg_pop forwards to NetMsg_pop_engine).
+    write_call(0x5BBA0E, (int)autoplay_netmsg_pop); // tech_achieved: TECHOBTAINED
+    write_call(0x5BBB10, (int)autoplay_netmsg_pop); // tech_achieved: FREEFACTECH
+    write_call(0x5BBBE2, (int)autoplay_netmsg_pop); // tech_achieved: FREEABILTECH
+    // tech_achieved's *other* branch (achieving faction != the one
+    // TECHOBTAINED's branch checks for -- the common case with 7 AI
+    // factions) shows a BasePop_exec_3 dialog instead of a NetMsg_pop
+    // banner; return value confirmed discarded by the caller (disasm:
+    // `xor eax,eax` right after, never read) -- see autoplay.h.
+    write_call(0x5BBA37, (int)autoplay_tech_achieved_basepop3); // tech_achieved: BasePop_exec_3
+    // mon_tech_discovered (called from tech.cpp right after tech_advance,
+    // outside the SkipTechScreenA guard -- this function has no such
+    // check of its own) shows "RESEARCH BREAKTHROUGH / WE HAVE ACQUIRED
+    // TECHNOLOGY!" via `monument`, void return, gated on the same tracked
+    // faction global as tech_achieved's TECHOBTAINED -- see autoplay.h.
+    write_call(0x476D85, (int)autoplay_monument); // mon_tech_discovered: RESEARCH BREAKTHROUGH
+    // Popup still fired live after the single patch above -- `monument`
+    // turned out to have 18 total call sites across a whole family of
+    // sibling "mon_X_discovered"-style world-event announcers (tech is
+    // just one category; the rest are presumably other "first to..."
+    // achievements), each independently embedded as a raw address, not
+    // reachable via any redirectable pointer. For autoplay specifically,
+    // suppressing all of them uniformly is correct (any blocking popup
+    // defeats unattended play, regardless of which achievement it's
+    // announcing) -- redirect every remaining site found by `objdump -d
+    // terranx.exe | grep 'call.*0x476a50'` rather than guessing which one
+    // is "the" tech popup again.
+    write_call(0x476C76, (int)autoplay_monument); // monument: self-recursive call
+    write_call(0x476ED0, (int)autoplay_monument);
+    write_call(0x476FD0, (int)autoplay_monument);
+    write_call(0x4770E4, (int)autoplay_monument);
+    write_call(0x4771F9, (int)autoplay_monument);
+    write_call(0x477312, (int)autoplay_monument);
+    write_call(0x477426, (int)autoplay_monument);
+    write_call(0x477530, (int)autoplay_monument);
+    write_call(0x477630, (int)autoplay_monument);
+    write_call(0x477730, (int)autoplay_monument);
+    write_call(0x477830, (int)autoplay_monument);
+    write_call(0x477930, (int)autoplay_monument);
+    write_call(0x4779BC, (int)autoplay_monument);
+    write_call(0x477A4C, (int)autoplay_monument);
+    write_call(0x477B00, (int)autoplay_monument);
+    write_call(0x51A852, (int)autoplay_monument);
+    write_call(0x51C327, (int)autoplay_monument);
+    // call_council (0x52C880, called unconditionally for every non-human
+    // faction every eligible turn -- game.cpp's mod_repair_phase) has its
+    // own embedded NetMsg_pop call ("SIMULNO" label), same
+    // raw-address-bypasses-the-shim gap as everywhere else in this file.
+    write_call(0x52CC99, (int)autoplay_netmsg_pop); // call_council
     write_call(0x4868B2, (int)mod_tech_avail); // PickTech::pick
     write_call(0x4DFC41, (int)mod_tech_avail); // Console::editor_tech
     write_call(0x558246, (int)mod_tech_avail); // communicate

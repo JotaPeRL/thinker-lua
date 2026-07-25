@@ -179,6 +179,10 @@ static GameWinState current_window() {
     return GW_None;
 }
 
+bool win_dialog_open() {
+    return current_window() == GW_None;
+}
+
 void mouse_over_tile(POINT* p) {
     static POINT ptLastTile = {0, 0};
     POINT ptTile;
@@ -519,6 +523,7 @@ int __thiscall mod_calc_dim(Console* This) {
 
 int __cdecl mod_blink_timer() {
     autoplay_try_end_turn(); // experimental, conf.autoplay only -- see autoplay.cpp
+    autoplay_dismiss_dialog(); // experimental, conf.autoplay only -- see autoplay.cpp
     if (!*GameHalted && !VehBattleState[1]) {
         if (Win_is_visible(BaseWin)) {
             return TutWin_draw_arrow(TutWin);

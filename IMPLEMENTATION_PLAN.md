@@ -670,11 +670,15 @@ far), fixture format, replay-runner design: `IMPLEMENTATION_DETAILS.md` 5.2.
 
 ### 5.3 Determinism and regression — graduated equivalence
 
-**Autoplay harness status: ✅ implemented and validated** — dialog-bypass
-shims, `autoplay_demote_human()`, auto-End-Turn, and the state-hash progress
-signal, confirmed working in combination over multiple unattended AI-vs-AI
-sessions. Mechanism, scope limits (`conf.autoplay` doesn't check `is_human`),
-and open sub-items: `IMPLEMENTATION_DETAILS.md` 5.3.
+**Autoplay harness status: ✅ implemented and validated, unattended runs
+confirmed** — dialog-bypass shims, `autoplay_demote_human()`,
+`autoplay_dismiss_dialog()` (generic popup dismissal, 2026-07-25),
+`MRULES_NO_PLANETARY_COUNCIL`, auto-End-Turn, and the state-hash progress
+signal, together took a 100-turn autoplay run to completion with zero
+manual intervention (2026-07-25) — the popup-blocking problem that took
+several rounds to fully chase down is closed. Mechanism, scope limits
+(`conf.autoplay` doesn't check `is_human`), and open sub-items:
+`IMPLEMENTATION_DETAILS.md` 5.3.
 
 Bit-exact equality is the goal only where it is achievable. Known threats to
 exactness even in a faithful port: float/double vs Lua number conversions,

@@ -4353,11 +4353,13 @@ typedef int(__cdecl *FNetMsg_pop_2)(const char* label, const char* filename);
 extern FNetMsg NetMsg_close;
 extern FNetMsg_timer_daemon NetMsg_timer_daemon;
 extern FNetMsg_on_button_clicked NetMsg_on_button_clicked;
+extern FNetMsg_pop NetMsg_pop_engine; // raw engine fn; NetMsg_pop itself is shimmed, see autoplay.h
 extern FNetMsg_pop NetMsg_pop;
 extern FNetMsg_ctor NetMsg_ctor;
 extern FNetMsg_scalar_dtor NetMsg_scalar_dtor;
 extern FNetMsg NetMsg_dtor;
 extern FNetMsg_operator_delete NetMsg_operator_delete;
+extern FNetMsg_pop_2 NetMsg_pop_2_engine; // raw engine fn; NetMsg_pop_2 itself is shimmed, see autoplay.h
 extern FNetMsg_pop_2 NetMsg_pop_2;
 
 typedef int(__thiscall *FSound)(Sound* This);
