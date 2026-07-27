@@ -494,10 +494,12 @@ three still unported, see 4.16.
   run** — coverage gap, not a known defect, revisit opportunistically
   (same disposition as `select_build`'s deprioritized facilities).
 
-### 4.16 Stage 7 — faction-level orchestration (`land_raise_plan`/`invasion_plan`/`update_main_region`/`goal.cpp`)
+### 4.16 Stage 7 — faction-level orchestration (`land_raise_plan`/`invasion_plan`/`update_main_region`/`goal.cpp`) — ✅ closed, pending live test
 
 Sub-staged 7A–7D (this file's own numbering, `IMPLEMENTATION_PLAN.md`
-doesn't commit to sub-stage letters).
+doesn't commit to sub-stage letters). All four done, build-verified only —
+see the "not yet live-tested" note on each sub-stage below and Phase 5's
+testing protocol note.
 
 - **7A (engine surface)** — ✅ done, build-verified. First Lua *writes* to
   `plans[]` (9 setters: `main_region`/`main_sea_region`/
@@ -587,16 +589,42 @@ doesn't commit to sub-stage letters).
   - `random(n)` → `rand.map(0, n)`, not `rand.map(n)` — confirmed against
     `pick_scout_target`'s own already-verified `random(16)` →
     `rand.map(0, 16)` translation before reusing the pattern here.
-- **7D (`update_main_region`'s `prioritize_naval` decision)** — not started.
+- **7D (`update_main_region`'s `prioritize_naval` decision)** — ✅ done,
+  **build-verified only, not yet live-tested**. `move.cpp:806-827`, the
+  tail of `update_main_region` (`move.cpp:769-828`). Zero new host-API
+  surface again — `region_search_start` (single-point, already exercised
+  by `land_raise_plan`'s own first scan), `main_region_x`/`_y` getters,
+  `set_prioritize_naval`, and `TS_TERRITORY_SHORE`/`MaxEnemyRange` were
+  all already in place from 7A (`TS_TERRITORY_SHORE`'s own hand-
+  transcription comment in `gen_ffi.cpp` literally named
+  `update_main_region` as its future consumer).
+  - **Different hook shape from 7B/7C**: `update_main_region` isn't a
+    separately-callable function the way `land_raise_plan`/`invasion_plan`
+    are — it's one function that does bulk fact computation (reset every
+    faction's `main_region*` fields, then recompute them from a base
+    scan) *and* the one real decision (`prioritize_naval`) in the same
+    body. Only the decision tail is a hook candidate (Phase 4.3's opaque-
+    wrapper criterion: the reset/recompute preamble is deterministic
+    bookkeeping, not a choice). Hooked *inside* `update_main_region`'s own
+    body, right after the `if (p.main_region < 0) return;` guard — the
+    original Phase 4.1 seam-inside-a-function-body shape, which land_
+    raise_plan/invasion_plan (hooked at their own external call sites)
+    didn't end up needing.
+  - The C++ early-return inside the hook's own fallback body
+    (`p.prioritize_naval = 0; return;` when 10 nearby at-war land tiles
+    are found) works unchanged as the *fallback* path — the hook wraps
+    the whole decision block, so Lua's equivalent early-return (calling
+    `set_prioritize_naval(faction_id, 0)` then `return`) is a normal Lua
+    `return`, no special handling needed for the fact that the original
+    exits the whole outer C++ function from inside a nested loop.
 - `move_upkeep`'s own map/unit/base sweep (`move.cpp:852-1141`) and its
   goal→mapnode bookkeeping tail (`1157-1180`) stay C++ (fact computation,
   Phase 4.3) — only the `land_raise_plan(faction_id); invasion_plan
-  (faction_id);` call site (`UM_Full` branch) gets a hook (now both calls
-  hooked as of 7C).
+  (faction_id);` call site (`UM_Full` branch) and `update_main_region`'s
+  own internal decision tail get hooks (all of stage 7 as of 7D).
 
-**Resume point:** stage 7D (`update_main_region`'s `prioritize_naval`
-decision, `move.cpp:769-830`ish) next, then stage 8 (`nuclear_move`,
-deliberately ordered last — see its size note above). `IMPLEMENTATION_
+**Resume point:** stage 8 (`nuclear_move`, deliberately ordered last — see
+its size note above) is all that remains of Movement. `IMPLEMENTATION_
 PLAN.md` describes stage 7 as one unit without committing to sub-stage
 letters; this file's own 7A–7D / 0–8 numbering is the authoritative
 staging if a number is needed.

@@ -92,4 +92,9 @@ return {
     -- faction-level Class 3 contract as land_raise_plan (7B), same hook
     -- site in move_upkeep.
     invasion_plan = move.invasion_plan,
+    -- Movement stage 7D (IMPLEMENTATION_DETAILS.md 4.16): same faction-
+    -- level Class 3 contract, but hooked inside update_main_region's own
+    -- body (move.cpp), not at an external call site -- see the function's
+    -- own comment in move.lua.
+    update_main_region_prioritize_naval = move.update_main_region_prioritize_naval,
 }

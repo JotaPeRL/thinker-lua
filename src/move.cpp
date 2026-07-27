@@ -803,26 +803,33 @@ void update_main_region(int faction_id) {
     if (p.main_region < 0) {
         return;
     }
-    // Prioritize naval invasions if the closest enemy is on another region
-    MAP* sq;
-    TileSearch ts;
-    ts.init(p.main_region_x, p.main_region_y, TS_TERRITORY_SHORE, 2);
-    int i = 0;
-    int k = 0;
-    while (++i <= 800 && (sq = ts.get_next()) != NULL) {
-        if (at_war(faction_id, sq->owner) && !is_ocean(sq) && ++k >= 10) {
-            p.prioritize_naval = 0;
-            return;
+    // Movement stage 7D (IMPLEMENTATION_DETAILS.md 4.16): prioritize_naval
+    // decision only -- the reset/main_region computation above stays C++
+    // fact computation (Phase 4.3). Hooked inside this function's own body
+    // (not at an external call site) since this sub-decision isn't a
+    // separately-callable function.
+    if (!lua_ai_command_hook_faction("update_main_region_prioritize_naval", faction_id)) {
+        // Prioritize naval invasions if the closest enemy is on another region
+        MAP* sq;
+        TileSearch ts;
+        ts.init(p.main_region_x, p.main_region_y, TS_TERRITORY_SHORE, 2);
+        int i = 0;
+        int k = 0;
+        while (++i <= 800 && (sq = ts.get_next()) != NULL) {
+            if (at_war(faction_id, sq->owner) && !is_ocean(sq) && ++k >= 10) {
+                p.prioritize_naval = 0;
+                return;
+            }
         }
-    }
-    int min_dist = INT_MAX;
-    for (i = 1; i < MaxPlayerNum; i++) {
-        int dist = (plans[i].main_region_x < 0 ? MaxEnemyRange :
-            map_range(p.main_region_x, p.main_region_y,
-                plans[i].main_region_x, plans[i].main_region_y));
-        if (at_war(faction_id, i) && dist < min_dist) {
-            min_dist = dist;
-            p.prioritize_naval = p.main_region != plans[i].main_region;
+        int min_dist = INT_MAX;
+        for (i = 1; i < MaxPlayerNum; i++) {
+            int dist = (plans[i].main_region_x < 0 ? MaxEnemyRange :
+                map_range(p.main_region_x, p.main_region_y,
+                    plans[i].main_region_x, plans[i].main_region_y));
+            if (at_war(faction_id, i) && dist < min_dist) {
+                min_dist = dist;
+                p.prioritize_naval = p.main_region != plans[i].main_region;
+            }
         }
     }
 }

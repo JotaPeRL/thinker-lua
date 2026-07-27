@@ -130,6 +130,11 @@ local port = {
         -- Movement stage 7C (IMPLEMENTATION_DETAILS.md 4.16).
         invasion_plan = { file = "src/move.cpp", func = "invasion_plan",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- Movement stage 7D (IMPLEMENTATION_DETAILS.md 4.16): sub-decision
+        -- only, see the function's own comment below.
+        update_main_region_prioritize_naval = { file = "src/move.cpp",
+            func = "update_main_region",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -3722,6 +3727,52 @@ local function invasion_plan(faction_id)
     end
 end
 
+-- Movement stage 7D (IMPLEMENTATION_DETAILS.md 4.16): update_main_region's
+-- prioritize_naval decision (move.cpp:806-827) only -- the per-faction
+-- main_region reset/computation above it (move.cpp:769-805) is fact
+-- computation (Phase 4.3), stays C++. Hooked at the *sub-decision* point
+-- inside the function's own body (the only option here, since this isn't
+-- a separately-callable function the way land_raise_plan/invasion_plan
+-- are) -- src/move.cpp's own seam runs this only after the C++ preamble
+-- has already reset plans[faction_id].prioritize_naval to 0 and confirmed
+-- main_region >= 0.
+local function update_main_region_prioritize_naval(faction_id)
+    local main_region = funcs.main_region(faction_id)
+    local main_region_x = funcs.main_region_x(faction_id)
+    local main_region_y = funcs.main_region_y(faction_id)
+
+    funcs.region_search_start(main_region_x, main_region_y, E.TS_TERRITORY_SHORE, 2)
+    local out = ffi.new("int32_t[6]")
+    local i, k = 0, 0
+    while i <= 800 do
+        i = i + 1
+        funcs.region_search_next(out, out + 1, out + 2, out + 3, out + 4, out + 5)
+        if out[0] == 0 then break end
+        local rx, ry = out[1], out[2]
+        if funcs.at_war(faction_id, funcs.tile_owner(rx, ry)) ~= 0
+            and funcs.tile_is_ocean(rx, ry) == 0 then
+            k = k + 1
+            if k >= 10 then
+                funcs.set_prioritize_naval(faction_id, 0)
+                return
+            end
+        end
+    end
+
+    local min_dist = 2147483647 -- INT_MAX
+    local prioritize_naval = 0
+    for j = 1, types.counts.MaxPlayerNum - 1 do
+        local other_x = funcs.main_region_x(j)
+        local dist = other_x < 0 and E.MaxEnemyRange
+            or funcs.map_range(main_region_x, main_region_y, other_x, funcs.main_region_y(j))
+        if funcs.at_war(faction_id, j) ~= 0 and dist < min_dist then
+            min_dist = dist
+            prioritize_naval = (main_region ~= funcs.main_region(j)) and 1 or 0
+        end
+    end
+    funcs.set_prioritize_naval(faction_id, prioritize_naval)
+end
+
 port.artifact_move = artifact_move
 port.crawler_move = crawler_move
 port.colony_move = colony_move
@@ -3731,4 +3782,5 @@ port.trans_move = trans_move
 port.combat_move = combat_move
 port.land_raise_plan = land_raise_plan
 port.invasion_plan = invasion_plan
+port.update_main_region_prioritize_naval = update_main_region_prioritize_naval
 return port
