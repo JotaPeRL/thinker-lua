@@ -449,34 +449,37 @@ enable Lua by default on the branch → next.
    territory: largest, most performance-sensitive, ported last with the
    C++ baseline already measured.
 
-   **Status: 🔨 stages 0–6 closed and live-verified**, stage 7 (faction-
-   level orchestration) closed (Class 3 hook infrastructure, then
-   `artifact_move`, `crawler_move`, `colony_move`, `former_move`,
-   `trans_move`, `combat_move`, in that order — including a deferred fix
-   for a `route_score`/`search_route` scoring-formula-wrapped-opaquely
-   defect found partway through, resolved as its own stage before
-   `former_move`). **Stage 7, sub-staged 7A–7D, all done:** 7A (engine
-   surface: 9 `AIPlans` setters, multi-point `TileSearch` init, full-route
-   retrieval, `goal.cpp` accessors, `pick_scout_target`/`compare_might`/
-   `faction_might`), 7B (`land_raise_plan`, plus the first faction-level
-   Class 3 hook, `lua_ai_command_hook_faction`, for the `(faction_id) ->
-   void` shape none of the per-vehicle movers have), 7C (`invasion_plan`,
-   confirming 7A's engine surface needed zero additions — reused directly),
-   and 7D (`update_main_region`'s `prioritize_naval` decision — hooked
-   *inside* the function's own body, the one sub-stage that needed the
-   original seam-in-body shape rather than a call-site hook, since the
-   decision isn't a separately-callable function) — **built and
-   build-verified only, not yet live-tested** (see Phase 5's testing
-   protocol note). Only `nuclear_move` remains for Movement overall
-   (deliberately last — its real complexity, a full diplomatic/threat
-   scoring pass plus a secret-project iteration, is closer to
-   `find_project`/`select_build` than an isolated mover). Native life
+   **Status: ✅ all stages 0–8 done — Movement fully ported, pending live
+   test.** Stages 0–6 closed and live-verified (Class 3 hook
+   infrastructure, then `artifact_move`, `crawler_move`, `colony_move`,
+   `former_move`, `trans_move`, `combat_move`, in that order — including a
+   deferred fix for a `route_score`/`search_route` scoring-formula-
+   wrapped-opaquely defect found partway through, resolved as its own
+   stage before `former_move`). **Stage 7, sub-staged 7A–7D, all done:**
+   7A (engine surface: 9 `AIPlans` setters, multi-point `TileSearch` init,
+   full-route retrieval, `goal.cpp` accessors, `pick_scout_target`/
+   `compare_might`/`faction_might`), 7B (`land_raise_plan`, plus the first
+   faction-level Class 3 hook, `lua_ai_command_hook_faction`, for the
+   `(faction_id) -> void` shape none of the per-vehicle movers have), 7C
+   (`invasion_plan`, confirming 7A's engine surface needed zero
+   additions — reused directly), and 7D (`update_main_region`'s
+   `prioritize_naval` decision — hooked *inside* the function's own body,
+   the one sub-stage that needed the original seam-in-body shape rather
+   than a call-site hook, since the decision isn't a separately-callable
+   function). **Stage 8 (`nuclear_move`, deliberately ported last — its
+   real complexity, a full diplomatic/threat scoring pass plus a secret-
+   project iteration, is closer to `find_project`/`select_build` than an
+   isolated mover) is also done** — real complexity was in the scoring
+   formulas, not new engine surface (only 5 new host functions needed:
+   `is_alien`/`veh_lift`/`veh_drop`/`set_veh_visibility`/`nuclear_find_
+   drop_tile`). **All of stages 7–8 built and build-verified only, not
+   yet live-tested** (see Phase 5's testing protocol note). Native life
    (fauna/aliens) is explicitly out of scope (user decision, 2026-07-20) —
    not strategic faction AI. A native crash found live-testing `combat_move`
    (an engine-level missing hostility filter in `choose_defender`, not a
    Lua defect) was root-caused and fixed for every caller, not just the Lua
    path. Full staging, real function sizes, and per-stage classification
-   decisions: `IMPLEMENTATION_DETAILS.md` 4.12–4.16.
+   decisions: `IMPLEMENTATION_DETAILS.md` 4.12–4.17.
 5. **AI probe decisions** (`probe.cpp`, partial — target/action choices only;
    resolution mechanics stay in C++). **Not started.**
 
@@ -580,9 +583,10 @@ e. **`tools/port_drift.py` + provenance entries in `docs/LUA_PORTING.md`.**
    `IMPLEMENTATION_DETAILS.md` 4.5–4.11.
 
 **Resuming after the gate:** `select_build` (Phase 4.2 item 3) is now fully
-ported. Movement (item 4) is the active work — see item 4's status above and
-`IMPLEMENTATION_DETAILS.md` 4.12–4.15 for the current resume point
-(`nuclear_move` plus the still-unstarted faction-level orchestration stage).
+ported, and Movement (item 4) is now fully ported too (all stages 0–8, see
+item 4's status above) — pending live test. Porting-order item 5
+(`probe.cpp` AI decisions) or item 3's unsurveyed functions (`mod_
+base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) are what's next.
 Design notes worth re-reading before touching production-domain code further:
 `IMPLEMENTATION_DETAILS.md` 4.5–4.11 (RNG-hazard hook-argument threading,
 multi-block facility gating, the `FormerUnit`/`select_item` scope decision)
@@ -723,7 +727,10 @@ and `lua_ai=0` vs `lua_ai=1` (port fidelity, valid while the port is 1:1).
 **Not yet built** — no C++ baseline has been measured. Plan:
 
 - Instrument time per turn phase (upkeep, production, movement) per faction.
-  **Measure the C++ baseline before continuing movement past `nuclear_move`.**
+  **Measure the C++ baseline now that Movement (the largest, most
+  performance-sensitive porting-order item) is fully ported** — this was
+  deferred until the whole mass of Class 3 movers existed to measure
+  against.
 - Budget: Lua AI turn ≤ 1.5x C++ on huge maps with 7 factions late-game (real
   target: imperceptible).
 - Tools: `jit.p` profiler embeddable via script; `jit.v`/`jit.dump` in dev
@@ -804,8 +811,7 @@ as Movement closes).
   subsequent domain requires, same generate-validate discipline.
 - **M5 — Production/social in Lua:** porting-order items 2 and 3 mostly done
   (item 3's four unsurveyed functions remain — see item 3's status).
-- **M6 — Movement in Lua:** 🔨 in progress — stages 0-6 closed, stage 7
-  (faction-level orchestration) fully done pending live test (item 4's
-  status above); only `nuclear_move` remains.
+- **M6 — Movement in Lua:** ✅ all stages 0-8 done, pending live test (item
+  4's status above) — Movement is fully ported.
 - **M7 — Fork release:** docs, zips with `lua/`, "Hello AI" example. Not
   started.

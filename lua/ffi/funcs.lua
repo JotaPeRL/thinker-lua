@@ -303,10 +303,16 @@ typedef struct {
     void (*land_raise_search_start)(int32_t max_size);
     void (*land_raise_search_next)(int32_t faction_id, int32_t* valid,
         int32_t* x, int32_t* y, int32_t* nx, int32_t* ny);
+    int32_t (*is_alien)(int32_t faction_id);
+    void (*veh_lift)(int32_t veh_id);
+    void (*veh_drop)(int32_t veh_id, int32_t x, int32_t y);
+    void (*set_veh_visibility)(int32_t veh_id, int32_t value);
+    int32_t (*nuclear_find_drop_tile)(int32_t target_x, int32_t target_y,
+        int32_t* out_x, int32_t* out_y);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 42
+local HOST_API_VERSION = 43
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -665,5 +671,12 @@ return {
     land_raise_search_start = function(max_size) return api.land_raise_search_start(max_size) end,
     land_raise_search_next = function(faction_id, valid, x, y, nx, ny)
         return api.land_raise_search_next(faction_id, valid, x, y, nx, ny)
+    end,
+    is_alien = function(faction_id) return api.is_alien(faction_id) end,
+    veh_lift = function(veh_id) return api.veh_lift(veh_id) end,
+    veh_drop = function(veh_id, x, y) return api.veh_drop(veh_id, x, y) end,
+    set_veh_visibility = function(veh_id, value) return api.set_veh_visibility(veh_id, value) end,
+    nuclear_find_drop_tile = function(target_x, target_y, out_x, out_y)
+        return api.nuclear_find_drop_tile(target_x, target_y, out_x, out_y)
     end,
 }

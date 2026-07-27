@@ -777,6 +777,38 @@ struct LuaHostApi {
     void (*land_raise_search_start)(int32_t max_size);
     void (*land_raise_search_next)(int32_t faction_id, int32_t* valid,
         int32_t* x, int32_t* y, int32_t* nx, int32_t* ny);
+
+    // Movement stage 8 (IMPLEMENTATION_DETAILS.md 4.17): nuclear_move's own
+    // remaining dependencies -- everything else it needs (map_range via
+    // plain coordinates instead of the VEH*/BASE* overload the C++ uses,
+    // Facility[]/SP_ID_First/_Last, ally_near_tile/defender_count/
+    // min_range_over, has_pact/has_fac_built/is_alive/at_war/is_human/
+    // project_base/move_to_base/set_move_to/veh_speed) was already exposed
+    // by prior stages. is_alien(faction_id) (faction.cpp) is a one-line
+    // fact (*ExpansionEnabled && rule_flags & RFLAG_ALIEN), same opaque
+    // tier as is_alive/is_human.
+    int32_t (*is_alien)(int32_t faction_id);
+    // veh_lift/veh_drop (veh.cpp) are the engine's own low-level unit-
+    // relocation mechanics (stack pointers, BIT_VEH_IN_TILE, owner_set) --
+    // pure mechanism, no AI choice, same tier as set_move_to. veh_lift
+    // always returns the same veh_id it's given (see veh.cpp's own
+    // comment) so there's nothing to thread through Lua; call both with
+    // the same id. Mutators: set g_mutation_issued.
+    void (*veh_lift)(int32_t veh_id);
+    void (*veh_drop)(int32_t veh_id, int32_t x, int32_t y);
+    // VEH::visibility (a per-faction bitmask) needs a write, unlike every
+    // other VEH field this file reads directly via FFI -- nuclear_move
+    // clears it unconditionally right before the veh_lift/veh_drop
+    // relocation below. Mutator.
+    void (*set_veh_visibility)(int32_t veh_id, int32_t value);
+    // nuclear_move's own iterate_tiles(target_x, target_y, 1, 9) +
+    // anything_at() < 0 scan: find the first unoccupied neighbor tile to
+    // land the planet-buster on. First-match, no scoring -- a structural
+    // fact, same opaque tier as has_base_sites' analogous scan. Whole scan
+    // stays host-side (iterate_tiles returns a real std::vector<MapTile>,
+    // no persistent TileSearch state to expose incrementally).
+    int32_t (*nuclear_find_drop_tile)(int32_t target_x, int32_t target_y,
+        int32_t* out_x, int32_t* out_y);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

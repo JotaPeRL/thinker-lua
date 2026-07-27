@@ -135,6 +135,9 @@ local port = {
         update_main_region_prioritize_naval = { file = "src/move.cpp",
             func = "update_main_region",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- Movement stage 8 (IMPLEMENTATION_DETAILS.md 4.17), the last mover.
+        nuclear_move = { file = "src/move.cpp", func = "nuclear_move",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -3773,6 +3776,209 @@ local function update_main_region_prioritize_naval(faction_id)
     funcs.set_prioritize_naval(faction_id, prioritize_naval)
 end
 
+-- Movement stage 8 (IMPLEMENTATION_DETAILS.md 4.17): nuclear_move
+-- (move.cpp:2735-2896), the last Movement mover. Class 3, same per-
+-- vehicle dispatch/hook shape as every other mover (not faction-level
+-- like stage 7). Real complexity is in the scoring formulas (cross-
+-- faction diplomatic/threat tallies, a full secret-project iteration),
+-- not new engine surface -- only 5 new host functions needed (is_alien,
+-- veh_lift/veh_drop/set_veh_visibility, nuclear_find_drop_tile), api_
+-- version 42->43; everything else (map_range via plain coordinates
+-- instead of the VEH*/BASE* overload the C++ uses, Facility[]/
+-- SP_ID_First/_Last, ally_near_tile/defender_count/min_range_over,
+-- has_pact/has_fac_built/is_alive/at_war/is_human/project_base/
+-- move_to_base/set_move_to/veh_speed) was already exposed by prior
+-- stages.
+local function nuclear_move(id)
+    local v = veh.get(id)
+    if v.x < 0 or v.y < 0 or not veh.at_target(v) or not veh.is_planet_buster(v) then
+        return E.VEH_SYNC
+    end
+    local faction_id = v.faction_id
+    local plr = faction.get(faction_id)
+    local radius = tech.proto_reactor_type(v.unit_id)
+    local moves = funcs.veh_speed(id, 0)
+    local rules = tech.rules()
+    local max_range = max(0, idiv(moves, rules.move_rate_roads))
+    local max_dist = max(0, idiv(moves - v.moves_spent, rules.move_rate_roads))
+    local at_base = funcs.tile_is_base(v.x, v.y) ~= 0
+
+    local built_nukes = 0
+    local enemy_nukes = {}
+    for i = 0, veh.count() - 1 do
+        local ov = veh.get(i)
+        if veh.is_planet_buster(ov) then
+            if faction_id == ov.faction_id then
+                built_nukes = built_nukes + 1
+            else
+                enemy_nukes[ov.faction_id] = (enemy_nukes[ov.faction_id] or 0) + 1
+            end
+        end
+    end
+
+    local others = 0
+    for i = 1, types.counts.MaxPlayerNum - 1 do
+        local tgt = faction.get(i)
+        if faction_id ~= i and funcs.is_alive(i) ~= 0 and tgt.base_count ~= 0
+            and funcs.at_war(faction_id, i) == 0 then
+            local en = enemy_nukes[i] or 0
+            others = others + 1
+                + ((4 * tgt.base_count > plr.base_count) and 1 or 0)
+                + ((4 * tgt.pop_total > plr.pop_total) and 1 or 0)
+                + (en > 0 and 1 or 0)
+                + (en > plr.satellites_ODP and 1 or 0)
+        end
+    end
+
+    local choices = 0
+    for i = 0, types.counts.MaxPlayerNum - 1 do
+        local tgt = faction.get(i)
+        local diplo = plr.diplo_status[i]
+        if faction_id ~= i and funcs.is_alive(i) ~= 0 and tgt.base_count ~= 0
+            and funcs.at_war(faction_id, i) ~= 0
+            and built_nukes > tgt.satellites_ODP - tgt.ODP_deployed
+            and (not funcs.is_human(faction_id) or not funcs.un_charter()
+                or bit.band(diplo, E.DIPLO_MAJOR_ATROCITY_VICTIM) ~= 0) then
+            local base_val = 0
+            for j = 0, base_api.count() - 1 do
+                local b = base_api.get(j)
+                base_val = base_val + ((b.faction_id == i and b.faction_id_former == faction_id) and 1 or 0)
+                base_val = base_val - ((b.faction_id_former == i and b.faction_id == faction_id) and 1 or 0)
+            end
+            local score = (funcs.un_charter() and (2 * plr.AI_fight - others) or 4)
+                + 2 * plr.AI_power + 2 * plr.AI_fight
+                + 4 * clamp(idiv(game.diff_level(), 2), 0, 2)
+                + (bit.band(game.rules(), E.RULES_INTENSE_RIVALRY) ~= 0 and 4 or 0)
+                + (bit.band(plr.player_flags, E.PFLAG_COMMIT_ATROCITIES_WANTONLY) ~= 0 and 4 or 0)
+                + clamp(2 * tgt.eliminated_count + tgt.integrity_blemishes + tgt.major_atrocities, 0, 16)
+                + clamp(built_nukes - (enemy_nukes[i] or 0), -8, 8)
+                + clamp(idiv(base_val, 2), -8, 8)
+                + ((base_val > 0 or tgt.satellites_ODP == 0) and 0 or -4)
+                + clamp(idiv(tgt.pop_total - plr.pop_total, 32), -4, 4)
+                + clamp(idiv(tgt.base_count - plr.base_count, 8), -4, 4)
+                + (bit.band(diplo, E.DIPLO_MAJOR_ATROCITY_VICTIM) ~= 0 and 12 or 0)
+                + (bit.band(diplo, E.DIPLO_ATROCITY_VICTIM) ~= 0 and 8 or 0)
+                + (bit.band(diplo, E.DIPLO_WANT_REVENGE) ~= 0 and 4 or 0)
+                + (tgt.corner_market_turn > game.turn() and 8 or 0)
+            log.debug("nuclear_values %d %d %d score: %d", game.turn(), faction_id, i, score)
+            if score > 20 then
+                choices = bit.bor(choices, bit.lshift(1, i))
+            end
+        end
+    end
+
+    local hq_x, hq_y = nil, nil
+    local target = nil
+    local rebase = nil
+    if choices ~= 0 then
+        local airbases = {}
+        for i = 0, base_api.count() - 1 do
+            local b = base_api.get(i)
+            if faction_id == b.faction_id or funcs.has_pact(faction_id, b.faction_id) ~= 0 then
+                if faction_id == b.faction_id and not hq_x
+                    and funcs.has_fac_built(E.FAC_HEADQUARTERS, i) ~= 0 then
+                    hq_x, hq_y = b.x, b.y
+                end
+                airbases[#airbases + 1] = {x = b.x, y = b.y}
+            end
+        end
+        local best_score = 0
+        for i = 0, base_api.count() - 1 do
+            local b = base_api.get(i)
+            local in_airbases = false
+            for _, p in ipairs(airbases) do
+                if p.x == b.x and p.y == b.y then
+                    in_airbases = true
+                    break
+                end
+            end
+            if bit.band(choices, bit.lshift(1, b.faction_id)) ~= 0
+                and not in_airbases
+                and min_range_over(airbases, b.x, b.y) <= max_range
+                and not ally_near_tile(b.x, b.y, faction_id, id, radius) then
+                local diplo = plr.diplo_status[b.faction_id]
+                local economic = faction.get(b.faction_id).corner_market_turn > game.turn()
+                local score = b.pop_size
+                    + clamp(funcs.map_enemy_near(b.x, b.y), 0, 60)
+                    - clamp(funcs.map_range(v.x, v.y, b.x, b.y) - max_dist, 0, 60)
+                    + (faction_id == b.faction_id_former and -16 or 0)
+                    + (funcs.tile_is_ocean(b.x, b.y) ~= 0 and -16 or 0)
+                    + (bit.band(diplo, E.DIPLO_MAJOR_ATROCITY_VICTIM) ~= 0 and 40 or 0)
+                    + (bit.band(diplo, E.DIPLO_ATROCITY_VICTIM) ~= 0 and 20 or 0)
+                    + (bit.band(diplo, E.DIPLO_WANT_REVENGE) ~= 0 and 20 or 0)
+                    + (funcs.has_fac_built(E.FAC_HEADQUARTERS, i) ~= 0 and (economic and 200 or 16) or 0)
+                    + (funcs.has_fac_built(E.FAC_FLECHETTE_DEFENSE_SYS, i) ~= 0 and -16 or 0)
+                    + ((funcs.is_alien(b.faction_id) ~= 0
+                        and funcs.has_fac_built(E.FAC_SUBSPACE_GENERATOR, i) ~= 0) and 40 or 0)
+                    + (base_api.item(b) == -E.FAC_ASCENT_TO_TRANSCENDENCE
+                        and idiv(b.minerals_accumulated, 10) or 0)
+                for sp = E.SP_ID_First, E.SP_ID_Last do
+                    if funcs.project_base(sp) == i then
+                        local fac = tech.facility(sp)
+                        score = score + clamp(4 * fac.AI_power + 2 * fac.AI_growth
+                            + fac.AI_wealth + fac.AI_tech, 2, 20)
+                            + (sp == E.FAC_CLONING_VATS and 16 or 0)
+                            + (sp == E.FAC_CLOUDBASE_ACADEMY and 16 or 0)
+                            + (sp == E.FAC_HUNTER_SEEKER_ALGORITHM and 16 or 0)
+                    end
+                end
+                if score > best_score then
+                    target = b
+                    best_score = score
+                end
+            end
+        end
+        if target and funcs.map_range(v.x, v.y, target.x, target.y) <= max_dist then
+            local out_x, out_y = ffi.new("int32_t[1]"), ffi.new("int32_t[1]")
+            if funcs.nuclear_find_drop_tile(target.x, target.y, out_x, out_y) ~= 0 then
+                funcs.set_veh_visibility(id, 0)
+                funcs.veh_lift(id)
+                funcs.veh_drop(id, out_x[0], out_y[0])
+                log.debug("nuclear_attack %2d %2d -> %2d %2d", v.x, v.y, target.x, target.y)
+                return funcs.set_move_to(id, target.x, target.y)
+            end
+        end
+    end
+
+    local best_score2 = -2147483648 -- INT_MIN
+    for i = 0, base_api.count() - 1 do
+        local b = base_api.get(i)
+        if (b.faction_id == faction_id or (target and funcs.has_pact(faction_id, b.faction_id) ~= 0))
+            and funcs.map_range(v.x, v.y, b.x, b.y) <= max_dist then
+            local defenders = defender_count(b.x, b.y, id)
+            local dist_penalty
+            if target then
+                dist_penalty = funcs.map_range(b.x, b.y, target.x, target.y)
+            elseif hq_x then
+                dist_penalty = max(0, funcs.map_range(b.x, b.y, hq_x, hq_y) - 8)
+            else
+                dist_penalty = 0
+            end
+            local score = min(16, 4 * defenders) + rand.map(0, 16) - 4 * dist_penalty
+            if not target and b.x == v.x and b.y == v.y
+                and defenders >= 2 and b.defend_goal < rand.map(0, 16) then
+                rebase = nil
+                break
+            end
+            if defenders >= 1 and score > best_score2 then
+                rebase = b
+                best_score2 = score
+            end
+        end
+    end
+    if target then
+        log.debug("nuclear_target %2d %2d -> %2d %2d", v.x, v.y, target.x, target.y)
+    end
+    if rebase then
+        log.debug("nuclear_rebase %2d %2d -> %2d %2d", v.x, v.y, rebase.x, rebase.y)
+        return funcs.set_move_to(id, rebase.x, rebase.y)
+    end
+    if not at_base then
+        return funcs.move_to_base(id, 0)
+    end
+    return funcs.mod_veh_skip(id)
+end
+
 port.artifact_move = artifact_move
 port.crawler_move = crawler_move
 port.colony_move = colony_move
@@ -3783,4 +3989,5 @@ port.combat_move = combat_move
 port.land_raise_plan = land_raise_plan
 port.invasion_plan = invasion_plan
 port.update_main_region_prioritize_naval = update_main_region_prioritize_naval
+port.nuclear_move = nuclear_move
 return port

@@ -405,7 +405,7 @@ counts): `DEVELOPMENT_DIARY.md`, 2026-07-14 through 2026-07-20.
 
 ---
 
-### 4.12–4.16 Movement (porting-order item 4) — stages 0–6 closed; stage 7 (7A/7B done, pending live test) in progress; stage 8 (nuclear_move) not started
+### 4.12–4.17 Movement (porting-order item 4) — ✅ all stages 0–8 closed, pending live test
 
 Full narrative for every stage below (exact field/enum/wrapper catalogs,
 `api_version` history, verification run counts, files-touched lists, every
@@ -623,11 +623,78 @@ testing protocol note.
   (faction_id);` call site (`UM_Full` branch) and `update_main_region`'s
   own internal decision tail get hooks (all of stage 7 as of 7D).
 
-**Resume point:** stage 8 (`nuclear_move`, deliberately ordered last — see
-its size note above) is all that remains of Movement. `IMPLEMENTATION_
-PLAN.md` describes stage 7 as one unit without committing to sub-stage
-letters; this file's own 7A–7D / 0–8 numbering is the authoritative
-staging if a number is needed.
+`IMPLEMENTATION_PLAN.md` describes stage 7 as one unit without committing
+to sub-stage letters; this file's own 7A–7D / 0–8 numbering is the
+authoritative staging if a number is needed.
+
+### 4.17 Stage 8 — `nuclear_move` — ✅ done, build-verified only, not yet live-tested
+
+`move.cpp:2735-2896`, the last Movement mover, ported in full. Same
+per-vehicle Class 3 hook shape as every other mover (not faction-level
+like stage 7) — hooked at its own call site in `veh_turn.cpp`'s
+`mod_enemy_move` (`is_planet_buster()` branch), same convention as
+`combat_move`/`trans_move`/etc.
+
+**Real complexity was in the scoring formulas** (cross-faction
+diplomatic/threat tallies, a full secret-project iteration over
+`SP_ID_First..SP_ID_Last`), not new engine surface — only **5 new host
+functions** needed, `api_version` 42→43:
+- `is_alien(faction_id)` — one-line fact (`*ExpansionEnabled && rule_flags
+  & RFLAG_ALIEN`, `faction.cpp`), same opaque tier as `is_alive`/`is_human`.
+- `veh_lift(veh_id)` / `veh_drop(veh_id, x, y)` (`veh.cpp`'s own
+  reimplementations, not raw engine pointers — stack-pointer/`BIT_VEH_
+  IN_TILE`/`owner_set` mechanics) — pure relocation mechanism, no AI
+  choice. `veh_lift` always returns the same `veh_id` it's given (per its
+  own doc comment), so nothing needs threading through Lua — call both
+  with the same id.
+- `set_veh_visibility(veh_id, value)` — the one VEH field this mover
+  *writes* (`visibility`, a per-faction bitmask), unlike every other VEH
+  field this port reads directly via FFI.
+- `nuclear_find_drop_tile(target_x, target_y, out_x, out_y)` — the
+  `iterate_tiles(target_x, target_y, 1, 9)` + `anything_at() < 0` scan
+  for a landing tile: first-match, no scoring, structural fact, same
+  opaque tier as `has_base_sites`'s analogous scan. Whole scan stays
+  host-side (`iterate_tiles` returns a real `std::vector<MapTile>`, no
+  persistent `TileSearch` state to expose incrementally, unlike every
+  TileSearch-based mover).
+
+**Everything else was already exposed by prior stages**: `map_range` via
+plain coordinates instead of the `VEH*`/`BASE*` overload the C++ uses (no
+new overload needed — Lua just reads `.x`/`.y` off the `VEH`/`BASE`
+objects it already has), `Facility[]`/`SP_ID_First`/`_Last`
+(`tech.facility(id)`, already existed for `select_build`), `ally_near_
+tile`/`defender_count`/`min_range_over` (already-ported Lua from earlier
+stages), `has_pact`/`has_fac_built`/`is_alive`/`at_war`/`is_human`/
+`project_base`/`move_to_base`/`set_move_to`/`veh_speed` (all pre-existing
+host wrappers). `corner_market_active()` has no wrapper either — inlined
+as `faction.get(id).corner_market_turn > game.turn()`, matching the exact
+body of the C++ method and the identical idiom `target_priority` (stage
+6) already used for the same method.
+
+**RNG-order fidelity trap**: the "abandon rebase search" check
+(`base->defend_goal < random(16)`) draws a *second*, independent RNG
+value from the *same* stream as the score formula's own `random(16)`,
+only when `defenders >= 2` (short-circuit `&&`) — order matters
+(`score`'s draw always happens first, the abandon-check's draw only
+conditionally after). Preserved by computing `score` (with its own
+`rand.map(0, 16)` call) as a separate statement *before* the `if` that
+may draw a second one, relying on Lua's `and` short-circuiting exactly
+like C's `&&` to skip the second draw when `defenders < 2`.
+
+**`airbases`** (a `std::set<Point>` in the original, used for both
+`.insert()`/`.count()` membership and as `min_range`'s input) is a plain
+Lua array here, reused directly with `min_range_over` (stage 7A) for the
+distance check and a small explicit linear scan for the exact-membership
+check — no new "set" abstraction needed, and Lua doesn't need to match
+`std::set`'s O(log n) lookup, only its output.
+
+Build-verified both presets, `luajit -bl` syntax-checked; not yet
+live-tested. This closes Movement (porting-order item 4) entirely.
+
+**Resume point:** Movement is done. Porting-order item 5 (`probe.cpp`
+AI decisions, not started) or item 3's unsurveyed functions
+(`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`,
+deprioritized 2026-07-20) are the remaining porting-order items.
 
 ---
 

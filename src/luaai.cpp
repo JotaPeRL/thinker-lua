@@ -1845,11 +1845,45 @@ int32_t* x, int32_t* y, int32_t* nx, int32_t* ny) {
     *valid = 0;
 }
 
+// Movement stage 8 (IMPLEMENTATION_DETAILS.md 4.17): nuclear_move's own
+// remaining dependencies (everything else was already exposed by prior
+// stages -- see luaai.h's comment on this block).
+static int32_t host_is_alien(int32_t faction_id) {
+    return is_alien(faction_id);
+}
+
+static void host_veh_lift(int32_t veh_id) {
+    g_mutation_issued = true;
+    veh_lift(veh_id);
+}
+
+static void host_veh_drop(int32_t veh_id, int32_t x, int32_t y) {
+    g_mutation_issued = true;
+    veh_drop(veh_id, x, y);
+}
+
+static void host_set_veh_visibility(int32_t veh_id, int32_t value) {
+    g_mutation_issued = true;
+    Vehs[veh_id].visibility = (uint8_t)value;
+}
+
+static int32_t host_nuclear_find_drop_tile(int32_t target_x, int32_t target_y,
+int32_t* out_x, int32_t* out_y) {
+    for (auto& m : iterate_tiles(target_x, target_y, 1, 9)) {
+        if (m.sq->anything_at() < 0) {
+            *out_x = m.x;
+            *out_y = m.y;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // Populated once; every entry already matches the LuaHostApi pointer
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 42,
+    /* api_version          */ 43,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -2116,6 +2150,11 @@ static LuaHostApi g_host_api = {
     /* mapdata_set_overlay           */ host_mapdata_set_overlay,
     /* land_raise_search_start       */ host_land_raise_search_start,
     /* land_raise_search_next        */ host_land_raise_search_next,
+    /* is_alien                      */ host_is_alien,
+    /* veh_lift                      */ host_veh_lift,
+    /* veh_drop                      */ host_veh_drop,
+    /* set_veh_visibility            */ host_set_veh_visibility,
+    /* nuclear_find_drop_tile        */ host_nuclear_find_drop_tile,
 };
 
 static lua_State* L = NULL;

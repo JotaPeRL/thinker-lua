@@ -97,4 +97,10 @@ return {
     -- body (move.cpp), not at an external call site -- see the function's
     -- own comment in move.lua.
     update_main_region_prioritize_naval = move.update_main_region_prioritize_naval,
+    -- Movement stage 8 (IMPLEMENTATION_DETAILS.md 4.17): same per-vehicle
+    -- Class 3 contract as every other mover -- the last one. Hooked at
+    -- the call site in veh_turn.cpp's mod_enemy_move, same as
+    -- combat_move/trans_move/former_move/colony_move/crawler_move/
+    -- artifact_move.
+    nuclear_move = move.nuclear_move,
 }
