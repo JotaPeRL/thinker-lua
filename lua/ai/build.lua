@@ -2189,7 +2189,7 @@ local function mod_base_hurry(base_id)
             return funcs.hurry_item(base_id, mins, cost)
         end
         if t == -E.FAC_CHILDREN_CRECHE and funcs.base_unused_space(base_id) > 2
-            and b.nutrient_surplus > 0 and f.SE_growth_pending < E.GrowthPopBoom then
+            and b.nutrient_surplus > 0 and f.SE_growth_pending < types.counts.GrowthPopBoom then
             return funcs.hurry_item(base_id, mins, cost)
         end
         if (t == -E.FAC_HAB_COMPLEX or t == -E.FAC_HABITATION_DOME)

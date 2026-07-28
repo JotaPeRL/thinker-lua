@@ -690,10 +690,6 @@ int main() {
     // 4.10.12, resumed after the Consolidation gate): defend_range's
     // default and Wbase's clamp condition both need this.
     printf("    MaxEnemyRange = %d,\n", 50);       // main.h:172
-    // mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md
-    // 4.18): GrowthPopBoom (main.h:158, a plain `const int`), same
-    // windows.h-blocked/hand-transcription reason as MaxEnemyRange above.
-    printf("    GrowthPopBoom = %d,\n", 6);         // main.h:158
     printf("    MaxSocialCatNum = %d,\n", 4);      // main.h:146
     printf("    MaxSocialModelNum = %d,\n", 4);    // main.h:147
     printf("    MaxSocialEffectNum = %d,\n", 11);  // main.h:148
