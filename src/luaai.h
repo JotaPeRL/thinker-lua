@@ -809,6 +809,19 @@ struct LuaHostApi {
     // no persistent TileSearch state to expose incrementally).
     int32_t (*nuclear_find_drop_tile)(int32_t target_x, int32_t target_y,
         int32_t* out_x, int32_t* out_y);
+    // former_plans port (IMPLEMENTATION_DETAILS.md 4.18): setters for the
+    // three AIPlans fields it writes -- getters (keep_fungus/
+    // plant_fungus_flag/build_tubes above) already existed for movers
+    // that only read them; this is the first writer. Mutators.
+    void (*set_keep_fungus)(int32_t faction_id, int32_t value);
+    void (*set_plant_fungus)(int32_t faction_id, int32_t value);
+    void (*set_build_tubes)(int32_t faction_id, int32_t value);
+    // fungus_yield (map.cpp): a real engine formula over several Faction
+    // tech_fungus_*/SE_*_pending fields plus the ManifoldHarmonicsBonus[][3]
+    // lookup table -- kept opaque rather than re-exposing those fields
+    // (most aren't named in the generated cdef yet) and re-implementing
+    // the lookup table in Lua. Pure query, no mutation.
+    int32_t (*fungus_yield)(int32_t faction_id, int32_t res_type);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

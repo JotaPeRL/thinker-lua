@@ -56,6 +56,7 @@ are irrelevant to the port.
 | Production/plans, 1st slice | `lua/ai/build.lua` | `unit_score`, `find_proto` | `src/build.cpp` | `15418b28` |
 | Production/plans, 2nd slice | `lua/ai/build.lua` | `select_colony`, `select_combat` | `src/build.cpp` | `15418b28` |
 | Production/plans, 3rd slice | `lua/ai/build.lua` | `facility_score`, `governor_priorities` | `src/plan.cpp` | `15418b28` |
+| Production/plans, item 3 remainder | `lua/ai/plan.lua` | `former_plans` | `src/plan.cpp` | `15418b28` |
 
 This table is a curated human-readable index, not the source of truth —
 that's the `port.source` tables in the Lua files themselves, which is

@@ -309,10 +309,14 @@ typedef struct {
     void (*set_veh_visibility)(int32_t veh_id, int32_t value);
     int32_t (*nuclear_find_drop_tile)(int32_t target_x, int32_t target_y,
         int32_t* out_x, int32_t* out_y);
+    void (*set_keep_fungus)(int32_t faction_id, int32_t value);
+    void (*set_plant_fungus)(int32_t faction_id, int32_t value);
+    void (*set_build_tubes)(int32_t faction_id, int32_t value);
+    int32_t (*fungus_yield)(int32_t faction_id, int32_t res_type);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 43
+local HOST_API_VERSION = 44
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -558,6 +562,10 @@ return {
     can_bridge = function(x, y, faction_id) return api.can_bridge(x, y, faction_id) ~= 0 end,
     plant_fungus_flag = function(faction_id) return api.plant_fungus_flag(faction_id) end,
     build_tubes = function(faction_id) return api.build_tubes(faction_id) end,
+    set_keep_fungus = function(faction_id, value) api.set_keep_fungus(faction_id, value) end,
+    set_plant_fungus = function(faction_id, value) api.set_plant_fungus(faction_id, value) end,
+    set_build_tubes = function(faction_id, value) api.set_build_tubes(faction_id, value) end,
+    fungus_yield = function(faction_id, res_type) return api.fungus_yield(faction_id, res_type) end,
     tile_is_volcano_center = function(x, y) return api.tile_is_volcano_center(x, y) ~= 0 end,
     terraform_cost = function(x, y, faction_id) return api.terraform_cost(x, y, faction_id) end,
     item_yield = function(x, y, faction_id, bonus, item) return api.item_yield(x, y, faction_id, bonus, item) end,

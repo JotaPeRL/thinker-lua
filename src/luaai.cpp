@@ -1328,6 +1328,22 @@ static int32_t host_build_tubes(int32_t faction_id) {
     return plans[faction_id].build_tubes;
 }
 
+static void host_set_keep_fungus(int32_t faction_id, int32_t value) {
+    plans[faction_id].keep_fungus = value;
+}
+
+static void host_set_plant_fungus(int32_t faction_id, int32_t value) {
+    plans[faction_id].plant_fungus = value;
+}
+
+static void host_set_build_tubes(int32_t faction_id, int32_t value) {
+    plans[faction_id].build_tubes = value;
+}
+
+static int32_t host_fungus_yield(int32_t faction_id, int32_t res_type) {
+    return fungus_yield(faction_id, (ResType)res_type);
+}
+
 // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
 // select_item's own remaining dependencies (item_yield/bonus_yield/
 // terraform_cost are real engine yield formulas, same tier as
@@ -1883,7 +1899,7 @@ int32_t* out_x, int32_t* out_y) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 43,
+    /* api_version          */ 44,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -2155,6 +2171,10 @@ static LuaHostApi g_host_api = {
     /* veh_drop                      */ host_veh_drop,
     /* set_veh_visibility            */ host_set_veh_visibility,
     /* nuclear_find_drop_tile        */ host_nuclear_find_drop_tile,
+    /* set_keep_fungus               */ host_set_keep_fungus,
+    /* set_plant_fungus              */ host_set_plant_fungus,
+    /* set_build_tubes               */ host_set_build_tubes,
+    /* fungus_yield                  */ host_fungus_yield,
 };
 
 static lua_State* L = NULL;

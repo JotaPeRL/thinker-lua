@@ -434,13 +434,15 @@ enable Lua by default on the branch → next.
    a 60-turn autoplay run with 0 fallback to the C++ body. A handful of
    late-tier facility branches and the `Satellites` unit branch lack direct
    live-exercise evidence — not known defects, deprioritized by explicit user
-   direction (2026-07-20), revisit opportunistically. **`mod_base_hurry`/
-   `plans_upkeep`/`design_units`/`former_plans` surveyed 2026-07-28, not
-   yet ported** — `plans_upkeep` likely doesn't need a hook at all (pure
-   fact computation, same category as `move_upkeep`'s own sweep);
-   recommended order for the other three is `former_plans` → `mod_
-   base_hurry` → `design_units`. Detail: `IMPLEMENTATION_DETAILS.md` 4.18
-   (this survey), 4.5–4.11 (the `FormerUnit`/`select_item` scope decision
+   direction (2026-07-20), revisit opportunistically. **Item 3's
+   remainder, surveyed 2026-07-28: `former_plans` ✅ done (build-verified,
+   not yet live-tested); `mod_base_hurry`/`design_units` not yet started;
+   `plans_upkeep` likely doesn't need a hook at all** (pure fact
+   computation, same category as `move_upkeep`'s own sweep). Order:
+   `former_plans` → `mod_base_hurry` → `design_units`, one commit each,
+   live-testing deferred to the end (user's own plan). Detail:
+   `IMPLEMENTATION_DETAILS.md` 4.18 (this survey), 4.5–4.11 (the
+   `FormerUnit`/`select_item` scope decision
    and the float-narrowing rule's only live case), 3.7.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `crawler_move` →

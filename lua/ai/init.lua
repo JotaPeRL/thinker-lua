@@ -6,6 +6,7 @@ local social = dofile("lua/ai/social.lua")
 local war = dofile("lua/ai/war.lua")
 local build = dofile("lua/ai/build.lua")
 local move = dofile("lua/ai/move.lua")
+local plan = dofile("lua/ai/plan.lua")
 -- Not an AI module -- the autoplay determinism harness's per-turn state
 -- hash (IMPLEMENTATION_PLAN.md "Consolidation gate" item a). Registered
 -- here anyway because register_hooks() only reads this one table; see
@@ -103,4 +104,9 @@ return {
     -- combat_move/trans_move/former_move/colony_move/crawler_move/
     -- artifact_move.
     nuclear_move = move.nuclear_move,
+    -- Item 3 remainder, first of three (IMPLEMENTATION_DETAILS.md 4.18):
+    -- former_plans, faction-level Class 3 like land_raise_plan/
+    -- invasion_plan/nuclear_move -- hooked at the call site in
+    -- plans_upkeep (plan.cpp), not inside its own body.
+    former_plans = plan.former_plans,
 }

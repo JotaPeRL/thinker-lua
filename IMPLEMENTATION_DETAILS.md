@@ -772,10 +772,12 @@ uses planet busters — not yet reproduced on demand. Item 3's remaining
 functions are now surveyed (4.18 below, user chose this over item 5
 `probe.cpp` on 2026-07-28) — that survey is the next resume point.
 
-### 4.18 Item 3's remaining scope — survey (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`)
+### 4.18 Item 3's remaining scope (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) — `former_plans` done, rest not started
 
-Survey only, done 2026-07-28 before writing any code (user request: read
-and detail all four before porting). Real sizes: `former_plans`
+Survey done 2026-07-28 before writing any code (user request: read and
+detail all four before porting), then user chose to implement all three
+remaining functions in the recommended order, committing after each,
+with live testing deferred to the end. Real sizes: `former_plans`
 (`plan.cpp:448-467`) ~20 loc, `mod_base_hurry` (`build.cpp:42-215`) ~174
 loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
 (`plan.cpp:140-359`) ~220 loc.
@@ -797,23 +799,26 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
   fields via FFI, same as it already does for fields `move_upkeep`
   computes. Revisit only if a real decision is found on closer reading
   during implementation.
-- **`former_plans`** — tiny: reads `has_tech`/`has_terra`/`has_project`
-  (all already exposed) plus `fungus_yield(faction_id, RES_NONE)`
-  (`map.cpp:1505`, not yet exposed — a small pure formula over 5
-  `Faction` fields, of which only `SE_planet_pending` is currently named
-  in `types.lua`; `tech_fungus_nutrient`/`_mineral`/`_energy`/
-  `SE_economy_pending` would need `FIELD()` entries added to
-  `gen_ffi.cpp` the same way `ODP_deployed` just was — or `fungus_yield`
-  stays an opaque host wrapper instead, avoiding new cdef surface
-  entirely; call it once with the actual engine function rather than
-  reimplementing the `ManifoldHarmonicsBonus[][3]` lookup table in Lua).
-  Writes 3 `plans[]` fields (`keep_fungus`, `plant_fungus`,
-  `build_tubes`) that already have *getters* (read by `move.lua`) but no
-  *setters* — needs 3 new setters, same shape as stage 7A's 9 `AIPlans`
-  setters. Classification: transactional/Class 2 is plausible (3 scalar
-  writes, no broader mutation), but faction-level Class 3 via
-  `lua_ai_command_hook_faction` (already built, stage 7B) also fits and
-  needs no new hook shape — decide when implementing.
+- **`former_plans`** — ✅ done, build-verified, not yet live-tested.
+  New file `lua/ai/plan.lua` (first module for `plan.cpp`-domain
+  functions outside Movement, as Phase 4.4's own convention anticipated).
+  `fungus_yield(faction_id, RES_NONE)` (`map.cpp:1505`) kept as an opaque
+  host wrapper rather than re-implemented — it reads several `Faction`
+  fields not yet named in the generated cdef (`tech_fungus_nutrient`/
+  `_mineral`/`_energy`/`SE_economy_pending`) plus the
+  `ManifoldHarmonicsBonus[][3]` lookup table, and this is its only
+  call site. 3 new `plans[]` setters (`set_keep_fungus`/
+  `set_plant_fungus`/`set_build_tubes`, same shape as stage 7A's 9 —
+  none set `g_mutation_issued`, matching the established convention
+  that `plans[]` writes aren't "mutation" for the no-fallback rule,
+  same as every stage-7A setter). `api_version` 43→44. Classification:
+  Class 3 via `lua_ai_command_hook_faction` (already built, stage 7B) —
+  hooked at the call site in `plans_upkeep` (`plan.cpp`), same
+  convention as `land_raise_plan`/`invasion_plan`, needing no new hook
+  shape. `has_tech`/`has_terra`/`has_project` (all already exposed),
+  `tech.facility(id)`/`tech.rules()` (already expose `.preq_tech`/
+  `.cost`/`.maint` and `.tech_preq_improv_fungus`/
+  `.tech_preq_build_road_fungus` directly) needed zero new surface.
 - **`mod_base_hurry`** — cheaper than its size suggests: nearly every
   helper it calls is *already ported* from `select_build`'s own work —
   `governor_priorities`/`facility_score` (Class 1, already hooked),
@@ -860,11 +865,13 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
   Class 3, per-faction, fits `lua_ai_command_hook_faction` directly (no
   new hook shape needed, same as `land_raise_plan`/`invasion_plan`).
 
-**Recommended order** (cheapest/least-ambiguous first, same "lowest risk
-first" principle as Movement's own staging): `former_plans` → `mod_base_
-hurry` → `design_units`, with `plans_upkeep` most likely **not** ported
+**Order** (cheapest/least-ambiguous first, same "lowest risk first"
+principle as Movement's own staging): `former_plans` → `mod_base_hurry`
+→ `design_units`, with `plans_upkeep` most likely **not** ported
 (re-examine only if implementation finds a real decision this survey
-missed). Not yet started — no code written for this section.
+missed). `former_plans` done (above); `mod_base_hurry`/`design_units`
+not yet started. All three build-verified only until the maintainer runs
+a live session at the end (user's own testing plan for this batch).
 
 ---
 

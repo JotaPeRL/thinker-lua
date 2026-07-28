@@ -486,7 +486,13 @@ void plans_upkeep(int faction_id) {
         AIPlans* p = &plans[faction_id];
         memset((void*)p, 0, sizeof(AIPlans));
         update_main_region(faction_id);
-        former_plans(faction_id);
+        // Item 3 remainder (IMPLEMENTATION_DETAILS.md 4.18): Class 3 hook
+        // at the call site, same convention as land_raise_plan/
+        // invasion_plan's own seams in move.cpp -- former_plans's own
+        // body stays untouched C++ fallback.
+        if (!lua_ai_command_hook_faction("former_plans", faction_id)) {
+            former_plans(faction_id);
+        }
 
         for (int i = 0; i < MaxPlayerNum; i++) {
             plans[i].mil_strength = 0;
