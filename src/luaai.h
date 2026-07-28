@@ -854,6 +854,26 @@ struct LuaHostApi {
     int32_t (*conf_design_units)();
     int32_t (*conf_manage_player_bases)();
     int32_t (*conf_base_hurry)();
+    // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18). Pure queries, opaque tier (engine eligibility/capability
+    // facts, not AI judgment -- same tier as mod_veh_avail/has_abil,
+    // IMPLEMENTATION_DETAILS.md 4.7's own criterion).
+    int32_t (*best_weapon)(int32_t faction_id);
+    int32_t (*best_armor)(int32_t faction_id, int32_t max_cost);
+    int32_t (*has_chassis)(int32_t faction_id, int32_t chassis_id);
+    int32_t (*has_ability)(int32_t faction_id, int32_t abl_id, int32_t chassis_id, int32_t weapon_id);
+    int32_t (*has_weapon)(int32_t faction_id, int32_t weapon_id);
+    int32_t (*veh_count)(int32_t faction_id, int32_t unit_id);
+    int32_t (*mod_upgrade_cost)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
+    int32_t (*use_nerve_gas)(int32_t faction_id);
+    // Mutators: create_proto returns the new unit_id but every call site
+    // in design_units discards it (a bare statement in the original);
+    // full_upgrade/part_upgrade/retire_proto are void in the original.
+    int32_t (*create_proto)(int32_t faction_id, int32_t chassis_id, int32_t weapon_id,
+        int32_t armor_id, int32_t abl_flags, int32_t reactor_id, int32_t ai_plan);
+    void (*full_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
+    void (*part_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
+    void (*retire_proto)(int32_t unit_id, int32_t faction_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

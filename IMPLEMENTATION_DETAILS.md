@@ -772,7 +772,7 @@ uses planet busters — not yet reproduced on demand. Item 3's remaining
 functions are now surveyed (4.18 below, user chose this over item 5
 `probe.cpp` on 2026-07-28) — that survey is the next resume point.
 
-### 4.18 Item 3's remaining scope (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) — `former_plans`/`mod_base_hurry` done, `design_units` not started
+### 4.18 Item 3's remaining scope (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) — all three ported, `plans_upkeep` intentionally not
 
 Survey done 2026-07-28 before writing any code (user request: read and
 detail all four before porting), then user chose to implement all three
@@ -863,32 +863,61 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
   gate kept in front of the hook, so `conf.base_hurry`/
   `conf.manage_player_bases` needed their own trivial accessors rather
   than being resolved before the hook fires.
-- **`design_units`** — the heavy one, and the only one of the four with
-  no existing dependency overlap with `select_build`'s prior work: needs
-  12 new host functions (`best_weapon`/`best_armor`/`has_chassis`/
-  `has_ability`/`has_weapon`/`create_proto`/`veh_count`/`full_upgrade`/
-  `part_upgrade`/`retire_proto`/`mod_upgrade_cost`/`use_nerve_gas`) —
-  `best_reactor`/`need_police` are the only two already exposed
-  (the latter already real Lua in `build.lua`, exported). Two static
-  local C++ helpers (`check_disband` ~26 loc, `upgrade_value` ~34 loc)
-  need porting as real Lua alongside it — both are genuine scoring/
-  eligibility logic, not opaque mechanism. Uses a priority-queue pattern
-  twice (`score_max_queue_t`/`score_min_queue_t`) — same `table.sort`
-  treatment already established for `land_raise_plan`'s
-  `point_max_queue_t` (stage 7B), same total-order caveat to re-verify
-  for this queue's own tie-break rule. This function directly creates
-  and retires unit prototypes (`create_proto`/`retire_proto`) and
-  upgrades fielded units (`full_upgrade`/`part_upgrade`) — unambiguously
-  Class 3, per-faction, fits `lua_ai_command_hook_faction` directly (no
-  new hook shape needed, same as `land_raise_plan`/`invasion_plan`).
+- **`design_units`** — ✅ done, build-verified, not yet live-tested. The
+  heavy one, and the only one of the four with no existing dependency
+  overlap with `select_build`'s prior work: 12 new host functions
+  (`best_weapon`/`best_armor`/`has_chassis`/`has_ability`/`has_weapon`/
+  `create_proto`/`veh_count`/`full_upgrade`/`part_upgrade`/`retire_proto`/
+  `mod_upgrade_cost`/`use_nerve_gas`) — `best_reactor`/`need_police` were
+  the only two already exposed (the latter real Lua in `build.lua`,
+  called directly, no cross-module indirection). `api_version` 45→46.
+  Also needed: a `CAbility` cdef (`.cost` only — `cost_increase_with_
+  armor()`/`_with_speed()` inlined directly over it, same treatment as
+  `BASE::can_hurry_item()`), its `Ability` global address (hand-found in
+  `engine.cpp`, `engine.h` is windows.h-blocked like every other raw
+  global address here), `CWeapon.cost`, `UNIT.obsolete_factions`, a new
+  `tech.ability()`/`proto_is_active()` accessor pair (matching the
+  established `proto_X` convention), `CRules.tech_preq_allow_2_spec_
+  abil`, `MaxAbilityNum` (hand-transcribed, `main.h` windows.h-blocked)
+  and 26 `VehChassis`/`VehWeapon`/`VehArmor`/`VehAbl`/`VehAblFlag`
+  enum constants — all compiler-read from `engine_veh.h`, none
+  hand-transcribed. Two static local C++ helpers ported as real Lua in
+  `plan.lua` alongside it: `check_disband` (~26 loc — the two `std::set`
+  membership checks became plain Lua tables keyed by `x*1000+y`, and
+  the third set, `bases`, needed no separate collection at all since
+  every base already occupies a distinct tile) and `upgrade_value`
+  (~34 loc — a genuine `and/or`-ternary-idiom trap found and fixed while
+  writing it: `atk_val > def_val ? atk_val < wpn_v : def_val < arm_v`
+  has two *boolean* branches, so `cond and A or B` would silently return
+  `B` whenever `A` is `false`, not just when `cond` is; written as an
+  explicit `if/else` instead — see the file's own comment at that line
+  for why, and 4.16's truthiness-bug entry for the general class of
+  Lua/C boolean-vs-int traps this project keeps surfacing). Uses a
+  priority-queue pattern twice (`score_max_queue_t`/`score_min_queue_t`,
+  opposite pop orders — verified against `SItem::operator<`/`operator>`,
+  `plan.h`) — same `table.sort` treatment as `land_raise_plan`'s
+  `point_max_queue_t` (stage 7B). **Preserves one genuine original bug**
+  (not fixed, per the port-before-improve rule, same disposition as
+  Movement's `route_score` stale-`sq` bug): `arm_v = Weapon[arm].
+  offense_value` indexes the *Weapon* table using an *armor* id, not
+  `Armor[arm].defense_value` — kept exactly, with a comment at the one
+  Lua line that reads it. This function directly creates and retires
+  unit prototypes (`create_proto`/`retire_proto`) and upgrades fielded
+  units (`full_upgrade`/`part_upgrade`) — unambiguously Class 3,
+  per-faction, `lua_ai_command_hook_faction` (no new hook shape needed).
+  Two call sites (`faction.cpp:1453`/`:1527`, unlike every other item-3-
+  remainder function's single call site) — hooked *inside* the
+  function's own body, right after its `conf.design_units`/`faction_id`/
+  `is_human` guard (which stays C++-only), so one hook site covers both
+  callers instead of duplicating the seam at each — same shape as
+  `update_main_region_prioritize_naval` (stage 7D), for the same
+  practical reason.
 
 **Order** (cheapest/least-ambiguous first, same "lowest risk first"
 principle as Movement's own staging): `former_plans` → `mod_base_hurry`
-→ `design_units`, with `plans_upkeep` most likely **not** ported
-(re-examine only if implementation finds a real decision this survey
-missed). `former_plans`/`mod_base_hurry` done (above); `design_units`
-not yet started. All three build-verified only until the maintainer runs
-a live session at the end (user's own testing plan for this batch).
+→ `design_units`, with `plans_upkeep` **not** ported (re-examine only if
+a real decision surfaces later). All three ✅ done (above), build-verified
+only — live testing deferred to the end of this batch (user's own plan).
 
 ---
 

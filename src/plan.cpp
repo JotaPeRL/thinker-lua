@@ -141,6 +141,16 @@ void design_units(int faction_id) {
     if (!conf.design_units || !faction_id || is_human(faction_id)) {
         return;
     }
+    // Item 3 remainder (IMPLEMENTATION_DETAILS.md 4.18): Class 3 hook
+    // inside the function's own body, right after the eligibility guard
+    // above -- same shape as update_main_region_prioritize_naval (stage
+    // 7D). Needed here for the same practical reason: design_units has
+    // two call sites (faction.cpp:1453/1527), so hooking inside the
+    // shared body covers both uniformly instead of duplicating the seam
+    // at each call site.
+    if (lua_ai_command_hook_faction("design_units", faction_id)) {
+        return;
+    }
     const int fc = faction_id;
     CAbility& aaa = Ability[ABL_ID_AAA];
     CAbility& arty = Ability[ABL_ID_ARTILLERY];

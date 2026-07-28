@@ -114,4 +114,9 @@ return {
     -- (base_id) -> int shape -- hooked at the very top of the C++
     -- function, not at a separate call site.
     mod_base_hurry = build.mod_base_hurry,
+    -- Item 3 remainder, 3rd of three (IMPLEMENTATION_DETAILS.md 4.18):
+    -- design_units, faction-level Class 3 via lua_ai_command_hook_faction
+    -- -- hooked inside the function's own body (two call sites in
+    -- faction.cpp), not at either call site.
+    design_units = plan.design_units,
 }

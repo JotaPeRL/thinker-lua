@@ -1404,6 +1404,61 @@ static int32_t host_conf_base_hurry() {
     return conf.base_hurry;
 }
 
+// design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md 4.18).
+static int32_t host_best_weapon(int32_t faction_id) {
+    return best_weapon(faction_id);
+}
+
+static int32_t host_best_armor(int32_t faction_id, int32_t max_cost) {
+    return best_armor(faction_id, max_cost);
+}
+
+static int32_t host_has_chassis(int32_t faction_id, int32_t chassis_id) {
+    return has_chassis(faction_id, (VehChassis)chassis_id);
+}
+
+static int32_t host_has_ability(int32_t faction_id, int32_t abl_id, int32_t chassis_id, int32_t weapon_id) {
+    return has_ability(faction_id, (VehAbl)abl_id, (VehChassis)chassis_id, (VehWeapon)weapon_id);
+}
+
+static int32_t host_has_weapon(int32_t faction_id, int32_t weapon_id) {
+    return has_weapon(faction_id, (VehWeapon)weapon_id);
+}
+
+static int32_t host_veh_count(int32_t faction_id, int32_t unit_id) {
+    return veh_count(faction_id, unit_id);
+}
+
+static int32_t host_mod_upgrade_cost(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id) {
+    return mod_upgrade_cost(faction_id, new_unit_id, old_unit_id);
+}
+
+static int32_t host_use_nerve_gas(int32_t faction_id) {
+    return use_nerve_gas(faction_id);
+}
+
+static int32_t host_create_proto(int32_t faction_id, int32_t chassis_id, int32_t weapon_id,
+        int32_t armor_id, int32_t abl_flags, int32_t reactor_id, int32_t ai_plan) {
+    g_mutation_issued = true;
+    return create_proto(faction_id, (VehChassis)chassis_id, (VehWeapon)weapon_id,
+        (VehArmor)armor_id, (VehAblFlag)abl_flags, (VehReactor)reactor_id, (VehPlan)ai_plan);
+}
+
+static void host_full_upgrade(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id) {
+    g_mutation_issued = true;
+    full_upgrade(faction_id, new_unit_id, old_unit_id);
+}
+
+static void host_part_upgrade(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id) {
+    g_mutation_issued = true;
+    part_upgrade(faction_id, new_unit_id, old_unit_id);
+}
+
+static void host_retire_proto(int32_t unit_id, int32_t faction_id) {
+    g_mutation_issued = true;
+    retire_proto(unit_id, faction_id);
+}
+
 // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
 // select_item's own remaining dependencies (item_yield/bonus_yield/
 // terraform_cost are real engine yield formulas, same tier as
@@ -1959,7 +2014,7 @@ int32_t* out_x, int32_t* out_y) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 45,
+    /* api_version          */ 46,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -2246,6 +2301,18 @@ static LuaHostApi g_host_api = {
     /* conf_design_units             */ host_conf_design_units,
     /* conf_manage_player_bases      */ host_conf_manage_player_bases,
     /* conf_base_hurry               */ host_conf_base_hurry,
+    /* best_weapon                   */ host_best_weapon,
+    /* best_armor                    */ host_best_armor,
+    /* has_chassis                   */ host_has_chassis,
+    /* has_ability                   */ host_has_ability,
+    /* has_weapon                    */ host_has_weapon,
+    /* veh_count                     */ host_veh_count,
+    /* mod_upgrade_cost              */ host_mod_upgrade_cost,
+    /* use_nerve_gas                 */ host_use_nerve_gas,
+    /* create_proto                  */ host_create_proto,
+    /* full_upgrade                  */ host_full_upgrade,
+    /* part_upgrade                  */ host_part_upgrade,
+    /* retire_proto                  */ host_retire_proto,
 };
 
 static lua_State* L = NULL;

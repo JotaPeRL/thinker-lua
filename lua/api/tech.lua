@@ -25,6 +25,10 @@ local Rules = ffi.cast("CRules*", types.globals.Rules)
 -- recycling_tanks ResValue's 3 leading int32_t fields (nutrient, mineral,
 -- energy -- engine_types.h:592-597), not the whole CResourceInfo.
 local ResInfoRecyclingTanks = ffi.cast("int32_t*", types.globals.ResInfoRecyclingTanks)
+-- design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md 4.18):
+-- Ability[ABL_ID_AAA]/Ability[ABL_ID_ARTILLERY], only .cost exposed (see
+-- gen_ffi.cpp's CAbility emit_struct).
+local Ability = ffi.cast("CAbility*", types.globals.Ability)
 
 local function bounded(name, id, max)
     assert(id >= 0 and id < max, name .. " out of range: " .. tostring(id))
@@ -41,6 +45,11 @@ end
 local function facility(facility_id)
     bounded("facility_id", facility_id, types.counts.MaxFacilityArrayNum)
     return Facility[facility_id]
+end
+
+local function ability(ability_id)
+    bounded("ability_id", ability_id, types.counts.MaxAbilityNum)
+    return Ability[ability_id]
 end
 
 local function reactor(reactor_id)
@@ -103,6 +112,12 @@ end
 
 local function proto_is_prototyped(unit_id)
     return bit.band(proto(unit_id).unit_flags, types.enums.UNIT_PROTOTYPED) ~= 0
+end
+
+-- design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md 4.18):
+-- "if this bit is zero, prototype has been retired" (engine_veh.h).
+local function proto_is_active(unit_id)
+    return bit.band(proto(unit_id).unit_flags, types.enums.UNIT_ACTIVE) ~= 0
 end
 
 local function proto_triad(unit_id)
@@ -211,6 +226,7 @@ end
 return {
     get = get,
     facility = facility,
+    ability = ability,
     reactor = reactor,
     weapon = weapon,
     chassis = chassis,
@@ -223,6 +239,7 @@ return {
     proto_is_psi_unit = proto_is_psi_unit,
     proto_is_colony = proto_is_colony,
     proto_is_prototyped = proto_is_prototyped,
+    proto_is_active = proto_is_active,
     proto_triad = proto_triad,
     proto_range = proto_range,
     proto_is_former = proto_is_former,

@@ -324,10 +324,23 @@ typedef struct {
     int32_t (*conf_design_units)();
     int32_t (*conf_manage_player_bases)();
     int32_t (*conf_base_hurry)();
+    int32_t (*best_weapon)(int32_t faction_id);
+    int32_t (*best_armor)(int32_t faction_id, int32_t max_cost);
+    int32_t (*has_chassis)(int32_t faction_id, int32_t chassis_id);
+    int32_t (*has_ability)(int32_t faction_id, int32_t abl_id, int32_t chassis_id, int32_t weapon_id);
+    int32_t (*has_weapon)(int32_t faction_id, int32_t weapon_id);
+    int32_t (*veh_count)(int32_t faction_id, int32_t unit_id);
+    int32_t (*mod_upgrade_cost)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
+    int32_t (*use_nerve_gas)(int32_t faction_id);
+    int32_t (*create_proto)(int32_t faction_id, int32_t chassis_id, int32_t weapon_id,
+        int32_t armor_id, int32_t abl_flags, int32_t reactor_id, int32_t ai_plan);
+    void (*full_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
+    void (*part_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
+    void (*retire_proto)(int32_t unit_id, int32_t faction_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 45
+local HOST_API_VERSION = 46
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -594,6 +607,28 @@ return {
     conf_design_units = function() return api.conf_design_units() end,
     conf_manage_player_bases = function() return api.conf_manage_player_bases() end,
     conf_base_hurry = function() return api.conf_base_hurry() end,
+    best_weapon = function(faction_id) return api.best_weapon(faction_id) end,
+    best_armor = function(faction_id, max_cost) return api.best_armor(faction_id, max_cost) end,
+    has_chassis = function(faction_id, chassis_id) return api.has_chassis(faction_id, chassis_id) end,
+    has_ability = function(faction_id, abl_id, chassis_id, weapon_id)
+        return api.has_ability(faction_id, abl_id, chassis_id, weapon_id)
+    end,
+    has_weapon = function(faction_id, weapon_id) return api.has_weapon(faction_id, weapon_id) end,
+    veh_count = function(faction_id, unit_id) return api.veh_count(faction_id, unit_id) end,
+    mod_upgrade_cost = function(faction_id, new_unit_id, old_unit_id)
+        return api.mod_upgrade_cost(faction_id, new_unit_id, old_unit_id)
+    end,
+    use_nerve_gas = function(faction_id) return api.use_nerve_gas(faction_id) end,
+    create_proto = function(faction_id, chassis_id, weapon_id, armor_id, abl_flags, reactor_id, ai_plan)
+        return api.create_proto(faction_id, chassis_id, weapon_id, armor_id, abl_flags, reactor_id, ai_plan)
+    end,
+    full_upgrade = function(faction_id, new_unit_id, old_unit_id)
+        api.full_upgrade(faction_id, new_unit_id, old_unit_id)
+    end,
+    part_upgrade = function(faction_id, new_unit_id, old_unit_id)
+        api.part_upgrade(faction_id, new_unit_id, old_unit_id)
+    end,
+    retire_proto = function(unit_id, faction_id) api.retire_proto(unit_id, faction_id) end,
     tile_is_volcano_center = function(x, y) return api.tile_is_volcano_center(x, y) ~= 0 end,
     terraform_cost = function(x, y, faction_id) return api.terraform_cost(x, y, faction_id) end,
     item_yield = function(x, y, faction_id, bonus, item) return api.item_yield(x, y, faction_id, bonus, item) end,

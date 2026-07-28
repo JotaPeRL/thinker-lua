@@ -213,10 +213,25 @@ int main() {
         FIELD(CReactor, preq_tech),
     }});
 
+    // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18): only .cost is needed -- cost_increase_with_armor()/
+    // _with_speed() (engine_types.h) are one-line formulas over it,
+    // inlined directly in Lua rather than re-exposed as their own
+    // wrappers, same treatment as BASE::can_hurry_item() etc.
+    emit_struct(stdout, {"CAbility", sizeof(CAbility), alignof(CAbility), {
+        FIELD(CAbility, cost),
+    }});
+
     emit_struct(stdout, {"CWeapon", sizeof(CWeapon), alignof(CWeapon), {
         FIELD(CWeapon, offense_value),
         FIELD(CWeapon, preq_tech),
         FIELD(CWeapon, mode), // production/plans port (item 3, IMPLEMENTATION_DETAILS.md 4.7)
+        // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+        // 4.18): arm_v's own Weapon[arm].offense_value read is a 1:1-
+        // preserved original bug (indexes Weapon[] with an armor id, not
+        // Armor[]) -- .cost is for the *correct* Weapon[wpn].cost reads
+        // elsewhere in the same function.
+        FIELD(CWeapon, cost),
     }});
 
     emit_struct(stdout, {"CChassis", sizeof(CChassis), alignof(CChassis), {
@@ -244,6 +259,9 @@ int main() {
         FIELD(UNIT, ability_flags),
         FIELD(UNIT, cost),
         FIELD(UNIT, unit_flags), // backs is_prototyped(), needed by proto_extra_cost
+        // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+        // 4.18): faction bitfield of who's marked this prototype obsolete.
+        FIELD(UNIT, obsolete_factions),
     }});
 
     emit_struct(stdout, {"Continent", sizeof(Continent), alignof(Continent), {
@@ -282,6 +300,9 @@ int main() {
         FIELD(CRules, extra_cost_prototype_air),
         FIELD(CRules, extra_cost_prototype_land),
         FIELD(CRules, artillery_max_rng),
+        // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+        // 4.18): twoabl gate (has_ability up to 2 abilities per unit).
+        FIELD(CRules, tech_preq_allow_2_spec_abil),
         // select_build itself, facility-branch catalog continued
         // (IMPLEMENTATION_DETAILS.md 4.10.21): the shared GOV_MAY_FORCE_
         // PSYCH gate (FAC_PUNISHMENT_SPHERE/FAC_GENEJACK_FACTORY).
@@ -561,6 +582,10 @@ int main() {
     printf("    Weapon = 0x%08X,\n", 0x94AE60);
     printf("    Armor = 0x%08X,\n", 0x94F278);
     printf("    Chassis = 0x%08X,\n", 0x94A330);
+    // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18): CAbility* const Ability (engine.cpp:290), same hand-
+    // transcription reason as every other global on this list.
+    printf("    Ability = 0x%08X,\n", 0x9AB538);
     printf("    Units = 0x%08X,\n", 0x9AB868);
     printf("    Continents = 0x%08X,\n", 0x9AA730);
     printf("    TechOwners = 0x%08X,\n", 0x9A6670);
@@ -640,6 +665,10 @@ int main() {
     printf("    MaxTechnologyNum = %d,\n", 89);    // main.h:123
     printf("    MaxChassisNum = %d,\n", 9);        // main.h:124
     printf("    MaxWeaponNum = %d,\n", 26);        // main.h:125
+    // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18): bounds tech.ability()'s Ability[] access. Hand-transcribed,
+    // same windows.h-blocked reason as MaxEnemyRange/GrowthPopBoom above.
+    printf("    MaxAbilityNum = %d,\n", 29);       // main.h:128
     printf("    MaxArmorNum = %d,\n", 14);         // main.h:126
     printf("    MaxReactorNum = %d,\n", 4);        // main.h:127
     printf("    MaxFacilityNum = %d,\n", 64);      // main.h:143
@@ -796,6 +825,9 @@ int main() {
     printf("    ABL_POLICE_2X = %d,\n", ABL_POLICE_2X);
     printf("    ABL_CLEAN_REACTOR = %d,\n", ABL_CLEAN_REACTOR);
     printf("    UNIT_PROTOTYPED = %d,\n", UNIT_PROTOTYPED);
+    // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18): UNIT::is_active()'s own bit.
+    printf("    UNIT_ACTIVE = %d,\n", UNIT_ACTIVE);
     printf("    REC_FISSION = %d,\n", REC_FISSION);
     printf("    SE_Pending = %d,\n", SE_Pending);
     printf("    TRIAD_SEA = %d,\n", TRIAD_SEA);
@@ -804,6 +836,36 @@ int main() {
     printf("    PLAN_SUPPLY = %d,\n", PLAN_SUPPLY);
     printf("    PLAN_PROBE = %d,\n", PLAN_PROBE);
     printf("    PLAN_TERRAFORM = %d,\n", PLAN_TERRAFORM);
+    // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18): remaining VehChassis/VehWeapon/VehArmor/VehAbl/VehAblFlag
+    // constants this function's own branches need, same compiler-read
+    // tier as every other engine_veh.h enum above.
+    printf("    ABL_NONE = %d,\n", ABL_NONE);
+    printf("    ABL_DEEP_RADAR = %d,\n", ABL_DEEP_RADAR);
+    printf("    ABL_NERVE_GAS = %d,\n", ABL_NERVE_GAS);
+    printf("    ABL_DISSOCIATIVE_WAVE = %d,\n", ABL_DISSOCIATIVE_WAVE);
+    printf("    ABL_FUNGICIDAL = %d,\n", ABL_FUNGICIDAL);
+    printf("    CHS_HOVERTANK = %d,\n", CHS_HOVERTANK);
+    printf("    CHS_SPEEDER = %d,\n", CHS_SPEEDER);
+    printf("    CHS_INFANTRY = %d,\n", CHS_INFANTRY);
+    printf("    CHS_CRUISER = %d,\n", CHS_CRUISER);
+    printf("    CHS_GRAVSHIP = %d,\n", CHS_GRAVSHIP);
+    printf("    WPN_PROBE_TEAM = %d,\n", WPN_PROBE_TEAM);
+    printf("    WPN_HAND_WEAPONS = %d,\n", WPN_HAND_WEAPONS);
+    printf("    ARM_NO_ARMOR = %d,\n", ARM_NO_ARMOR);
+    printf("    ABL_ID_AAA = %d,\n", ABL_ID_AAA);
+    printf("    ABL_ID_ARTILLERY = %d,\n", ABL_ID_ARTILLERY);
+    printf("    ABL_ID_COMM_JAMMER = %d,\n", ABL_ID_COMM_JAMMER);
+    printf("    ABL_ID_POLICE_2X = %d,\n", ABL_ID_POLICE_2X);
+    printf("    ABL_ID_TRANCE = %d,\n", ABL_ID_TRANCE);
+    printf("    ABL_ID_TRAINED = %d,\n", ABL_ID_TRAINED);
+    printf("    ABL_ID_ALGO_ENHANCEMENT = %d,\n", ABL_ID_ALGO_ENHANCEMENT);
+    printf("    ABL_ID_DEEP_RADAR = %d,\n", ABL_ID_DEEP_RADAR);
+    printf("    ABL_ID_AIR_SUPERIORITY = %d,\n", ABL_ID_AIR_SUPERIORITY);
+    printf("    ABL_ID_NERVE_GAS = %d,\n", ABL_ID_NERVE_GAS);
+    printf("    ABL_ID_DISSOCIATIVE_WAVE = %d,\n", ABL_ID_DISSOCIATIVE_WAVE);
+    printf("    ABL_ID_SUPER_TERRAFORMER = %d,\n", ABL_ID_SUPER_TERRAFORMER);
+    printf("    ABL_ID_FUNGICIDAL = %d,\n", ABL_ID_FUNGICIDAL);
     printf("    DIFF_SPECIALIST = %d,\n", DIFF_SPECIALIST);
     printf("    PLAN_NAVAL_SUPERIORITY = %d,\n", PLAN_NAVAL_SUPERIORITY);
     printf("    PLAN_RECON = %d,\n", PLAN_RECON);
