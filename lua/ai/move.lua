@@ -3609,7 +3609,7 @@ end
 -- TileSearch/route-retrieval primitives (7A) directly, as anticipated
 -- when those were built.
 local function invasion_plan(faction_id)
-    if funcs.has_ships(faction_id) == 0 or funcs.is_human(faction_id) then
+    if not funcs.has_ships(faction_id) or funcs.is_human(faction_id) then
         return
     end
     local main_region = funcs.main_region(faction_id)
@@ -3621,7 +3621,7 @@ local function invasion_plan(faction_id)
             and b.faction_id == faction_id and funcs.coast_tiles(b.x, b.y) ~= 0 then
             seed_xs[#seed_xs + 1] = b.x
             seed_ys[#seed_ys + 1] = b.y
-        elseif funcs.at_war(faction_id, b.faction_id) ~= 0 and funcs.tile_is_ocean(b.x, b.y) == 0 then
+        elseif funcs.at_war(faction_id, b.faction_id) ~= 0 and not funcs.tile_is_ocean(b.x, b.y) then
             enemy = true
         end
     end
@@ -3660,11 +3660,11 @@ local function invasion_plan(faction_id)
         local rx, ry, dist, prev_x, prev_y = out[1], out[2], out[3], out[4], out[5]
 
         local do_continue = false
-        if funcs.tile_is_land_region(rx, ry) ~= 0 then
+        if funcs.tile_is_land_region(rx, ry) then
             local enemy_dist = funcs.map_enemy_dist(rx, ry)
             if enemy_dist > 0 and enemy_dist < 10
-                and funcs.allow_move(prev_x, prev_y, faction_id, E.TRIAD_SEA) ~= 0
-                and funcs.allow_move(rx, ry, faction_id, E.TRIAD_LAND) ~= 0 then
+                and funcs.allow_move(prev_x, prev_y, faction_id, E.TRIAD_SEA)
+                and funcs.allow_move(rx, ry, faction_id, E.TRIAD_LAND) then
                 funcs.region_search_get_route(route_count, route_xs, route_ys, E.PathLimit)
                 local region = funcs.tile_region(rx, ry)
                 local owner = funcs.tile_owner(rx, ry)
@@ -3698,11 +3698,11 @@ local function invasion_plan(faction_id)
                 end
             end
         end
-        if not do_continue and naval_scout_x < 0 and funcs.tile_is_land_region(rx, ry) ~= 0
+        if not do_continue and naval_scout_x < 0 and funcs.tile_is_land_region(rx, ry)
             and funcs.tile_owner(rx, ry) == scout_target
             and funcs.tile_region(rx, ry) == funcs.main_region(scout_target)
-            and funcs.tile_is_base_radius(rx, ry) ~= 0 then
-            if funcs.tile_is_base_radius(prev_x, prev_y) ~= 0
+            and funcs.tile_is_base_radius(rx, ry) then
+            if funcs.tile_is_base_radius(prev_x, prev_y)
                 and funcs.tile_owner(prev_x, prev_y) == scout_target
                 and rand.map(0, 8) == 0 then
                 naval_scout_x, naval_scout_y = prev_x, prev_y
@@ -3753,7 +3753,7 @@ local function update_main_region_prioritize_naval(faction_id)
         if out[0] == 0 then break end
         local rx, ry = out[1], out[2]
         if funcs.at_war(faction_id, funcs.tile_owner(rx, ry)) ~= 0
-            and funcs.tile_is_ocean(rx, ry) == 0 then
+            and not funcs.tile_is_ocean(rx, ry) then
             k = k + 1
             if k >= 10 then
                 funcs.set_prioritize_naval(faction_id, 0)
@@ -3801,7 +3801,7 @@ local function nuclear_move(id)
     local rules = tech.rules()
     local max_range = max(0, idiv(moves, rules.move_rate_roads))
     local max_dist = max(0, idiv(moves - v.moves_spent, rules.move_rate_roads))
-    local at_base = funcs.tile_is_base(v.x, v.y) ~= 0
+    local at_base = funcs.tile_is_base(v.x, v.y)
 
     local built_nukes = 0
     local enemy_nukes = {}
@@ -3902,7 +3902,7 @@ local function nuclear_move(id)
                     + clamp(funcs.map_enemy_near(b.x, b.y), 0, 60)
                     - clamp(funcs.map_range(v.x, v.y, b.x, b.y) - max_dist, 0, 60)
                     + (faction_id == b.faction_id_former and -16 or 0)
-                    + (funcs.tile_is_ocean(b.x, b.y) ~= 0 and -16 or 0)
+                    + (funcs.tile_is_ocean(b.x, b.y) and -16 or 0)
                     + (bit.band(diplo, E.DIPLO_MAJOR_ATROCITY_VICTIM) ~= 0 and 40 or 0)
                     + (bit.band(diplo, E.DIPLO_ATROCITY_VICTIM) ~= 0 and 20 or 0)
                     + (bit.band(diplo, E.DIPLO_WANT_REVENGE) ~= 0 and 20 or 0)

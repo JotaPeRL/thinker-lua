@@ -405,11 +405,11 @@ counts): `DEVELOPMENT_DIARY.md`, 2026-07-14 through 2026-07-20.
 
 ---
 
-### 4.12–4.17 Movement (porting-order item 4) — ✅ all stages 0–8 closed, pending live test
+### 4.12–4.17 Movement (porting-order item 4) — ✅ all stages 0–8 closed; 0–7 live-verified, 8 pending live exercise
 
 Full narrative for every stage below (exact field/enum/wrapper catalogs,
 `api_version` history, verification run counts, files-touched lists, every
-bug hunt): `DEVELOPMENT_DIARY.md`, 2026-07-20 through 2026-07-24. What
+bug hunt): `DEVELOPMENT_DIARY.md`, 2026-07-20 through 2026-07-28. What
 follows is what still matters for resuming or extending this work.
 
 **Dispatch:** `mod_enemy_move` (`veh_turn.cpp:147`) routes each vehicle to
@@ -494,12 +494,42 @@ three still unported, see 4.16.
   run** — coverage gap, not a known defect, revisit opportunistically
   (same disposition as `select_build`'s deprioritized facilities).
 
-### 4.16 Stage 7 — faction-level orchestration (`land_raise_plan`/`invasion_plan`/`update_main_region`/`goal.cpp`) — ✅ closed, pending live test
+### 4.16 Stage 7 — faction-level orchestration (`land_raise_plan`/`invasion_plan`/`update_main_region`/`goal.cpp`) — ✅ closed, live-verified
 
 Sub-staged 7A–7D (this file's own numbering, `IMPLEMENTATION_PLAN.md`
-doesn't commit to sub-stage letters). All four done, build-verified only —
-see the "not yet live-tested" note on each sub-stage below and Phase 5's
-testing protocol note.
+doesn't commit to sub-stage letters). All four done and live-verified.
+
+**Truthiness bug (found and fixed live-testing, 2026-07-28):** several
+`lua/ffi/funcs.lua` wrappers (`tile_is_ocean`, `tile_is_land_region`,
+`tile_is_base`, `tile_is_base_radius`, `allow_move`, `has_ships`, …)
+already convert the host API's raw `int32_t` into a real Lua boolean
+(`return api.x(...) ~= 0`) — a deliberate convention used correctly
+almost everywhere in `move.lua`. 7C, 7D and stage 8 (ported together)
+instead re-compared several of these already-boolean results against `0`
+(`== 0`/`~= 0`), which in Lua is always false/always true regardless of
+the real value (no coercion between booleans and numbers). 11 call sites,
+all confined to 7C/7D/8, had this pattern; the worst was `invasion_plan`'s
+own `enemy` flag (`move.cpp:683` / `move.lua`'s `tile_is_ocean(...) == 0`
+check) — always false, so `invasion_plan` returned before its real logic
+on *every* call, in every game, independent of any war state. Found via
+live-play evidence: 4 full-length autoplay runs (up to 200 turns, clear
+wars, heavy combat) with zero `invasion`-decision log lines, which the
+maintainer correctly read as "this looks like a bug, not bad luck" rather
+than a coverage gap. Fixed by dropping the redundant comparison (`== 0` →
+`not funcs.x(...)`, `~= 0` → bare `funcs.x(...)`) at all 11 sites,
+including `has_ships`'s own gate (previously *always* false too, which in
+that spot made `invasion_plan` wrongly skip its early-return for
+non-naval factions — the opposite failure mode, over-permissive rather
+than blocking). Re-verified: a 200-turn run fired `invasion` 1437 times,
+`trans_invade` 154×, `colony_naval` 1046×, `trans_start` 88×,
+`combat_invade` 25×, `combat_escort` 4×, 0 shadow-mode mismatches, 0
+errors. This is a distinct bug class from the earlier `has_pact`
+truthiness bug (stage 6, `IMPLEMENTATION_DETAILS.md` 4.12–4.15): that one
+was a wrapper returning a raw int used as a Lua truthy value (`0` is
+truthy in Lua); this one is the mirror case, a wrapper already returning
+a real boolean being re-compared as if it were the raw int. Neither
+shadow mode nor `luajit -bl` catches either shape — Class 3 hooks are
+never shadow-run, and both are syntactically valid Lua.
 
 - **7A (engine surface)** — ✅ done, build-verified. First Lua *writes* to
   `plans[]` (9 setters: `main_region`/`main_sea_region`/
@@ -519,8 +549,11 @@ testing protocol note.
   tier as `target_priority`) and `pick_scout_target` (`move.cpp:634-657`)
   ported in `lua/ai/move.lua`, not a new `ai/plan.lua` (Movement is their
   only consumer so far). `api_version` 40→41.
-- **7B (`land_raise_plan`)** — ✅ done, **build-verified only, not yet
-  live-tested**. `move.cpp:519-629`. New engine surface: `can_alter_level`
+- **7B (`land_raise_plan`)** — ✅ done, **live-verified** (its own code
+  wasn't affected by the truthiness bug above; confirmed independently by
+  `raise_goal` decision lines firing every run since testing began, tens
+  to low hundreds per 200-turn game). `move.cpp:519-629`. New engine
+  surface: `can_alter_level`
   (opaque, pure altitude arithmetic + neighbor scan), `mapdata_set_overlay`
   (new setter — the field is debug/visualization-only, read only by
   `move_upkeep`'s `UM_Visual` block, but written unconditionally in the
@@ -559,8 +592,10 @@ testing protocol note.
     `INT_MAX`/`math.huge` — matched exactly in the Lua port
     (`min_range_over`) even though the difference can't matter against the
     `>= 2` comparison it's used in, for exact fidelity.
-- **7C (`invasion_plan`)** — ✅ done, **build-verified only, not yet
-  live-tested**. `move.cpp:663-763`. Confirmed the 7A prediction: reused
+- **7C (`invasion_plan`)** — ✅ done, **live-verified** (2026-07-28, after
+  the truthiness-bug fix above — this was the stage whose own `enemy`
+  flag the bug permanently zeroed). `move.cpp:663-763`. Confirmed the 7A
+  prediction: reused
   `target_priority` (stage 6) and 7A's `pick_scout_target`/
   `region_search_start_multi`/`region_search_next`/`region_search_get_route`/
   `find_priority_goal`/every `naval_*` plans[] setter directly — **zero new
@@ -590,7 +625,13 @@ testing protocol note.
     `pick_scout_target`'s own already-verified `random(16)` →
     `rand.map(0, 16)` translation before reusing the pattern here.
 - **7D (`update_main_region`'s `prioritize_naval` decision)** — ✅ done,
-  **build-verified only, not yet live-tested**. `move.cpp:806-827`, the
+  **hook invocation confirmed live since early testing; internal branch
+  coverage still unconfirmed** (the function has no `log.debug` of its
+  own, so which of its two branches ran isn't visible in the log — same
+  blind spot as `route_score` before it got one). Its own `at_war`/
+  `tile_is_ocean` check had the same truthiness bug as 7C (now fixed,
+  see above), so the early-return-at-10-hostile-tiles branch was
+  unreachable until 2026-07-28. `move.cpp:806-827`, the
   tail of `update_main_region` (`move.cpp:769-828`). Zero new host-API
   surface again — `region_search_start` (single-point, already exercised
   by `land_raise_plan`'s own first scan), `main_region_x`/`_y` getters,
@@ -627,7 +668,7 @@ testing protocol note.
 to sub-stage letters; this file's own 7A–7D / 0–8 numbering is the
 authoritative staging if a number is needed.
 
-### 4.17 Stage 8 — `nuclear_move` — ✅ done, build-verified only, not yet live-tested
+### 4.17 Stage 8 — `nuclear_move` — ✅ done, build-verified; still not live-exercised
 
 `move.cpp:2735-2896`, the last Movement mover, ported in full. Same
 per-vehicle Class 3 hook shape as every other mover (not faction-level
@@ -688,11 +729,47 @@ distance check and a small explicit linear scan for the exact-membership
 check — no new "set" abstraction needed, and Lua doesn't need to match
 `std::set`'s O(log n) lookup, only its output.
 
-Build-verified both presets, `luajit -bl` syntax-checked; not yet
-live-tested. This closes Movement (porting-order item 4) entirely.
+Build-verified both presets, `luajit -bl` syntax-checked. This closes
+Movement (porting-order item 4) entirely, but the function itself is
+**still not live-exercised** — across every autoplay run to date, no
+faction has ever built/launched a planet buster, so its hook has never
+actually run (Class 3 hooks aren't shadow-run, so there's no other signal
+either). Two bugs surfaced indirectly while chasing this:
 
-**Resume point:** Movement is done. Porting-order item 5 (`probe.cpp`
-AI decisions, not started) or item 3's unsurveyed functions
+- **`Faction.ODP_deployed` cdef gap** (found 2026-07-28): the field is
+  real (`engine_types.h:394`) but `tools/gen_ffi.cpp` never named it, so
+  it was silently folded into a padding blob in `lua/ffi/types.lua` —
+  every invocation attempt errored (`'struct 243' has no member named
+  'ODP_deployed'`) at `move.lua:3839`, always *before* any mutation, so
+  each one safely fell back to the C++ body per the Class 3 contract
+  (contained, not a crash, but it meant the Lua path had silently never
+  run even once). Fixed by adding `FIELD(Faction, ODP_deployed)` next to
+  `satellites_ODP` in `gen_ffi.cpp` (sort-by-offset means list position
+  doesn't matter) — pure cdef naming, no layout change, no `api_version`
+  bump needed. Two of the boolean-truthiness bug's 11 sites (4.16 above)
+  were also in this function's own code (`tile_is_base`, `tile_is_ocean`)
+  and got fixed in the same pass. Both fixes are build-verified; neither
+  has live evidence yet since the function still hasn't fired.
+- **Native (non-Lua) crash, open**: a 200-turn run (2026-07-28) crashed
+  right after a nuclear strike (fallback C++ path, not Lua — occurred
+  while the Lua side was still erroring on the bug above) killed ~15
+  units in one base. The engine's own crash handler recorded an access
+  violation (`ExceptionCode c0000005`) inside `terranx.exe` itself (not
+  `thinker.dll`) at an address falling between two of the un-decompiled
+  `Sprite_draw*` family's own known addresses (`engine.cpp:1861-1874`),
+  i.e. native sprite-rendering code, most likely triggered by drawing the
+  aftermath of a mass-casualty event. Same category as the `choose_
+  defender` engine bug found testing stage 6 (a pre-existing engine
+  fragility, not a Lua defect) — but unlike that one, **not yet
+  root-caused to a specific fix or applied**; this is plausibly the first
+  time in the project a planet buster has actually detonated on a
+  garrisoned base. Left open since it's outside the Lua port's own scope
+  and hasn't recurred (no repro beyond the one occurrence).
+
+**Resume point:** Movement is done except live-exercising `nuclear_move`
+itself, which needs a game where some faction actually researches and
+uses planet busters — not yet reproduced on demand. Porting-order item 5
+(`probe.cpp` AI decisions, not started) or item 3's unsurveyed functions
 (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`,
 deprioritized 2026-07-20) are the remaining porting-order items.
 

@@ -449,8 +449,9 @@ enable Lua by default on the branch → next.
    territory: largest, most performance-sensitive, ported last with the
    C++ baseline already measured.
 
-   **Status: ✅ all stages 0–8 done — Movement fully ported, pending live
-   test.** Stages 0–6 closed and live-verified (Class 3 hook
+   **Status: ✅ all stages 0–8 done — Movement fully ported; stage 8
+   (`nuclear_move`) still pending live exercise.** Stages 0–6 closed and
+   live-verified (Class 3 hook
    infrastructure, then `artifact_move`, `crawler_move`, `colony_move`,
    `former_move`, `trans_move`, `combat_move`, in that order — including a
    deferred fix for a `route_score`/`search_route` scoring-formula-
@@ -466,20 +467,32 @@ enable Lua by default on the branch → next.
    `prioritize_naval` decision — hooked *inside* the function's own body,
    the one sub-stage that needed the original seam-in-body shape rather
    than a call-site hook, since the decision isn't a separately-callable
-   function). **Stage 8 (`nuclear_move`, deliberately ported last — its
-   real complexity, a full diplomatic/threat scoring pass plus a secret-
-   project iteration, is closer to `find_project`/`select_build` than an
-   isolated mover) is also done** — real complexity was in the scoring
-   formulas, not new engine surface (only 5 new host functions needed:
-   `is_alien`/`veh_lift`/`veh_drop`/`set_veh_visibility`/`nuclear_find_
-   drop_tile`). **All of stages 7–8 built and build-verified only, not
-   yet live-tested** (see Phase 5's testing protocol note). Native life
-   (fauna/aliens) is explicitly out of scope (user decision, 2026-07-20) —
-   not strategic faction AI. A native crash found live-testing `combat_move`
-   (an engine-level missing hostility filter in `choose_defender`, not a
-   Lua defect) was root-caused and fixed for every caller, not just the Lua
-   path. Full staging, real function sizes, and per-stage classification
-   decisions: `IMPLEMENTATION_DETAILS.md` 4.12–4.17.
+   function). **Stage 7 (7A–7D) is closed and live-verified** — a
+   boolean/int truthiness bug that silently blocked 7C/7D's own decision
+   branches (funcs.lua wrappers already returning real Lua booleans,
+   re-compared against `0` as if raw ints) was found and fixed via live
+   testing; a 200-turn re-run confirmed `invasion_plan` firing 1400+
+   times with 0 shadow-mode mismatches (root cause and full call-site
+   list: `IMPLEMENTATION_DETAILS.md` 4.16). **Stage 8 (`nuclear_move`,
+   deliberately ported last — its real complexity, a full diplomatic/
+   threat scoring pass plus a secret-project iteration, is closer to
+   `find_project`/`select_build` than an isolated mover) is done** — real
+   complexity was in the scoring formulas, not new engine surface (only 5
+   new host functions needed: `is_alien`/`veh_lift`/`veh_drop`/
+   `set_veh_visibility`/`nuclear_find_drop_tile`). **Build-verified, still
+   not live-exercised** — no faction has launched a planet buster in any
+   run yet; a cdef gap (`Faction.ODP_deployed` silently folded into
+   padding) that broke every invocation attempt was found and fixed, but
+   the fixed path itself remains unconfirmed (`IMPLEMENTATION_DETAILS.md`
+   4.17). Native life (fauna/aliens) is explicitly out of scope (user
+   decision, 2026-07-20) — not strategic faction AI. Two native (non-Lua)
+   crashes found live-testing Movement: `combat_move`'s `choose_defender`
+   missing hostility filter, root-caused and fixed for every caller; and
+   a sprite-rendering access violation surfacing right after a mass-
+   casualty nuclear strike, root-caused to an address range but not yet
+   fixed (open, `IMPLEMENTATION_DETAILS.md` 4.17). Full staging, real
+   function sizes, and per-stage classification decisions:
+   `IMPLEMENTATION_DETAILS.md` 4.12–4.17.
 5. **AI probe decisions** (`probe.cpp`, partial — target/action choices only;
    resolution mechanics stay in C++). **Not started.**
 
@@ -583,8 +596,9 @@ e. **`tools/port_drift.py` + provenance entries in `docs/LUA_PORTING.md`.**
    `IMPLEMENTATION_DETAILS.md` 4.5–4.11.
 
 **Resuming after the gate:** `select_build` (Phase 4.2 item 3) is now fully
-ported, and Movement (item 4) is now fully ported too (all stages 0–8, see
-item 4's status above) — pending live test. Porting-order item 5
+ported, and Movement (item 4) is now fully ported and live-verified too
+(stages 0–7 confirmed; stage 8 `nuclear_move` build-verified only, still
+pending live exercise — see item 4's status above). Porting-order item 5
 (`probe.cpp` AI decisions) or item 3's unsurveyed functions (`mod_
 base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) are what's next.
 Design notes worth re-reading before touching production-domain code further:
@@ -811,7 +825,8 @@ as Movement closes).
   subsequent domain requires, same generate-validate discipline.
 - **M5 — Production/social in Lua:** porting-order items 2 and 3 mostly done
   (item 3's four unsurveyed functions remain — see item 3's status).
-- **M6 — Movement in Lua:** ✅ all stages 0-8 done, pending live test (item
-  4's status above) — Movement is fully ported.
+- **M6 — Movement in Lua:** ✅ all stages 0-8 done and fully ported; stages
+  0-7 live-verified, stage 8 (`nuclear_move`) build-verified only, still
+  pending live exercise (item 4's status above).
 - **M7 — Fork release:** docs, zips with `lua/`, "Hello AI" example. Not
   started.

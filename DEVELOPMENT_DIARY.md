@@ -807,3 +807,88 @@ call, same bypass pattern as everywhere else, patched the same way.
 **Milestone: a 100-turn autoplay run completed with zero manual
 intervention** — closing out the popup-blocking investigation that ran
 across both of these dates.
+
+## 2026-07-28
+
+### Stage 7C/7D/8 truthiness bug: `invasion_plan` never fired in 4 straight live runs, correctly read as a bug rather than bad luck (supports `IMPLEMENTATION_DETAILS.md` 4.16)
+
+Four separate live autoplay runs after Movement's stages 7-8 landed
+(build-verified only, never live-tested) — up to 200 turns each, clear
+wars, heavy combat — produced zero `invasion` decision log lines from
+`invasion_plan`. First hypothesis (mine, wrong): explained it away as a
+plausible game-state coincidence, specifically that a naval-only Pirates
+faction's sea bases (genuinely `is_ocean()`, permanently, per
+`map.cpp:96-102` — founding a base doesn't change tile altitude) would
+never set `main_region` or count as an "enemy" target, so a
+Pirates-dominated war might legitimately never trigger overseas
+invasion planning. User pushed back after run 4 (still zero, different
+game): "invasion_plan parece erro. Era pra ter sido chamado em alguma
+dessas runs" — right instinct, and right to distrust the first
+plausible-sounding explanation after a fourth identical null result.
+Root cause: several `lua/ffi/funcs.lua` wrappers (`tile_is_ocean`,
+`tile_is_land_region`, `tile_is_base`, `tile_is_base_radius`,
+`allow_move`, `has_ships`, …) already convert the host API's raw
+`int32_t` into a real Lua boolean — a convention used correctly almost
+everywhere in `move.lua`. The code freshly written for 7C/7D/8 instead
+re-compared several of these already-boolean results against `0`
+(`== 0`/`~= 0`), which in Lua is always false/always true regardless of
+the real value — no coercion between booleans and numbers, unlike C.
+11 call sites had this pattern, all confined to 7C/7D/8 (nowhere in the
+already-live-verified stages 0-6) — grep confirmed by cross-referencing
+every `funcs.X(...)` call site against the set of wrapper names whose
+own body does the `~= 0` conversion. The one that mattered most:
+`invasion_plan`'s `enemy` flag, gated on `tile_is_ocean(...) == 0` —
+always false, so the function returned before its real logic on *every*
+call, in every game, independent of any war state; the `has_ships`
+gate had the mirror failure (always-false `== 0` check meant the
+early-return for non-naval factions never fired either — over-permissive
+rather than blocking). Fixed by dropping the redundant comparison at all
+11 sites. Re-verified: a 200-turn run fired `invasion` 1437 times,
+`trans_invade` 154×, `colony_naval` 1046×, `combat_invade` 25×,
+`combat_escort` 4×, 0 shadow-mode mismatches. Lesson for next time:
+when a decision path is *consistently* silent across multiple long,
+game-state-diverse live runs, treat "it's a bug" as the leading
+hypothesis before "it's a coverage gap" — especially for freshly-ported,
+never-shadow-run Class 3 code. A single absent branch is ambiguous; the
+same branch absent across four independent games is a signal.
+
+### `nuclear_move`: an `ODP_deployed` cdef gap masked every invocation attempt; a separate native crash surfaced but stays open (supports `IMPLEMENTATION_DETAILS.md` 4.17)
+
+Chasing why `nuclear_move` (stage 8) never appeared in any live log
+either, a 200-turn run finally exercised it and errored every time:
+`lua/ai/move.lua:3839: 'struct 243' has no member named 'ODP_deployed'`.
+The field is real (`Faction::ODP_deployed`, `engine_types.h:394`) but
+`tools/gen_ffi.cpp`'s `Faction` field list never named it, so `gen_ffi`
+silently folded it into a padding blob (`_pad_14[124]`) in the generated
+`lua/ffi/types.lua` alongside several genuinely-unused fields — no
+build error, no validation failure (the layout is still correct, just
+anonymous). Every invocation errored *before* any mutation, so the
+Class 3 no-fallback rule correctly let each one fall back safely to the
+C++ body — contained, never a crash, but it meant the Lua path had
+silently never executed even once, across every run to date. Fixed with
+one `FIELD(Faction, ODP_deployed)` line next to `satellites_ODP` in
+`gen_ffi.cpp` (fields are sorted by offset before emission, so list
+position is cosmetic); no `api_version` bump needed since this only
+names an already-correctly-sized/offset field, it doesn't change any
+struct's layout. Two of the truthiness bug's 11 sites (previous entry)
+were also inside `nuclear_move`'s own code and got fixed in the same
+pass. Neither fix has live confirmation yet: no faction has actually
+built/launched a planet buster in any run since, so the function still
+hasn't been positively observed running its real logic end-to-end.
+
+Separately, that same 200-turn run **crashed** (access violation,
+`ExceptionCode c0000005`) right after a nuclear strike — via the C++
+fallback path, not Lua, since Lua was still erroring on the bug above at
+the time — killed roughly 15 units in one base. The engine's own crash
+handler (`debug.txt`) placed the fault inside `terranx.exe` itself, not
+`thinker.dll`, at an address falling between two of the un-decompiled
+`Sprite_draw*` family's own known entry points (`engine.cpp:1861-1874`)
+— i.e. native sprite-rendering code, plausibly triggered by drawing the
+aftermath of a mass-casualty event. Same category as the `choose_
+defender` engine bug found testing stage 6 (2026-07-23 entry above): a
+pre-existing engine fragility surfaced by Lua AI live-testing, not a Lua
+defect itself. Unlike that one, this was **left open** — root-caused to
+an address range, not to a specific function or fix, and it hasn't
+recurred; this may be the first time in the project a planet buster has
+actually detonated on a garrisoned base, so there's no prior baseline to
+compare against. Revisit if it recurs with a clearer repro.

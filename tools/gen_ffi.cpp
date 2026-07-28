@@ -397,6 +397,9 @@ int main() {
         FIELD(Faction, satellites_energy),
         FIELD(Faction, satellites_ODP),
         FIELD(Faction, planet_busters),
+        // nuclear_move port (stage 8, IMPLEMENTATION_DETAILS.md 4.17):
+        // built_nukes-vs-target-ODP-capacity check (move.cpp:2774).
+        FIELD(Faction, ODP_deployed),
         // select_build itself, unit-branch catalog continued
         // (IMPLEMENTATION_DETAILS.md 4.10.28): find_project/find_missile/
         // faction_might/has_pact/redundant_project (SecretProject branch).
