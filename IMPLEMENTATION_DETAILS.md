@@ -772,7 +772,7 @@ uses planet busters — not yet reproduced on demand. Item 3's remaining
 functions are now surveyed (4.18 below, user chose this over item 5
 `probe.cpp` on 2026-07-28) — that survey is the next resume point.
 
-### 4.18 Item 3's remaining scope (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) — all three ported, `plans_upkeep` intentionally not
+### 4.18 Item 3's remaining scope (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) — all three ported and live-verified, `plans_upkeep` intentionally not
 
 Survey done 2026-07-28 before writing any code (user request: read and
 detail all four before porting), then user chose to implement all three
@@ -799,7 +799,8 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
   fields via FFI, same as it already does for fields `move_upkeep`
   computes. Revisit only if a real decision is found on closer reading
   during implementation.
-- **`former_plans`** — ✅ done, build-verified, not yet live-tested.
+- **`former_plans`** — ✅ done, live-verified (2026-07-28, clean — no bugs
+  found in this one specifically).
   New file `lua/ai/plan.lua` (first module for `plan.cpp`-domain
   functions outside Movement, as Phase 4.4's own convention anticipated).
   `fungus_yield(faction_id, RES_NONE)` (`map.cpp:1505`) kept as an opaque
@@ -819,8 +820,18 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
   `tech.facility(id)`/`tech.rules()` (already expose `.preq_tech`/
   `.cost`/`.maint` and `.tech_preq_improv_fungus`/
   `.tech_preq_build_road_fungus` directly) needed zero new surface.
-- **`mod_base_hurry`** — ✅ done, build-verified, not yet live-tested.
-  Cheaper than its size suggested: `governor_priorities`/`facility_score`
+- **`mod_base_hurry`** — ✅ done, live-verified (2026-07-28). A live run
+  found one bug: the `FAC_CHILDREN_CRECHE` branch's `E.GrowthPopBoom`
+  reference errored ("compare number with nil") 41 times — `GrowthPopBoom`
+  is a plain `const int` under `types.counts`, never an enum, and was
+  already exposed there before this batch (adding it again during this
+  port, in the wrong table, created a harmless duplicate `gen_ffi.cpp`
+  printf too). Every occurrence errored before any mutation, so the
+  Class 3 no-fallback rule correctly fell back to the C++ body each time
+  — contained, not a crash. Fixed by referencing `types.counts.
+  GrowthPopBoom` and removing the redundant printf. Re-verified: 1042
+  `hurry_item` calls in `debug.txt` over the run, 0 crashes, 0 shadow
+  mismatches. Cheaper than its size suggested: `governor_priorities`/`facility_score`
   (already real Lua in `build.lua`, called directly, no shadow/hook
   indirection needed since mod_base_hurry now calls the same-file local
   functions) and `check_retool`/`proto_extra_cost`/`has_retool`/
@@ -863,7 +874,9 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
   gate kept in front of the hook, so `conf.base_hurry`/
   `conf.manage_player_bases` needed their own trivial accessors rather
   than being resolved before the hook fires.
-- **`design_units`** — ✅ done, build-verified, not yet live-tested. The
+- **`design_units`** — ✅ done, live-verified (2026-07-28, clean — no bugs
+  found in this one specifically; 2290 combined `create_proto`/
+  `full_upgrade`/`part_upgrade` calls in `debug.txt` over the run). The
   heavy one, and the only one of the four with no existing dependency
   overlap with `select_build`'s prior work: 12 new host functions
   (`best_weapon`/`best_armor`/`has_chassis`/`has_ability`/`has_weapon`/
@@ -916,8 +929,10 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
 **Order** (cheapest/least-ambiguous first, same "lowest risk first"
 principle as Movement's own staging): `former_plans` → `mod_base_hurry`
 → `design_units`, with `plans_upkeep` **not** ported (re-examine only if
-a real decision surfaces later). All three ✅ done (above), build-verified
-only — live testing deferred to the end of this batch (user's own plan).
+a real decision surfaces later). All three ✅ done and live-verified
+(above) — a 200-turn run found and fixed one bug (`mod_base_hurry`'s
+`GrowthPopBoom` reference), then confirmed clean: 0 crashes, 0 shadow
+mismatches, all three exercised.
 
 ---
 

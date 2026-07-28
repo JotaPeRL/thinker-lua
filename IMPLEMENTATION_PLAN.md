@@ -436,13 +436,15 @@ enable Lua by default on the branch → next.
    live-exercise evidence — not known defects, deprioritized by explicit user
    direction (2026-07-20), revisit opportunistically. **Item 3's
    remainder, surveyed 2026-07-28: `former_plans`/`mod_base_hurry`/
-   `design_units` ✅ all done** (build-verified, not yet live-tested;
-   `design_units` kept one genuine original bug 1:1 per the port-before-
-   improve rule — `arm_v` reads the Weapon table with an armor id).
-   **`plans_upkeep` deliberately not ported** — pure fact computation,
-   same category as `move_upkeep`'s own sweep. Live-testing deferred to
-   the end (user's own plan). Detail:
-   `IMPLEMENTATION_DETAILS.md` 4.18 (this survey), 4.5–4.11 (the
+   `design_units` ✅ all done and live-verified** (a 200-turn run found
+   and fixed one bug — `mod_base_hurry`'s `GrowthPopBoom` reference
+   pointed at the wrong table — then confirmed clean: 0 crashes, 0 shadow
+   mismatches, all three functions exercised. `design_units` kept one
+   genuine original bug 1:1 per the port-before-improve rule — `arm_v`
+   reads the Weapon table with an armor id). **`plans_upkeep` deliberately
+   not ported** — pure fact computation, same category as `move_upkeep`'s
+   own sweep. Detail: `IMPLEMENTATION_DETAILS.md` 4.18 (this survey),
+   4.5–4.11 (the
    `FormerUnit`/`select_item` scope decision
    and the float-narrowing rule's only live case), 3.7.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
@@ -606,12 +608,12 @@ ported, and Movement (item 4) is now fully ported and live-verified too
 (stages 0–7 confirmed; stage 8 `nuclear_move` build-verified only, still
 pending live exercise — see item 4's status above). Item 3's remainder
 (user choice, 2026-07-28, over item 5 `probe.cpp`) is now fully ported
-too — `former_plans`/`mod_base_hurry`/`design_units` all done,
-`plans_upkeep` deliberately left unported; see `IMPLEMENTATION_DETAILS.md`
-4.18. Live-testing this batch is the immediate next step (user's own
-plan), then porting-order item 5 (`probe.cpp`, not started) is what's
-left. Design notes worth re-reading before touching production-domain
-code further:
+too, and live-verified (2026-07-28) — `former_plans`/`mod_base_hurry`/
+`design_units` all done, `plans_upkeep` deliberately left unported; see
+`IMPLEMENTATION_DETAILS.md` 4.18. Porting-order item 5 (`probe.cpp`, not
+started) is what's left, plus live-exercising `nuclear_move` itself
+whenever a game produces a planet buster. Design notes worth re-reading
+before touching production-domain code further:
 `IMPLEMENTATION_DETAILS.md` 4.5–4.11 (RNG-hazard hook-argument threading,
 multi-block facility gating, the `FormerUnit`/`select_item` scope decision)
 and 3.7 (float-narrowing rule).
@@ -833,10 +835,10 @@ as Movement closes).
   Consolidation gate's item (d). See Phase 4.2 item 1.
 - **M3B — API expansion on demand:** ongoing, the API grows as each
   subsequent domain requires, same generate-validate discipline.
-- **M5 — Production/social in Lua:** ✅ items 2 and 3 done — item 3's
-  remainder (`former_plans`/`mod_base_hurry`/`design_units`) ported
-  2026-07-28, `plans_upkeep` deliberately left unported (see item 3's
-  status). Build-verified only, pending this batch's live test.
+- **M5 — Production/social in Lua:** ✅ items 2 and 3 done and
+  live-verified — item 3's remainder (`former_plans`/`mod_base_hurry`/
+  `design_units`) ported and live-tested 2026-07-28, `plans_upkeep`
+  deliberately left unported (see item 3's status).
 - **M6 — Movement in Lua:** ✅ all stages 0-8 done and fully ported; stages
   0-7 live-verified, stage 8 (`nuclear_move`) build-verified only, still
   pending live exercise (item 4's status above).

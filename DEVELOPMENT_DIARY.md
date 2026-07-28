@@ -892,3 +892,32 @@ an address range, not to a specific function or fix, and it hasn't
 recurred; this may be the first time in the project a planet buster has
 actually detonated on a garrisoned base, so there's no prior baseline to
 compare against. Revisit if it recurs with a clearer repro.
+
+### Item 3 remainder (`former_plans`/`mod_base_hurry`/`design_units`): `GrowthPopBoom` lives in `types.counts`, not `types.enums` (supports `IMPLEMENTATION_DETAILS.md` 4.18)
+
+Live-testing the three-function batch (200 turns), `mod_base_hurry`
+errored 41 times on its `FAC_CHILDREN_CRECHE` branch: "attempt to
+compare number with nil" reading `E.GrowthPopBoom`. Root cause: `Growth
+PopBoom` (`main.h:158`) is a plain `const int`, never an enum member —
+it belongs in the generated `types.counts` table (alongside `MaxProto
+Num`/`MaxWeaponNum`/etc.), not `types.enums` (`E`). Worse, it was
+*already* exposed there before this batch started (`gen_ffi.cpp` already
+had a `GrowthPopBoom` printf, predating any of this session's edits) —
+adding a second one during the `mod_base_hurry` stage was unnecessary
+and, since I placed it in the wrong table, actively wrong: it created a
+harmless duplicate printf line and an `E.GrowthPopBoom` reference that
+resolved to `nil`. Every occurrence errored before any mutation, so the
+Class 3 no-fallback rule correctly fell back to the C++ body each time —
+contained, not a crash, and the run completed cleanly at 200 turns
+despite it. Fixed by referencing `types.counts.GrowthPopBoom` directly
+and deleting the redundant printf.
+
+Lesson: when a survey (4.18's own dependency-inventory pass) says a
+constant needs exposing, grep for its bare name across *all* of
+`types.lua` first (not just the `enums` table, which is where most
+constants this project touches happen to live) — a hit in `counts` or
+`globals` means it's already there, and the fix is a one-line reference
+change in the consuming Lua, not a new `gen_ffi.cpp` entry. This is a
+smaller, cheaper cousin of the `ODP_deployed` gap (2026-07-28, entry
+above): that one was a real field silently missing everywhere; this one
+was already exposed and just mis-referenced from the call site.
