@@ -822,6 +822,38 @@ struct LuaHostApi {
     // (most aren't named in the generated cdef yet) and re-implementing
     // the lookup table in Lua. Pure query, no mutation.
     int32_t (*fungus_yield)(int32_t faction_id, int32_t res_type);
+    // mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18). Pure queries: engine pricing formulas, same opaque tier as
+    // other cost functions already exposed (mod_upgrade_cost etc.).
+    int32_t (*thinker_enabled)(int32_t faction_id);
+    int32_t (*mineral_cost)(int32_t base_id, int32_t item_id);
+    int32_t (*hurry_cost)(int32_t base_id, int32_t item_id, int32_t hurry_mins);
+    int32_t (*mod_cost_factor)(int32_t faction_id, int32_t res_type, int32_t base_id);
+    // Mutators: hurry_item spends energy/minerals and flips
+    // BSTATE_HURRY_PRODUCTION (its own "zoom to base" popup when the
+    // human player owns the base is self-contained, unconditional, same
+    // as every other UI side effect this file already treats as
+    // opaque). base_hurry is the vanilla (non-Thinker) hurry logic mod_
+    // base_hurry itself falls back to for player-governed-without-
+    // management or Thinker-disabled bases -- reads *CurrentBaseID
+    // internally exactly like mod_base_hurry does, so no base_id
+    // parameter is needed (the global is unchanged since the hook call).
+    int32_t (*hurry_item)(int32_t base_id, int32_t mins, int32_t cost);
+    int32_t (*base_hurry)();
+    // The project-completion popup mod_base_hurry's own project branch
+    // shows (DONEPROJECT, gated on DEBUG&&conf.minimal_popups / game-
+    // state / diplomatic-commlink checks) -- folded whole into one
+    // opaque call so Lua doesn't need GameState/MapWin/has_treaty(this
+    // specific pair)/DIPLO_COMMLINK/Facility[].name exposed just for a
+    // presentation side effect. Mutator (called after hurry_item, so
+    // g_mutation_issued is already true regardless).
+    void (*notify_project_done)(int32_t faction_id, int32_t facility_id);
+    // Trivial conf.* passthroughs, same tier as conf.tech_balance etc.
+    // (src/luaai.cpp's existing host_tech_balance and siblings).
+    int32_t (*conf_simple_hurry_cost)();
+    int32_t (*conf_design_units)();
+    int32_t (*conf_manage_player_bases)();
+    int32_t (*conf_base_hurry)();
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3
@@ -856,6 +888,18 @@ bool lua_ai_command_hook(const char* name, int* out, int veh_id);
 // not a proposal to validate -- the caller has nothing left to do either
 // way once this returns, unlike Class 2's propose-then-commit.
 bool lua_ai_command_hook_faction(const char* name, int faction_id);
+
+// mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md 4.18):
+// a per-base Class 3 hook, (base_id) -> int, structurally like
+// lua_ai_command_hook but NOT a reuse of it -- that function's error-
+// after-mutation recovery calls mod_veh_skip(veh_id) unconditionally,
+// which would corrupt a random vehicle if a base_id were passed through
+// it by mistake. There is no per-base "skip" action to take the way
+// mod_veh_skip skips a vehicle's turn -- once hurry_item has already
+// spent minerals/energy, the base just continues normally next turn, so
+// the recovery path here simply reports "handled" with a safe default
+// result instead of calling anything further.
+bool lua_ai_command_hook_base(const char* name, int* out, int base_id);
 
 // Lazy-inits the Lua state on first call (skipped entirely if conf.lua_ai
 // is 0), applies any pending reload request, then returns. No AI hooks are

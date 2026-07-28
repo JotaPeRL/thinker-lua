@@ -109,4 +109,9 @@ return {
     -- invasion_plan/nuclear_move -- hooked at the call site in
     -- plans_upkeep (plan.cpp), not inside its own body.
     former_plans = plan.former_plans,
+    -- Item 3 remainder, 2nd of three (IMPLEMENTATION_DETAILS.md 4.18):
+    -- mod_base_hurry, per-base Class 3 via the new lua_ai_command_hook_base
+    -- (base_id) -> int shape -- hooked at the very top of the C++
+    -- function, not at a separate call site.
+    mod_base_hurry = build.mod_base_hurry,
 }

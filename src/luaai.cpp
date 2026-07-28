@@ -1344,6 +1344,66 @@ static int32_t host_fungus_yield(int32_t faction_id, int32_t res_type) {
     return fungus_yield(faction_id, (ResType)res_type);
 }
 
+// mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md 4.18).
+static int32_t host_thinker_enabled(int32_t faction_id) {
+    return thinker_enabled(faction_id);
+}
+
+static int32_t host_mineral_cost(int32_t base_id, int32_t item_id) {
+    return mineral_cost(base_id, item_id);
+}
+
+static int32_t host_hurry_cost(int32_t base_id, int32_t item_id, int32_t hurry_mins) {
+    return hurry_cost(base_id, item_id, hurry_mins);
+}
+
+static int32_t host_mod_cost_factor(int32_t faction_id, int32_t res_type, int32_t base_id) {
+    return mod_cost_factor(faction_id, (BaseResType)res_type, base_id);
+}
+
+static int32_t host_hurry_item(int32_t base_id, int32_t mins, int32_t cost) {
+    g_mutation_issued = true;
+    return hurry_item(base_id, mins, cost);
+}
+
+static int32_t host_base_hurry() {
+    g_mutation_issued = true;
+    return base_hurry();
+}
+
+// The DONEPROJECT popup mod_base_hurry's own project branch shows after a
+// successful hurry -- folded whole into one opaque call (facility_id is
+// already positive, unlike the C++ body's own -t encoding; Lua computes
+// -t itself before calling, same convention as has_project((FacilityId)-t)
+// elsewhere in this port).
+static void host_notify_project_done(int32_t faction_id, int32_t facility_id) {
+    if (DEBUG && conf.minimal_popups) {
+        return;
+    }
+    if (!(*GameState & STATE_GAME_DONE) && faction_id != MapWin->cOwner
+    && has_treaty(faction_id, MapWin->cOwner, DIPLO_COMMLINK)) {
+        parse_says(0, MFactions[faction_id].adj_name_faction, -1, -1);
+        parse_says(1, Facility[facility_id].name, -1, -1);
+        popp(ScriptFile, "DONEPROJECT", 0, "secproj_sm.pcx", 0);
+    }
+}
+
+static int32_t host_conf_simple_hurry_cost() {
+    return conf.simple_hurry_cost;
+}
+
+static int32_t host_conf_design_units() {
+    return conf.design_units;
+}
+
+static int32_t host_conf_manage_player_bases() {
+    return conf.manage_player_bases;
+}
+
+static int32_t host_conf_base_hurry() {
+    return conf.base_hurry;
+}
+
 // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
 // select_item's own remaining dependencies (item_yield/bonus_yield/
 // terraform_cost are real engine yield formulas, same tier as
@@ -1899,7 +1959,7 @@ int32_t* out_x, int32_t* out_y) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 44,
+    /* api_version          */ 45,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -2175,6 +2235,17 @@ static LuaHostApi g_host_api = {
     /* set_plant_fungus              */ host_set_plant_fungus,
     /* set_build_tubes               */ host_set_build_tubes,
     /* fungus_yield                  */ host_fungus_yield,
+    /* thinker_enabled               */ host_thinker_enabled,
+    /* mineral_cost                  */ host_mineral_cost,
+    /* hurry_cost                    */ host_hurry_cost,
+    /* mod_cost_factor               */ host_mod_cost_factor,
+    /* hurry_item                    */ host_hurry_item,
+    /* base_hurry                    */ host_base_hurry,
+    /* notify_project_done           */ host_notify_project_done,
+    /* conf_simple_hurry_cost        */ host_conf_simple_hurry_cost,
+    /* conf_design_units             */ host_conf_design_units,
+    /* conf_manage_player_bases      */ host_conf_manage_player_bases,
+    /* conf_base_hurry               */ host_conf_base_hurry,
 };
 
 static lua_State* L = NULL;
@@ -2610,6 +2681,59 @@ bool lua_ai_command_hook_faction(const char* name, int faction_id) {
     static std::unordered_set<std::string> logged_first_command_call_faction;
     if (handled && logged_first_command_call_faction.insert(name).second) {
         lua_logf("lua_ai_command_hook_faction: '%s' invoked and handled\n", name);
+    }
+    return handled;
+}
+
+// mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md 4.18):
+// per-base Class 3 hook, (base_id) -> int. See luaai.h for why this isn't
+// a reuse of lua_ai_command_hook (that one's recovery path calls
+// mod_veh_skip(veh_id) unconditionally, which would corrupt an unrelated
+// vehicle if a base_id flowed through it).
+bool lua_ai_command_hook_base(const char* name, int* out, int base_id) {
+    if (!conf.lua_ai || disabled_for_session || !L) {
+        return false;
+    }
+    auto it = hook_refs.find(name);
+    if (it == hook_refs.end()) {
+        return false;
+    }
+
+    g_mutation_issued = false;
+    lua_pushcfunction(L, traceback_handler);
+    int errfunc = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, it->second);
+    lua_pushinteger(L, base_id);
+    if (lua_pcall(L, 1, 1, errfunc) != 0) {
+        const char* msg = lua_tostring(L, -1);
+        handle_lua_error(name, msg);
+        lua_settop(L, errfunc - 1);
+        if (g_mutation_issued) {
+            // Real state already changed (e.g. hurry_item already spent
+            // minerals/energy) -- no per-base "skip" action exists the
+            // way mod_veh_skip skips a vehicle's turn; the base just
+            // continues normally next turn. Report handled with a safe
+            // default so the caller doesn't re-run its own body.
+            *out = 1;
+            return true;
+        }
+        return false;
+    }
+
+    bool handled = lua_isnumber(L, -1);
+    if (handled) {
+        *out = lua_tointeger(L, -1);
+    }
+    lua_settop(L, errfunc - 1);
+
+    if (!handled && g_mutation_issued) {
+        *out = 1;
+        handled = true;
+    }
+
+    static std::unordered_set<std::string> logged_first_command_call_base;
+    if (handled && logged_first_command_call_base.insert(name).second) {
+        lua_logf("lua_ai_command_hook_base: '%s' invoked and handled (result=%d)\n", name, *out);
     }
     return handled;
 }

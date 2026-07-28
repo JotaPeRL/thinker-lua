@@ -367,6 +367,9 @@ int main() {
         // ("twice the number of techs discovered", engine_types.h) are the
         // per-faction tech/energy summary the hash line folds in.
         FIELD(Faction, energy_credits),
+        // mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+        // 4.18): credits = max(0, energy_credits - hurry_cost_total).
+        FIELD(Faction, hurry_cost_total),
         FIELD(Faction, tech_ranking),
         // select_build itself, facility-branch catalog continued
         // (IMPLEMENTATION_DETAILS.md 4.10.17): FAC_BIOLOGY_LAB's own
@@ -658,6 +661,10 @@ int main() {
     // 4.10.12, resumed after the Consolidation gate): defend_range's
     // default and Wbase's clamp condition both need this.
     printf("    MaxEnemyRange = %d,\n", 50);       // main.h:172
+    // mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18): GrowthPopBoom (main.h:158, a plain `const int`), same
+    // windows.h-blocked/hand-transcription reason as MaxEnemyRange above.
+    printf("    GrowthPopBoom = %d,\n", 6);         // main.h:158
     printf("    MaxSocialCatNum = %d,\n", 4);      // main.h:146
     printf("    MaxSocialModelNum = %d,\n", 4);    // main.h:147
     printf("    MaxSocialEffectNum = %d,\n", 11);  // main.h:148
@@ -940,6 +947,19 @@ int main() {
     printf("    FAC_EMPTY_FACILITY_43 = %d,\n", FAC_EMPTY_FACILITY_43);
     printf("    FAC_EMPTY_FACILITY_44 = %d,\n", FAC_EMPTY_FACILITY_44);
     printf("    FAC_EMPTY_FACILITY_45 = %d,\n", FAC_EMPTY_FACILITY_45);
+    // mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md
+    // 4.18): governor-flags/state/rule constants its own gate checks and
+    // hurry_option/is_project computation need. engine_base.h/
+    // engine_enums.h, same compiler-read tier as every other enum above
+    // (neither header is windows.h-blocked).
+    printf("    GOV_ACTIVE = %d,\n", GOV_ACTIVE);
+    printf("    GOV_MAY_HURRY_PRODUCTION = %d,\n", GOV_MAY_HURRY_PRODUCTION);
+    printf("    BSTATE_COMBAT_LOSS_LAST_TURN = %d,\n", BSTATE_COMBAT_LOSS_LAST_TURN);
+    printf("    BSTATE_HURRY_PRODUCTION = %d,\n", BSTATE_HURRY_PRODUCTION);
+    printf("    TECH_Disable = %d,\n", TECH_Disable);
+    printf("    STATE_GAME_DONE = %d,\n", STATE_GAME_DONE);
+    printf("    DIFF_THINKER = %d,\n", DIFF_THINKER);
+    printf("    RSC_MINERAL = %d,\n", RSC_MINERAL);
     // Movement port, stage 0+1 (IMPLEMENTATION_DETAILS.md 4.12): the two
     // action codes every mover returns (veh_turn.h's EnemyVehMove) and
     // PM_SAFE (move.h, a plain `const int`). Hand-transcribed, not read

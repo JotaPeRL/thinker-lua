@@ -313,10 +313,21 @@ typedef struct {
     void (*set_plant_fungus)(int32_t faction_id, int32_t value);
     void (*set_build_tubes)(int32_t faction_id, int32_t value);
     int32_t (*fungus_yield)(int32_t faction_id, int32_t res_type);
+    int32_t (*thinker_enabled)(int32_t faction_id);
+    int32_t (*mineral_cost)(int32_t base_id, int32_t item_id);
+    int32_t (*hurry_cost)(int32_t base_id, int32_t item_id, int32_t hurry_mins);
+    int32_t (*mod_cost_factor)(int32_t faction_id, int32_t res_type, int32_t base_id);
+    int32_t (*hurry_item)(int32_t base_id, int32_t mins, int32_t cost);
+    int32_t (*base_hurry)();
+    void (*notify_project_done)(int32_t faction_id, int32_t facility_id);
+    int32_t (*conf_simple_hurry_cost)();
+    int32_t (*conf_design_units)();
+    int32_t (*conf_manage_player_bases)();
+    int32_t (*conf_base_hurry)();
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 44
+local HOST_API_VERSION = 45
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -566,6 +577,23 @@ return {
     set_plant_fungus = function(faction_id, value) api.set_plant_fungus(faction_id, value) end,
     set_build_tubes = function(faction_id, value) api.set_build_tubes(faction_id, value) end,
     fungus_yield = function(faction_id, res_type) return api.fungus_yield(faction_id, res_type) end,
+    thinker_enabled = function(faction_id) return api.thinker_enabled(faction_id) ~= 0 end,
+    mineral_cost = function(base_id, item_id) return api.mineral_cost(base_id, item_id) end,
+    hurry_cost = function(base_id, item_id, hurry_mins)
+        return api.hurry_cost(base_id, item_id, hurry_mins)
+    end,
+    mod_cost_factor = function(faction_id, res_type, base_id)
+        return api.mod_cost_factor(faction_id, res_type, base_id)
+    end,
+    hurry_item = function(base_id, mins, cost) return api.hurry_item(base_id, mins, cost) end,
+    base_hurry = function() return api.base_hurry() end,
+    notify_project_done = function(faction_id, facility_id)
+        api.notify_project_done(faction_id, facility_id)
+    end,
+    conf_simple_hurry_cost = function() return api.conf_simple_hurry_cost() end,
+    conf_design_units = function() return api.conf_design_units() end,
+    conf_manage_player_bases = function() return api.conf_manage_player_bases() end,
+    conf_base_hurry = function() return api.conf_base_hurry() end,
     tile_is_volcano_center = function(x, y) return api.tile_is_volcano_center(x, y) ~= 0 end,
     terraform_cost = function(x, y, faction_id) return api.terraform_cost(x, y, faction_id) end,
     item_yield = function(x, y, faction_id, bonus, item) return api.item_yield(x, y, faction_id, bonus, item) end,

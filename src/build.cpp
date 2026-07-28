@@ -41,6 +41,18 @@ static int proto_extra_cost(int unit_id) {
 
 int __cdecl mod_base_hurry() {
     const int base_id = *CurrentBaseID;
+    // Item 3 remainder (IMPLEMENTATION_DETAILS.md 4.18): Class 3 hook at
+    // the very top of the function, same generic seam shape as
+    // IMPLEMENTATION_PLAN.md Phase 4.1's own example -- unlike land_
+    // raise_plan/invasion_plan/former_plans (hooked at their own call
+    // sites, since those are void functions with a separate caller),
+    // mod_base_hurry's own two early "delegate to the vanilla base_hurry()"
+    // branches are themselves part of what the Lua port replicates, not a
+    // C++-side gate kept in front of the hook.
+    int out;
+    if (lua_ai_command_hook_base("mod_base_hurry", &out, base_id)) {
+        return out;
+    }
     BASE* b = &Bases[base_id];
     Faction* f = &Factions[b->faction_id];
     AIPlans* p = &plans[b->faction_id];

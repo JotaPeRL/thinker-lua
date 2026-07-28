@@ -103,6 +103,9 @@ local port = {
         -- build_order[] loop.
         select_build = { file = "src/build.cpp", func = "select_build",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        -- Item 3 remainder, 2nd of three (IMPLEMENTATION_DETAILS.md 4.18).
+        mod_base_hurry = { file = "src/build.cpp", func = "mod_base_hurry",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -118,6 +121,7 @@ local veh = dofile("lua/api/veh.lua")
 local log = dofile("lua/api/log.lua")
 
 local idiv = cmath.idiv
+local imod = cmath.imod
 local clamp = cmath.clamp
 local max = math.max
 local min = math.min
@@ -2027,6 +2031,228 @@ local function select_build(base_id)
     return select_combat(base_id, r.sea_base, r.allow_ships)
 end
 
+-- path.cpp:474-485, duplicated from lua/ai/move.lua's own defender_count
+-- (built entirely from already-exposed veh.get/veh.count/veh.at_target/
+-- veh.eval_garrison, no new host wrapper) -- not required cross-module
+-- since move.lua already requires build.lua for base_can_riot and a
+-- reverse require would be circular.
+local function defender_count(x, y, veh_skip_id)
+    local num = 0
+    for i = veh.count() - 1, 0, -1 do
+        local other = veh.get(i)
+        if other.x == x and other.y == y and other.order ~= E.ORDER_SENTRY_BOARD
+            and veh.at_target(other) and i ~= veh_skip_id then
+            num = num + veh.eval_garrison(other)
+        end
+    end
+    return idiv(num + 1, 4)
+end
+
+-- mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md 4.18).
+-- build.cpp:42-215. BASE::can_hurry_item/drone_riots_active (engine_
+-- base.h) are one-line methods over already-exposed queue_items[0]/
+-- state_flags -- inlined here rather than given their own host wrapper,
+-- same treatment as is_ocean(BASE*)/corner_market_active() elsewhere.
+local function can_hurry_item(b)
+    return b.queue_items[0] ~= -E.FAC_STOCKPILE_ENERGY
+        and bit.band(b.state_flags, E.BSTATE_HURRY_PRODUCTION) == 0
+        and (bit.band(b.state_flags, E.BSTATE_DRONE_RIOTS_ACTIVE) == 0
+            or (b.queue_items[0] < 0 and b.queue_items[0] > -E.FAC_SKY_HYDRO_LAB))
+end
+
+local function drone_riots_active(b)
+    return bit.band(b.state_flags, E.BSTATE_DRONE_RIOTS_ACTIVE) ~= 0
+end
+
+-- Class 3 via lua_ai_command_hook_base (new hook shape, src/luaai.h),
+-- hooked at the very top of the C++ function (unlike former_plans/
+-- land_raise_plan/invasion_plan's own call-site hooks) -- mod_base_
+-- hurry's own two "delegate to the vanilla base_hurry()" early branches
+-- are part of what this replicates, not a C++-side gate kept in front of
+-- the hook. See IMPLEMENTATION_DETAILS.md 4.18 for the full dependency
+-- inventory and why fungus_yield-style opaque wrappers were chosen for
+-- mineral_cost/hurry_cost/mod_cost_factor/notify_project_done.
+local function mod_base_hurry(base_id)
+    local b = base_api.get(base_id)
+    local f = faction.get(b.faction_id)
+    local t = b.queue_items[0]
+    local is_cheap = funcs.conf_simple_hurry_cost() ~= 0
+        or b.minerals_accumulated >= tech.rules().retool_exemption
+    local is_project = t <= -E.SP_ID_First and t >= -E.SP_ID_Last
+    local player_gov = funcs.is_human(b.faction_id)
+    local hurry_option
+
+    if funcs.conf_base_hurry() < 1 then
+        return 0
+    elseif player_gov then
+        if funcs.conf_manage_player_bases() == 0 then
+            return funcs.base_hurry()
+        end
+        if bit.band(b.governor_flags, E.GOV_ACTIVE) ~= 0
+            and bit.band(b.governor_flags, E.GOV_MAY_HURRY_PRODUCTION) ~= 0 then
+            hurry_option = bit.band(b.governor_flags, E.GOV_MAY_PROD_SP) ~= 0 and 2 or 1
+        else
+            hurry_option = 0
+        end
+    else
+        if not funcs.thinker_enabled(b.faction_id) then
+            return funcs.base_hurry()
+        end
+        hurry_option = funcs.conf_base_hurry()
+    end
+    if hurry_option < (is_project and 2 or 1) or not can_hurry_item(b) then
+        return 0
+    end
+
+    local enemy_bases = funcs.enemy_bases(b.faction_id)
+    local enemy_factions = funcs.enemy_factions(b.faction_id)
+    local contacted_factions = funcs.contacted_factions(b.faction_id)
+    local median_limit = funcs.median_limit(b.faction_id)
+    local main_region = funcs.main_region(b.faction_id)
+    local target_land_region = funcs.target_land_region(b.faction_id)
+
+    local mins = funcs.mineral_cost(base_id, t) - b.minerals_accumulated
+    local cost = funcs.hurry_cost(base_id, t, mins)
+    local credits = max(0, f.energy_credits - f.hurry_cost_total)
+    local reserve = idiv(
+        clamp(idiv(game.turn() * f.base_count, 16), 20, 500)
+        * ((funcs.conf_design_units() ~= 0 and not player_gov
+            and imod(game.turn(), 4) == 0) and 2 or 1)
+        * ((contacted_factions == 0 or is_project) and 1 or 4)
+        * ((b.defend_goal > 3 and enemy_factions > 0) and 1 or 2)
+        * (funcs.has_fac_built(E.FAC_HEADQUARTERS, base_id) ~= 0 and 1 or 2),
+        16)
+    local divisor = max(1, 10 * b.mineral_surplus)
+    local turns = idiv(10 * max(0, mins) + divisor - 1, divisor)
+
+    if not is_cheap or mins < 1 or cost < 1 or credits - cost < reserve then
+        return 0
+    end
+
+    if is_project then
+        local delay = player_gov and 0
+            or clamp((game.diff_level() < E.DIFF_THINKER and 1 or 0) + rand.map(0, 4), 0, 3)
+        local threshold = 4 * funcs.mod_cost_factor(b.faction_id, E.RSC_MINERAL, -1)
+        local wgov = governor_priorities(base_id)
+
+        if funcs.project_base(-t) >= 0 or turns < 2 + delay
+            or (b.defend_goal > 3 and enemy_factions > 0)
+            or (delay > 0 and b.mineral_surplus < 4)
+            or b.minerals_accumulated < threshold then
+            return 0
+        end
+        for i = 0, base_api.count() - 1 do
+            local ob = base_api.get(i)
+            if ob.faction_id == b.faction_id and ob.queue_items[0] == t
+                and ob.minerals_accumulated > b.minerals_accumulated then
+                return 0
+            end
+        end
+        local proj_score = 0
+        local values = {}
+        for i = E.SP_ID_First, E.SP_ID_Last do
+            if tech.facility(i).preq_tech ~= E.TECH_Disable then
+                local score = facility_score(i, wgov) + rand.map(0, 8)
+                if i == -t then
+                    proj_score = score
+                end
+                values[#values + 1] = score
+            end
+        end
+        table.sort(values)
+        if #values > 0 and proj_score < max(4, values[idiv(#values, 2) + 1]) then
+            return 0
+        end
+        mins = funcs.mineral_cost(base_id, t) - b.minerals_accumulated
+            - idiv(b.mineral_surplus, 2) - delay * b.mineral_surplus
+        cost = funcs.hurry_cost(base_id, t, mins)
+
+        if cost > 0 and cost < credits and mins > 0 and mins > b.mineral_surplus then
+            funcs.hurry_item(base_id, mins, cost)
+            funcs.notify_project_done(b.faction_id, -t)
+            return 1
+        end
+        return 0
+    end
+
+    if t < 0 and (turns > 1 or drone_riots_active(b)) and cost < idiv(credits, 8) then
+        if (t == -E.FAC_RECREATION_COMMONS or t == -E.FAC_PUNISHMENT_SPHERE
+            or (t == -E.FAC_NETWORK_NODE
+                and funcs.has_project(E.FAC_VIRTUAL_WORLD, b.faction_id) ~= 0))
+            and b.drone_total + b.specialist_adjust > b.talent_total then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+    end
+    if t < 0 and turns > 1 and cost < idiv(credits, 8) then
+        if t == -E.FAC_RECYCLING_TANKS or t == -E.FAC_PRESSURE_DOME
+            or t == -E.FAC_TREE_FARM or t == -E.FAC_HEADQUARTERS then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+        if t == -E.FAC_CHILDREN_CRECHE and funcs.base_unused_space(base_id) > 2
+            and b.nutrient_surplus > 0 and f.SE_growth_pending < E.GrowthPopBoom then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+        if (t == -E.FAC_HAB_COMPLEX or t == -E.FAC_HABITATION_DOME)
+            and funcs.base_unused_space(base_id) == 0 and b.nutrient_surplus > 0 then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+        if (t == -E.FAC_GENEJACK_FACTORY or t == -E.FAC_ROBOTIC_ASSEMBLY_PLANT
+            or t == -E.FAC_NANOREPLICATOR or t == -E.FAC_QUANTUM_CONVERTER)
+            and b.mineral_intake > tech.facility(-t).cost + 2 * tech.facility(-t).maint
+            and b.mineral_intake_2 < 40 then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+        if t == -E.FAC_PERIMETER_DEFENSE and b.defend_range < 12 and enemy_factions > 0 then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+        if t == -E.FAC_AEROSPACE_COMPLEX
+            and (f.satellites_ODP > 0 or f.satellites_nutrient > 0
+                or f.satellites_mineral > 0 or f.satellites_energy > 0) then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+        if t == -E.FAC_PSI_GATE and b.defend_range < 16
+            and main_region ~= target_land_region
+            and funcs.tile_region(b.x, b.y) == target_land_region then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+    end
+    if t >= 0 and turns > 1 and cost < idiv(credits, 8) and mins < 35 then
+        if proto_extra_cost(t) > 0 and cost > 50 then
+            return 0
+        end
+        if tech.proto_is_combat_unit(t) then
+            local val = (cost < idiv(credits, 16) and 1 or 0)
+                + (enemy_bases > 0 and 1 or 0)
+                + (enemy_factions > 0 and 1 or 0)
+                + (b.defend_goal > 2 and 1 or 0)
+                + (b.defend_range < 8 and 1 or 0)
+                + (b.defend_range < 12 and 1 or 0)
+                + (bit.band(b.state_flags, E.BSTATE_COMBAT_LOSS_LAST_TURN) ~= 0 and 2 or 0)
+                + max(-2, 2 - defender_count(b.x, b.y, -1))
+            if b.mineral_surplus * 2 > b.mineral_intake_2 and cost < 40 then
+                val = val + rand.map(0, clamp(idiv(credits - cost, 256), 0, 8))
+            end
+            if val > 4 then
+                return funcs.hurry_item(base_id, mins, cost)
+            end
+        end
+        if (tech.proto_is_former(t) or tech.proto_is_supply(t))
+            and turns > imod(game.turn() + base_id, 16)
+            and (cost < idiv(credits, 16) or b.mineral_surplus < median_limit) then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+        if tech.proto_is_colony(t) and b.pop_size > 1
+            and (cost < idiv(credits, 16) or turns > imod(game.turn() + base_id, 16))
+            and (drone_riots_active(b)
+                or (funcs.base_unused_space(base_id) == 0 and b.nutrient_surplus > 1)
+                or (base_can_riot(base_id, true)
+                    and b.drone_total + b.specialist_adjust > b.talent_total)) then
+            return funcs.hurry_item(base_id, mins, cost)
+        end
+    end
+    return 0
+end
+
 port.need_police = need_police
 port.unit_support_plan = unit_support_plan
 port.check_retool = check_retool
@@ -2070,4 +2296,5 @@ port.secret_project_branch = secret_project_branch
 port.former_unit_branch = former_unit_branch
 port.build_order_item_score = build_order_item_score
 port.select_build = select_build
+port.mod_base_hurry = mod_base_hurry
 return port

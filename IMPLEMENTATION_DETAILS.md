@@ -772,7 +772,7 @@ uses planet busters — not yet reproduced on demand. Item 3's remaining
 functions are now surveyed (4.18 below, user chose this over item 5
 `probe.cpp` on 2026-07-28) — that survey is the next resume point.
 
-### 4.18 Item 3's remaining scope (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) — `former_plans` done, rest not started
+### 4.18 Item 3's remaining scope (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) — `former_plans`/`mod_base_hurry` done, `design_units` not started
 
 Survey done 2026-07-28 before writing any code (user request: read and
 detail all four before porting), then user chose to implement all three
@@ -819,33 +819,50 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
   `tech.facility(id)`/`tech.rules()` (already expose `.preq_tech`/
   `.cost`/`.maint` and `.tech_preq_improv_fungus`/
   `.tech_preq_build_road_fungus` directly) needed zero new surface.
-- **`mod_base_hurry`** — cheaper than its size suggests: nearly every
-  helper it calls is *already ported* from `select_build`'s own work —
-  `governor_priorities`/`facility_score` (Class 1, already hooked),
-  `check_retool`/`proto_extra_cost`/`has_retool`/`skip_facility`/
-  `base_can_riot` (all already real Lua in `build.lua`, exported via its
-  `port` table), `has_fac_built`/`defender_count`/`region_at`/
-  `base_unused_space` (already host-exposed). `item()`/
-  `drone_riots_active()`/`can_hurry_item()` are one-line `BASE` methods
-  over `state_flags`/`queue_items[0]` (both already-named fields) —
-  inline directly, no wrapper needed, same treatment as
-  `is_ocean(BASE*)`/`corner_market_active()` elsewhere. Genuinely new:
-  only `mineral_cost`/`hurry_cost`/`mod_cost_factor` (`base.cpp`, pricing
-  formulas — opaque tier, same as other engine cost functions) and
-  `hurry_item` itself (the mutator — `base.cpp:216`, immediately after
-  `mod_base_hurry` in the source) and `thinker_enabled`. Five new host
-  functions, same scale as `nuclear_move`'s own "only 5 new" stage.
-  Classification: it's a per-*base* decision (`*CurrentBaseID`, not a
-  faction or vehicle) that calls `hurry_item` directly rather than
-  returning a proposal for C++ to apply — leans Class 3, needing a new
-  hook shape (`lua_ai_command_hook_base(name, base_id) -> int`, mirroring
-  the existing per-vehicle/per-faction variants) unless a propose-then-
-  commit reformulation (return `{handled, mins, cost}`, let C++ call
-  `hurry_item`) is preferred to stay Class 2 like `select_build`. Real
-  design decision, not yet made — the two early branches that call the
-  *original* `base_hurry()` (human-governed without `manage_player_bases`,
-  or Thinker disabled for the faction) are the hook's own natural
-  fallback path, not something Lua needs to reach.
+- **`mod_base_hurry`** — ✅ done, build-verified, not yet live-tested.
+  Cheaper than its size suggested: `governor_priorities`/`facility_score`
+  (already real Lua in `build.lua`, called directly, no shadow/hook
+  indirection needed since mod_base_hurry now calls the same-file local
+  functions) and `check_retool`/`proto_extra_cost`/`has_retool`/
+  `skip_facility`/`base_can_riot`/`need_police` (same). `item()`/
+  `drone_riots_active()`/`can_hurry_item()` inlined directly over
+  `state_flags`/`queue_items[0]`, no wrapper, same treatment as
+  `is_ocean(BASE*)`/`corner_market_active()` elsewhere. `defender_count`
+  duplicated from `move.lua` into `build.lua` (both already-exposed-
+  primitive small function, no new host surface) rather than shared
+  cross-module, since `move.lua` already requires `build.lua` for
+  `base_can_riot` and the reverse would be circular. `has_project`'s
+  1-arg overload (`project_base(item_id) >= 0`) reused `project_base`,
+  already exposed for `nuclear_move` — no new wrapper needed there either.
+  Genuinely new: `mineral_cost`/`hurry_cost`/`mod_cost_factor` (pricing
+  formulas, opaque), `hurry_item` (the mutator) and `base_hurry` (the
+  *vanilla*, non-Thinker hurry logic — a raw engine function pointer,
+  `engine.cpp:558`, called through unchanged when this hook's own two
+  early branches decide Thinker shouldn't manage this base at all),
+  `notify_project_done` (the whole DONEPROJECT popup gate folded into one
+  opaque call so Lua doesn't need `GameState`/`MapWin`/`DIPLO_COMMLINK`
+  exposed for a presentation side effect), `thinker_enabled`, and four
+  trivial `conf.*` passthroughs (`simple_hurry_cost`/`design_units`/
+  `manage_player_bases`/`base_hurry`, same tier as the existing
+  `conf.tech_balance` etc.). `api_version` 44→45. Also needed 9 new
+  `gen_ffi.cpp` enum entries (`GOV_ACTIVE`/`GOV_MAY_HURRY_PRODUCTION`/
+  `BSTATE_COMBAT_LOSS_LAST_TURN`/`BSTATE_HURRY_PRODUCTION`/`TECH_Disable`/
+  `STATE_GAME_DONE`/`DIFF_THINKER`/`RSC_MINERAL`/`GrowthPopBoom`, the last
+  hand-transcribed since `main.h` is windows.h-blocked, same as
+  `MaxEnemyRange`) plus one Faction cdef field (`hurry_cost_total`, same
+  "silently padded until named" gap `ODP_deployed` had). Classification:
+  Class 3 via a new `lua_ai_command_hook_base(name, out, base_id)` (not a
+  reuse of `lua_ai_command_hook` — that one's error-after-mutation
+  recovery calls `mod_veh_skip(veh_id)` unconditionally, which would
+  corrupt an unrelated vehicle if a `base_id` flowed through it; the new
+  variant's recovery is just "report handled, result 1", since there's no
+  per-base "skip" action the way a vehicle can be skipped). Hooked at the
+  *very top* of the C++ function (unlike `former_plans`/`land_raise_plan`/
+  `invasion_plan`'s call-site hooks) — the two "delegate to the vanilla
+  `base_hurry()`" branches are part of what Lua replicates, not a C++-side
+  gate kept in front of the hook, so `conf.base_hurry`/
+  `conf.manage_player_bases` needed their own trivial accessors rather
+  than being resolved before the hook fires.
 - **`design_units`** — the heavy one, and the only one of the four with
   no existing dependency overlap with `select_build`'s prior work: needs
   12 new host functions (`best_weapon`/`best_armor`/`has_chassis`/
@@ -869,7 +886,7 @@ loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
 principle as Movement's own staging): `former_plans` → `mod_base_hurry`
 → `design_units`, with `plans_upkeep` most likely **not** ported
 (re-examine only if implementation finds a real decision this survey
-missed). `former_plans` done (above); `mod_base_hurry`/`design_units`
+missed). `former_plans`/`mod_base_hurry` done (above); `design_units`
 not yet started. All three build-verified only until the maintainer runs
 a live session at the end (user's own testing plan for this batch).
 
