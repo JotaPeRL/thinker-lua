@@ -768,10 +768,103 @@ either). Two bugs surfaced indirectly while chasing this:
 
 **Resume point:** Movement is done except live-exercising `nuclear_move`
 itself, which needs a game where some faction actually researches and
-uses planet busters — not yet reproduced on demand. Porting-order item 5
-(`probe.cpp` AI decisions, not started) or item 3's unsurveyed functions
-(`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`,
-deprioritized 2026-07-20) are the remaining porting-order items.
+uses planet busters — not yet reproduced on demand. Item 3's remaining
+functions are now surveyed (4.18 below, user chose this over item 5
+`probe.cpp` on 2026-07-28) — that survey is the next resume point.
+
+### 4.18 Item 3's remaining scope — survey (`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`)
+
+Survey only, done 2026-07-28 before writing any code (user request: read
+and detail all four before porting). Real sizes: `former_plans`
+(`plan.cpp:448-467`) ~20 loc, `mod_base_hurry` (`build.cpp:42-215`) ~174
+loc, `plans_upkeep` (`plan.cpp:469-629`) ~161 loc, `design_units`
+(`plan.cpp:140-359`) ~220 loc.
+
+- **`plans_upkeep` — likely not a porting target at all.** Read start to
+  finish, it contains no independent AI decision of its own: it's a
+  per-faction tally pass (military-strength sums, land/sea/air/probe/
+  missile unit counts, contacted/enemy-faction counts, percentile-based
+  `project_limit`/`median_limit`/`energy_limit`/`satellite_goal` derived
+  from sorted per-base vectors) that produces the summary statistics
+  `mod_base_hurry`/`design_units`/`select_build` already consume via
+  `plans[]` (`p->enemy_factions`, `p->median_limit`, etc.). Its only two
+  calls with any decision content are `update_main_region` (already
+  ported, stage 7D) and `former_plans` (below) — both already handled
+  elsewhere. This is the same shape as `move_upkeep`'s own map/unit/base
+  sweep, which Phase 4.3 already decided stays C++ as fact computation,
+  not AI policy. Recommendation: don't port `plans_upkeep` itself; Lua
+  code that needs its outputs reads the resulting `plans[]`/`Faction`
+  fields via FFI, same as it already does for fields `move_upkeep`
+  computes. Revisit only if a real decision is found on closer reading
+  during implementation.
+- **`former_plans`** — tiny: reads `has_tech`/`has_terra`/`has_project`
+  (all already exposed) plus `fungus_yield(faction_id, RES_NONE)`
+  (`map.cpp:1505`, not yet exposed — a small pure formula over 5
+  `Faction` fields, of which only `SE_planet_pending` is currently named
+  in `types.lua`; `tech_fungus_nutrient`/`_mineral`/`_energy`/
+  `SE_economy_pending` would need `FIELD()` entries added to
+  `gen_ffi.cpp` the same way `ODP_deployed` just was — or `fungus_yield`
+  stays an opaque host wrapper instead, avoiding new cdef surface
+  entirely; call it once with the actual engine function rather than
+  reimplementing the `ManifoldHarmonicsBonus[][3]` lookup table in Lua).
+  Writes 3 `plans[]` fields (`keep_fungus`, `plant_fungus`,
+  `build_tubes`) that already have *getters* (read by `move.lua`) but no
+  *setters* — needs 3 new setters, same shape as stage 7A's 9 `AIPlans`
+  setters. Classification: transactional/Class 2 is plausible (3 scalar
+  writes, no broader mutation), but faction-level Class 3 via
+  `lua_ai_command_hook_faction` (already built, stage 7B) also fits and
+  needs no new hook shape — decide when implementing.
+- **`mod_base_hurry`** — cheaper than its size suggests: nearly every
+  helper it calls is *already ported* from `select_build`'s own work —
+  `governor_priorities`/`facility_score` (Class 1, already hooked),
+  `check_retool`/`proto_extra_cost`/`has_retool`/`skip_facility`/
+  `base_can_riot` (all already real Lua in `build.lua`, exported via its
+  `port` table), `has_fac_built`/`defender_count`/`region_at`/
+  `base_unused_space` (already host-exposed). `item()`/
+  `drone_riots_active()`/`can_hurry_item()` are one-line `BASE` methods
+  over `state_flags`/`queue_items[0]` (both already-named fields) —
+  inline directly, no wrapper needed, same treatment as
+  `is_ocean(BASE*)`/`corner_market_active()` elsewhere. Genuinely new:
+  only `mineral_cost`/`hurry_cost`/`mod_cost_factor` (`base.cpp`, pricing
+  formulas — opaque tier, same as other engine cost functions) and
+  `hurry_item` itself (the mutator — `base.cpp:216`, immediately after
+  `mod_base_hurry` in the source) and `thinker_enabled`. Five new host
+  functions, same scale as `nuclear_move`'s own "only 5 new" stage.
+  Classification: it's a per-*base* decision (`*CurrentBaseID`, not a
+  faction or vehicle) that calls `hurry_item` directly rather than
+  returning a proposal for C++ to apply — leans Class 3, needing a new
+  hook shape (`lua_ai_command_hook_base(name, base_id) -> int`, mirroring
+  the existing per-vehicle/per-faction variants) unless a propose-then-
+  commit reformulation (return `{handled, mins, cost}`, let C++ call
+  `hurry_item`) is preferred to stay Class 2 like `select_build`. Real
+  design decision, not yet made — the two early branches that call the
+  *original* `base_hurry()` (human-governed without `manage_player_bases`,
+  or Thinker disabled for the faction) are the hook's own natural
+  fallback path, not something Lua needs to reach.
+- **`design_units`** — the heavy one, and the only one of the four with
+  no existing dependency overlap with `select_build`'s prior work: needs
+  12 new host functions (`best_weapon`/`best_armor`/`has_chassis`/
+  `has_ability`/`has_weapon`/`create_proto`/`veh_count`/`full_upgrade`/
+  `part_upgrade`/`retire_proto`/`mod_upgrade_cost`/`use_nerve_gas`) —
+  `best_reactor`/`need_police` are the only two already exposed
+  (the latter already real Lua in `build.lua`, exported). Two static
+  local C++ helpers (`check_disband` ~26 loc, `upgrade_value` ~34 loc)
+  need porting as real Lua alongside it — both are genuine scoring/
+  eligibility logic, not opaque mechanism. Uses a priority-queue pattern
+  twice (`score_max_queue_t`/`score_min_queue_t`) — same `table.sort`
+  treatment already established for `land_raise_plan`'s
+  `point_max_queue_t` (stage 7B), same total-order caveat to re-verify
+  for this queue's own tie-break rule. This function directly creates
+  and retires unit prototypes (`create_proto`/`retire_proto`) and
+  upgrades fielded units (`full_upgrade`/`part_upgrade`) — unambiguously
+  Class 3, per-faction, fits `lua_ai_command_hook_faction` directly (no
+  new hook shape needed, same as `land_raise_plan`/`invasion_plan`).
+
+**Recommended order** (cheapest/least-ambiguous first, same "lowest risk
+first" principle as Movement's own staging): `former_plans` → `mod_base_
+hurry` → `design_units`, with `plans_upkeep` most likely **not** ported
+(re-examine only if implementation finds a real decision this survey
+missed). Not yet started — no code written for this section.
 
 ---
 

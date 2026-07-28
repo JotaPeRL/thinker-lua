@@ -435,10 +435,13 @@ enable Lua by default on the branch → next.
    late-tier facility branches and the `Satellites` unit branch lack direct
    live-exercise evidence — not known defects, deprioritized by explicit user
    direction (2026-07-20), revisit opportunistically. **`mod_base_hurry`/
-   `plans_upkeep`/`design_units`/`former_plans` remain unsurveyed** —
-   lower priority than finishing Movement (item 4). Detail, including the
-   `FormerUnit`/`select_item` scope decision and the float-narrowing rule's
-   only live case: `IMPLEMENTATION_DETAILS.md` 4.5–4.11, 3.7.
+   `plans_upkeep`/`design_units`/`former_plans` surveyed 2026-07-28, not
+   yet ported** — `plans_upkeep` likely doesn't need a hook at all (pure
+   fact computation, same category as `move_upkeep`'s own sweep);
+   recommended order for the other three is `former_plans` → `mod_
+   base_hurry` → `design_units`. Detail: `IMPLEMENTATION_DETAILS.md` 4.18
+   (this survey), 4.5–4.11 (the `FormerUnit`/`select_item` scope decision
+   and the float-narrowing rule's only live case), 3.7.
 4. **Movement** (`move.cpp` + dispatch in `veh_turn.cpp` + `goal.cpp`): start
    with the isolated movers (`artifact_move` → `crawler_move` →
    `colony_move` → `former_move` → `trans_move`), then `combat_move` +
@@ -598,10 +601,12 @@ e. **`tools/port_drift.py` + provenance entries in `docs/LUA_PORTING.md`.**
 **Resuming after the gate:** `select_build` (Phase 4.2 item 3) is now fully
 ported, and Movement (item 4) is now fully ported and live-verified too
 (stages 0–7 confirmed; stage 8 `nuclear_move` build-verified only, still
-pending live exercise — see item 4's status above). Porting-order item 5
-(`probe.cpp` AI decisions) or item 3's unsurveyed functions (`mod_
-base_hurry`/`plans_upkeep`/`design_units`/`former_plans`) are what's next.
-Design notes worth re-reading before touching production-domain code further:
+pending live exercise — see item 4's status above). Next (user choice,
+2026-07-28, over item 5 `probe.cpp`): item 3's remaining functions
+(`mod_base_hurry`/`plans_upkeep`/`design_units`/`former_plans`), now
+surveyed — see `IMPLEMENTATION_DETAILS.md` 4.18 for scope, dependencies
+and recommended order; not yet implemented. Design notes worth
+re-reading before touching production-domain code further:
 `IMPLEMENTATION_DETAILS.md` 4.5–4.11 (RNG-hazard hook-argument threading,
 multi-block facility gating, the `FormerUnit`/`select_item` scope decision)
 and 3.7 (float-narrowing rule).
