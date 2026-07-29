@@ -934,7 +934,7 @@ a real decision surfaces later). All three ✅ done and live-verified
 `GrowthPopBoom` reference), then confirmed clean: 0 crashes, 0 shadow
 mismatches, all three exercised.
 
-### 4.19 Porting-order item 5 (`probe.cpp`) — all 3 decision fragments ported, build-verified
+### 4.19 Porting-order item 5 (`probe.cpp`) — all 3 decision fragments ported and live-verified
 
 `probe()` (`src/probe.cpp:327-1917` as of this port, ~1590 loc) is a
 single decompiled function driven entirely by `goto` (`MOV_START`/
@@ -962,10 +962,15 @@ the `!is_human(veh_fc_id)` branch:
 - `MOV_FRAME`'s AI-only sub-block (~14 loc): picks who to frame for the
   action (`prb_state`).
 
-**Status:** all three ✅ done, build-verified, not yet live-tested. This
-closes porting-order item 5's own scope — the third fragment,
-`MOV_FRAME`, needed zero new engine surface, everything it touches was
-already exposed by stages 1-2.
+**Status:** all three ✅ done and live-verified (2026-07-29, first
+exercise: a 120-turn run fired all three hooks with 0 errors, 0 shadow
+mismatches — `probe_choose_action` returned `PRB_ACTIVATE_SABOTAGE_
+VIRUS` on its first logged call, `probe_choose_sabotage`/
+`probe_choose_frame_target` both returned "no target found" on theirs,
+271 real `probe()` calls total in `debug.txt` giving all three ample
+opportunity to run). This closes porting-order item 5's own scope — the
+third fragment, `MOV_FRAME`, needed zero new engine surface, everything
+it touches was already exposed by stages 1-2.
 
 **`probe_choose_action`** (`lua/ai/probe.lua`, new module —
 `probe.cpp` → `probe.lua`, matching the established one-C++-file-per-
