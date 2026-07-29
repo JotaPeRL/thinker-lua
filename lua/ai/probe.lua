@@ -22,6 +22,8 @@ local port = {
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
         probe_choose_sabotage = { file = "src/probe.cpp", func = "probe",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        probe_choose_frame_target = { file = "src/probe.cpp", func = "probe",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
 
@@ -42,6 +44,7 @@ local idiv = cmath.idiv
 -- the tiny casts it needs.
 local ExpansionEnabled = ffi.cast("int32_t*", types.globals.ExpansionEnabled)
 local MultiplayerActive = ffi.cast("int32_t*", types.globals.MultiplayerActive)
+local RankingFactionIDUnk1 = ffi.cast("int32_t*", types.globals.RankingFactionIDUnk1)
 
 -- probe.cpp:978-1080 (MOV_CHECK) as of this port. gene_warfare_allow is
 -- threaded in as a precomputed argument (probe.cpp:419-434, shared
@@ -189,6 +192,29 @@ local function probe_choose_sabotage(veh_id, tgt_base_id, sabotage_id)
     return {sabotage_id, prb_diff}
 end
 
+-- Probe port, stage 3 (IMPLEMENTATION_DETAILS.md 4.19): MOV_FRAME's own
+-- AI-only branch (probe.cpp:1222-1235 as of this port) -- who to frame
+-- for the probe action, preferring the human faction the engine already
+-- tracks as top-ranked (RankingFactionIDUnk1) if in communication and
+-- not already at vendetta. The surrounding gate (morale/prb_diff/
+-- is_human) stays in C++, same shape as update_main_region_
+-- prioritize_naval (Movement stage 7D) -- only this decision is hooked.
+local function probe_choose_frame_target(veh_fc_id, tgt_fc_id)
+    local tgt = faction.get(tgt_fc_id)
+    for i = 1, types.counts.MaxPlayerNum - 1 do
+        if i ~= veh_fc_id and i ~= tgt_fc_id then
+            if funcs.is_human(i) and funcs.is_alive(i) ~= 0 and i == RankingFactionIDUnk1[0] then
+                if bit.band(tgt.diplo_status[i], E.DIPLO_VENDETTA) == 0
+                    and bit.band(tgt.diplo_status[i], E.DIPLO_COMMLINK) ~= 0 then
+                    return i
+                end
+            end
+        end
+    end
+    return 0
+end
+
 port.probe_choose_action = probe_choose_action
 port.probe_choose_sabotage = probe_choose_sabotage
+port.probe_choose_frame_target = probe_choose_frame_target
 return port

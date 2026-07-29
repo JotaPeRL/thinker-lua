@@ -934,7 +934,7 @@ a real decision surfaces later). All three ✅ done and live-verified
 `GrowthPopBoom` reference), then confirmed clean: 0 crashes, 0 shadow
 mismatches, all three exercised.
 
-### 4.19 Porting-order item 5 (`probe.cpp`) — survey + stage 1 (`probe_choose_action`) done, build-verified
+### 4.19 Porting-order item 5 (`probe.cpp`) — all 3 decision fragments ported, build-verified
 
 `probe()` (`src/probe.cpp:327-1917` as of this port, ~1590 loc) is a
 single decompiled function driven entirely by `goto` (`MOV_START`/
@@ -962,9 +962,10 @@ the `!is_human(veh_fc_id)` branch:
 - `MOV_FRAME`'s AI-only sub-block (~14 loc): picks who to frame for the
   action (`prb_state`).
 
-**Status:** `MOV_CHECK` (stage 1) and `MOV_SABOTAGE` (stage 2) ✅ done,
-build-verified, not yet live-tested. `MOV_FRAME` (stage 3) not yet
-started.
+**Status:** all three ✅ done, build-verified, not yet live-tested. This
+closes porting-order item 5's own scope — the third fragment,
+`MOV_FRAME`, needed zero new engine surface, everything it touches was
+already exposed by stages 1-2.
 
 **`probe_choose_action`** (`lua/ai/probe.lua`, new module —
 `probe.cpp` → `probe.lua`, matching the established one-C++-file-per-
@@ -1015,11 +1016,23 @@ check`/`veh_at`/`has_fac_built`/the four `FAC_*` facility constants).
 Hooked in place of the block's own `if (!is_human(veh_fc_id))` guard,
 untouched original body as fallback — same pattern as stage 1.
 
-**Resume point:** stage 3 (`MOV_FRAME`, `probe.cpp:1211-1224` as of this
-port, the `else if` AI branch choosing who to frame for the probe
-action) is the last of the three and also small — needs only
-`RankingFactionIDUnk1` (already added, stage-3-specific) beyond what
-stages 1-2 already exposed.
+**`probe_choose_frame_target`** (stage 3, `probe.cpp:1222-1235` as of
+this port): `(veh_fc_id, tgt_fc_id) -> prb_state` (0 = no target found,
+else the faction to blame). Unlike stages 1-2, the hook wraps only the
+decision itself, not its surrounding gate (`mod_morale_veh(...) >= 5 &&
+!prb_diff && !is_human(tgt_fc_id)`) — that stays in C++, same shape as
+`update_main_region_prioritize_naval` (Movement stage 7D), since it's
+cheap and already there. Needed zero new engine surface —
+`RankingFactionIDUnk1` was added preemptively during stage 1 for this.
+
+**Resume point:** item 5 is closed at its current scope (all three
+isolable decision fragments ported). Porting-order item 5 was the last
+item in `IMPLEMENTATION_PLAN.md`'s Phase 4.2 list — remaining project
+work is live-testing this batch, live-exercising `nuclear_move` when a
+game produces one, and any future opportunistic revisits noted
+elsewhere (deprioritized `select_build` facility branches, `mod_
+base_hurry`/`plans_upkeep`'s own still-unsurveyed-if-ever-needed
+siblings, etc.).
 
 ---
 

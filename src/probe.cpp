@@ -1220,14 +1220,28 @@ MOV_FRAME:
             ++prb_diff;
         }
     } else if (mod_morale_veh(veh_id, 1, 0) >= 5 && !prb_diff && !is_human(tgt_fc_id)) {
-        prb_state = 0;
-        for (int i = 1; i < MaxPlayerNum; i++) {
-            if (i != veh_fc_id && i != tgt_fc_id) {
-                if (is_human(i) && is_alive(i) && i == *RankingFactionIDUnk1) {
-                    if (!(tgt->diplo_status[i] & DIPLO_VENDETTA) && tgt->diplo_status[i] & DIPLO_COMMLINK) {
-                        prb_state = i;
-                        ++prb_diff;
-                        break;
+        // Probe port, stage 3 (IMPLEMENTATION_DETAILS.md 4.19): Class 1
+        // hook over the frame-target decision -- pure query (only
+        // prb_state/prb_diff locals written), same mechanism as stages
+        // 1-2. The surrounding gate (morale/prb_diff/is_human) stays in
+        // C++, same shape as update_main_region_prioritize_naval (stage
+        // 7D of Movement) -- only the decision itself is hooked.
+        int lua_prb_state;
+        if (lua_ai_hook("probe_choose_frame_target", &lua_prb_state, 1, {veh_fc_id, tgt_fc_id})) {
+            prb_state = lua_prb_state;
+            if (prb_state) {
+                ++prb_diff;
+            }
+        } else {
+            prb_state = 0;
+            for (int i = 1; i < MaxPlayerNum; i++) {
+                if (i != veh_fc_id && i != tgt_fc_id) {
+                    if (is_human(i) && is_alive(i) && i == *RankingFactionIDUnk1) {
+                        if (!(tgt->diplo_status[i] & DIPLO_VENDETTA) && tgt->diplo_status[i] & DIPLO_COMMLINK) {
+                            prb_state = i;
+                            ++prb_diff;
+                            break;
+                        }
                     }
                 }
             }

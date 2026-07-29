@@ -128,4 +128,7 @@ return {
     -- Porting-order item 5, second slice (IMPLEMENTATION_DETAILS.md
     -- 4.19): probe_choose_sabotage, same Class 1 shape as stage 1.
     probe_choose_sabotage = probe.probe_choose_sabotage,
+    -- Porting-order item 5, third and final slice (IMPLEMENTATION_
+    -- DETAILS.md 4.19): probe_choose_frame_target, same Class 1 shape.
+    probe_choose_frame_target = probe.probe_choose_frame_target,
 }
