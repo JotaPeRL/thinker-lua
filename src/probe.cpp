@@ -435,6 +435,18 @@ int __cdecl probe(int veh_id, int tgt_base_id, int tgt_veh_id, int toggle) {
     if (tgt_base_id < 0) {
         action_id = -1;
     } else if (!is_human(veh_fc_id)) {
+        // Probe port, porting-order item 5 (IMPLEMENTATION_DETAILS.md
+        // 4.19): Class 1 hook over MOV_CHECK's own action_id decision --
+        // pure query, no mutation, same lua_ai_hook mechanism as
+        // mod_tech_val/find_proto/facility_score. MOV_CHECK's own body
+        // (below) is untouched fallback.
+        int lua_action_id;
+        if (lua_ai_hook("probe_choose_action", &lua_action_id, 1,
+                {veh_id, tgt_base_id, gene_warfare_allow})) {
+            action_id = lua_action_id;
+            prb_action_check = 1;
+            goto MOV_START;
+        }
         goto MOV_CHECK;
     } else if (veh_fc_id != MapWin->cOwner || !(*VehAttackFlags & 1)) {
         action_id = Vehs[veh_id].probe_action & 7;
@@ -868,6 +880,18 @@ MOV_START:
                 NetMsg_pop(NetMsg, "MINDIMMUNITY", -5000, 0, 0);
             }
             return 0;
+        }
+        // Second entry point into MOV_CHECK's decision (the mind-control-
+        // city retry path) -- same hook, same fallback, see the first
+        // site above for the full rationale.
+        {
+            int lua_action_id;
+            if (lua_ai_hook("probe_choose_action", &lua_action_id, 1,
+                    {veh_id, tgt_base_id, gene_warfare_allow})) {
+                action_id = lua_action_id;
+                prb_action_check = 1;
+                goto MOV_START;
+            }
         }
         goto MOV_CHECK;
     }

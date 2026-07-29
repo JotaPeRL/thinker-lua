@@ -502,7 +502,16 @@ enable Lua by default on the branch → next.
    function sizes, and per-stage classification decisions:
    `IMPLEMENTATION_DETAILS.md` 4.12–4.17.
 5. **AI probe decisions** (`probe.cpp`, partial — target/action choices only;
-   resolution mechanics stay in C++). **Not started.**
+   resolution mechanics stay in C++). **🔨 in progress, 2026-07-29.**
+   `probe()` turned out to be a single ~1590-loc decompiled, goto-driven
+   function that can't be ported as a whole unit (unlike every prior
+   item) — only 3 small, genuinely isolable pure-decision fragments
+   exist inside it, everything else (roughly half the function,
+   `MOV_DEFEND` onward) is resolution mechanics/UI staying in C++. Stage
+   1 of 3 (`MOV_CHECK`'s `action_id` choice, Class 1) ✅ done,
+   build-verified. Stages 2-3 (`MOV_SABOTAGE`'s `sabotage_id` choice,
+   `MOV_FRAME`'s frame-target choice) not yet started. Detail:
+   `IMPLEMENTATION_DETAILS.md` 4.19.
 
 ### 4.3 What stays in C++ (primitives exposed via host API)
 

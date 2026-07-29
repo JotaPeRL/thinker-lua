@@ -934,6 +934,82 @@ a real decision surfaces later). All three ✅ done and live-verified
 `GrowthPopBoom` reference), then confirmed clean: 0 crashes, 0 shadow
 mismatches, all three exercised.
 
+### 4.19 Porting-order item 5 (`probe.cpp`) — survey + stage 1 (`probe_choose_action`) done, build-verified
+
+`probe()` (`src/probe.cpp:327-1917` as of this port, ~1590 loc) is a
+single decompiled function driven entirely by `goto` (`MOV_START`/
+`MOV_CHECK`/`MOV_SABOTAGE`/`MOV_FRAME`/`MOV_DEFEND`/`MOV_UPKEEP`),
+mixing AI decision, RNG success rolls, popups and state mutation line by
+line — unlike every prior porting item, it cannot be ported as a whole
+1:1 unit. Read start to finish before writing anything (user request).
+`MOV_DEFEND` onward (roughly half the function) is pure resolution
+mechanics — rolling success/failure and applying the already-decided
+action's effect, heavy UI (`NetMsg_pop`/`parse_says`/`Popup_start`) —
+zero AI decision, stays C++ untouched. The real "target/action choices"
+`IMPLEMENTATION_PLAN.md`'s own item 5 description anticipated turned out
+to be three small, genuinely isolable fragments, all reached only via
+the `!is_human(veh_fc_id)` branch:
+
+- **`MOV_CHECK`** (`probe.cpp:978-1080` as of this port, ~103 loc): picks
+  `action_id` (which of 10 `PRB_*` actions to attempt) from diplomatic
+  status, base stats, tech state. Zero engine-state mutation — every
+  write is to a function-local (`action_id`/`activate`/
+  `prb_free_leader`), so this is genuinely **Class 1** (pure query),
+  hookable via the existing generic `lua_ai_hook` mechanism (same as
+  `mod_tech_val`/`find_proto`) — no new hook shape needed, despite living
+  inside Class-3-shaped surrounding code.
+- `MOV_SABOTAGE`'s AI-only sub-block (~16 loc): picks `sabotage_id`.
+- `MOV_FRAME`'s AI-only sub-block (~14 loc): picks who to frame for the
+  action (`prb_state`).
+
+**Status:** `MOV_CHECK` (stage 1 of 3) ✅ done, build-verified, not yet
+live-tested. `MOV_SABOTAGE`/`MOV_FRAME` (stages 2-3) not yet started.
+
+**`probe_choose_action`** (`lua/ai/probe.lua`, new module —
+`probe.cpp` → `probe.lua`, matching the established one-C++-file-per-
+module convention): `(veh_id, tgt_base_id, gene_warfare_allow) ->
+action_id`. `gene_warfare_allow` is threaded in as a precomputed
+argument rather than recomputed in Lua — it's shared preamble
+(`probe.cpp:419-434`, computed before the human/AI fork, needing only
+`Tech[].flags & TFLAG_ALLOW_GENE_WARFARE`) not worth new cdef surface
+for a single boolean gate. Hooked at **both** of `MOV_CHECK`'s entry
+points — it's reentrant within one `probe()` call (a mind-control-city
+retry path re-enters via a second `goto MOV_CHECK`) — same hook call at
+each site, C++'s own `MOV_CHECK:` body is the untouched fallback either
+way.
+
+**Known dead branch, preserved faithfully:** `MOV_CHECK`'s own
+`if (prb_action_check) goto MOV_START;` (line ~1044) can never fire —
+`prb_action_check` is 0 on every entry to `MOV_CHECK` (it's only ever
+set to 1 *after* this check, both at the early-return for
+`PRB_FREE_CAPTURED_FACTION_LEADER` and at the function's own tail) —
+confirmed by tracing every path into the label. No Lua equivalent for
+this branch, matching that the original never actually takes it either.
+
+**New engine surface** (`api_version` 46→47): `mod_morale_veh`,
+`aah_ooga`, `captured_leaders` (opaque — reads the `Monuments[]`
+achievement table, fixed 7-int output array bounding `MaxPlayerNum-1`;
+the *priority choice* among results stays real Lua, only the raw list
+retrieval is opaque), `probe_activate_check` (opaque — the 21-tile
+`TableOffsetX`/`TableOffsetY` neighbor scan for a friendly combat unit,
+structural first-match fact, same tier as `has_base_sites`). 10 `PRB_*`
+action-id constants, `DIPLO_HAVE_INFILTRATOR`/`DIPLO_TRUCE`/
+`DIPLO_UNK_800`/`DIPLO_SHALL_BETRAY`/`BSTATE_RESEARCH_DATA_STOLEN`, two
+new `Faction` fields (`tech_accumulated`/`tech_cost`), one new `CRules`
+field (`tgl_probe_steal_tech`), two new global addresses
+(`ExpansionEnabled`/`RankingFactionIDUnk1`, the latter for stage 3) —
+all compiler-read from already-included headers, nothing hand-
+transcribed. `game_rand() & 1` ported as `rand.game(2) == 0`
+(`game_randv(n)` is literally `game_rand() % n` for `n>1`, confirmed by
+reading `random.cpp`, so this is exact, not approximate).
+
+**Resume point:** stages 2 (`MOV_SABOTAGE`) and 3 (`MOV_FRAME`) are
+small and mostly reuse stage 1's new surface (only `RankingFactionIDUnk1`,
+already added, is stage-3-specific) — see `probe.cpp:1082-1099`
+(`MOV_SABOTAGE`'s `if (!is_human(veh_fc_id))` block) and
+`probe.cpp:1211-1224` (`MOV_FRAME`'s `else if` AI branch) as of this port
+for their exact current line ranges.
+
 ---
 
 ## Phase 5 — validation

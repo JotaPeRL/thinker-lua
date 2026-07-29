@@ -303,6 +303,9 @@ int main() {
         // design_units port (item 3 remainder, IMPLEMENTATION_DETAILS.md
         // 4.18): twoabl gate (has_ability up to 2 abilities per unit).
         FIELD(CRules, tech_preq_allow_2_spec_abil),
+        // Probe port, porting-order item 5 (IMPLEMENTATION_DETAILS.md
+        // 4.19): MOV_CHECK's own tech-theft gate.
+        FIELD(CRules, tgl_probe_steal_tech),
         // select_build itself, facility-branch catalog continued
         // (IMPLEMENTATION_DETAILS.md 4.10.21): the shared GOV_MAY_FORCE_
         // PSYCH gate (FAC_PUNISHMENT_SPHERE/FAC_GENEJACK_FACTORY).
@@ -391,6 +394,10 @@ int main() {
         // mod_base_hurry port (item 3 remainder, IMPLEMENTATION_DETAILS.md
         // 4.18): credits = max(0, energy_credits - hurry_cost_total).
         FIELD(Faction, hurry_cost_total),
+        // Probe port, porting-order item 5 (IMPLEMENTATION_DETAILS.md
+        // 4.19): MOV_CHECK's own captured-leader/research-progress checks.
+        FIELD(Faction, tech_accumulated),
+        FIELD(Faction, tech_cost),
         FIELD(Faction, tech_ranking),
         // select_build itself, facility-branch catalog continued
         // (IMPLEMENTATION_DETAILS.md 4.10.17): FAC_BIOLOGY_LAB's own
@@ -612,6 +619,11 @@ int main() {
     // Production/plans port, first slice (item 3, IMPLEMENTATION_DETAILS.md
     // 4.7): int* const, fixed address (src/engine.cpp).
     printf("    MultiplayerActive = 0x%08X,\n", 0x93F660);
+    // Probe port, porting-order item 5 (IMPLEMENTATION_DETAILS.md 4.19):
+    // int* const globals (src/engine.cpp), same provenance-by-comment
+    // convention as the others on this list.
+    printf("    ExpansionEnabled = 0x%08X,\n", 0x9A6488);
+    printf("    RankingFactionIDUnk1 = 0x%08X,\n", 0x9A650C);
     // select_build itself (item 3, final piece, IMPLEMENTATION_DETAILS.md
     // 4.10.1): int* const, fixed address (src/engine.cpp), same tier as
     // BaseCount above. Vehs itself is mutable/re-pointable (3.2, same
@@ -862,6 +874,24 @@ int main() {
     printf("    ABL_ID_DISSOCIATIVE_WAVE = %d,\n", ABL_ID_DISSOCIATIVE_WAVE);
     printf("    ABL_ID_SUPER_TERRAFORMER = %d,\n", ABL_ID_SUPER_TERRAFORMER);
     printf("    ABL_ID_FUNGICIDAL = %d,\n", ABL_ID_FUNGICIDAL);
+    // Probe port, porting-order item 5 (IMPLEMENTATION_DETAILS.md 4.19):
+    // ProbeAction constants (engine_veh.h) the action_id decision
+    // branches on/returns.
+    printf("    PRB_INFILTRATE_DATALINKS = %d,\n", PRB_INFILTRATE_DATALINKS);
+    printf("    PRB_PROCURE_RESEARCH_DATA = %d,\n", PRB_PROCURE_RESEARCH_DATA);
+    printf("    PRB_ACTIVATE_SABOTAGE_VIRUS = %d,\n", PRB_ACTIVATE_SABOTAGE_VIRUS);
+    printf("    PRB_DRAIN_ENERGY_RESERVES = %d,\n", PRB_DRAIN_ENERGY_RESERVES);
+    printf("    PRB_INCITE_DRONE_RIOTS = %d,\n", PRB_INCITE_DRONE_RIOTS);
+    printf("    PRB_ASSASSINATE_PROMINENT_RESEARCHERS = %d,\n", PRB_ASSASSINATE_PROMINENT_RESEARCHERS);
+    printf("    PRB_MIND_CONTROL_CITY = %d,\n", PRB_MIND_CONTROL_CITY);
+    printf("    PRB_INTRODUCE_GENETIC_PLAGUE = %d,\n", PRB_INTRODUCE_GENETIC_PLAGUE);
+    printf("    PRB_FREE_CAPTURED_FACTION_LEADER = %d,\n", PRB_FREE_CAPTURED_FACTION_LEADER);
+    printf("    PRB_MIND_CONTROL_UNIT = %d,\n", PRB_MIND_CONTROL_UNIT);
+    printf("    DIPLO_HAVE_INFILTRATOR = %d,\n", DIPLO_HAVE_INFILTRATOR);
+    printf("    BSTATE_RESEARCH_DATA_STOLEN = %d,\n", BSTATE_RESEARCH_DATA_STOLEN);
+    printf("    DIPLO_TRUCE = %d,\n", DIPLO_TRUCE);
+    printf("    DIPLO_UNK_800 = %d,\n", DIPLO_UNK_800);
+    printf("    DIPLO_SHALL_BETRAY = %d,\n", DIPLO_SHALL_BETRAY);
     printf("    DIFF_SPECIALIST = %d,\n", DIFF_SPECIALIST);
     printf("    PLAN_NAVAL_SUPERIORITY = %d,\n", PLAN_NAVAL_SUPERIORITY);
     printf("    PLAN_RECON = %d,\n", PLAN_RECON);

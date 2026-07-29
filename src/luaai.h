@@ -874,6 +874,11 @@ struct LuaHostApi {
     void (*full_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
     void (*part_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
     void (*retire_proto)(int32_t unit_id, int32_t faction_id);
+    // Probe port, porting-order item 5 (IMPLEMENTATION_DETAILS.md 4.19).
+    int32_t (*mod_morale_veh)(int32_t veh_id, int32_t check_drone_riot, int32_t faction_id_vs_native);
+    int32_t (*aah_ooga)(int32_t faction_id, int32_t pact_faction_id);
+    int32_t (*captured_leaders)(int32_t faction_id, int32_t* out_ids);
+    int32_t (*probe_activate_check)(int32_t tgt_base_id, int32_t veh_fc_id);
 };
 
 // Movement port, stage 0 (IMPLEMENTATION_DETAILS.md 4.12): Class 3

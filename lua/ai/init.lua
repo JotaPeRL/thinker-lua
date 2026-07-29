@@ -7,6 +7,7 @@ local war = dofile("lua/ai/war.lua")
 local build = dofile("lua/ai/build.lua")
 local move = dofile("lua/ai/move.lua")
 local plan = dofile("lua/ai/plan.lua")
+local probe = dofile("lua/ai/probe.lua")
 -- Not an AI module -- the autoplay determinism harness's per-turn state
 -- hash (IMPLEMENTATION_PLAN.md "Consolidation gate" item a). Registered
 -- here anyway because register_hooks() only reads this one table; see
@@ -119,4 +120,9 @@ return {
     -- -- hooked inside the function's own body (two call sites in
     -- faction.cpp), not at either call site.
     design_units = plan.design_units,
+    -- Porting-order item 5, first slice (IMPLEMENTATION_DETAILS.md 4.19):
+    -- probe_choose_action, Class 1 (pure query) like mod_tech_val/
+    -- find_proto -- MOV_CHECK's action_id decision has zero engine-state
+    -- mutation.
+    probe_choose_action = probe.probe_choose_action,
 }

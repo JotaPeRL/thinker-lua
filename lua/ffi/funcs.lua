@@ -337,10 +337,14 @@ typedef struct {
     void (*full_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
     void (*part_upgrade)(int32_t faction_id, int32_t new_unit_id, int32_t old_unit_id);
     void (*retire_proto)(int32_t unit_id, int32_t faction_id);
+    int32_t (*mod_morale_veh)(int32_t veh_id, int32_t check_drone_riot, int32_t faction_id_vs_native);
+    int32_t (*aah_ooga)(int32_t faction_id, int32_t pact_faction_id);
+    int32_t (*captured_leaders)(int32_t faction_id, int32_t* out_ids);
+    int32_t (*probe_activate_check)(int32_t tgt_base_id, int32_t veh_fc_id);
 } LuaHostApi;
 ]]
 
-local HOST_API_VERSION = 46
+local HOST_API_VERSION = 47
 
 local api = ffi.cast("LuaHostApi*", __host_api_ptr)
 assert(api.api_version == HOST_API_VERSION, string.format(
@@ -629,6 +633,14 @@ return {
         api.part_upgrade(faction_id, new_unit_id, old_unit_id)
     end,
     retire_proto = function(unit_id, faction_id) api.retire_proto(unit_id, faction_id) end,
+    mod_morale_veh = function(veh_id, check_drone_riot, faction_id_vs_native)
+        return api.mod_morale_veh(veh_id, check_drone_riot, faction_id_vs_native)
+    end,
+    aah_ooga = function(faction_id, pact_faction_id) return api.aah_ooga(faction_id, pact_faction_id) end,
+    captured_leaders = function(faction_id, out_ids) return api.captured_leaders(faction_id, out_ids) end,
+    probe_activate_check = function(tgt_base_id, veh_fc_id)
+        return api.probe_activate_check(tgt_base_id, veh_fc_id) ~= 0
+    end,
     tile_is_volcano_center = function(x, y) return api.tile_is_volcano_center(x, y) ~= 0 end,
     terraform_cost = function(x, y, faction_id) return api.terraform_cost(x, y, faction_id) end,
     item_yield = function(x, y, faction_id, bonus, item) return api.item_yield(x, y, faction_id, bonus, item) end,

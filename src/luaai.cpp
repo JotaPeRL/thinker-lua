@@ -1459,6 +1459,53 @@ static void host_retire_proto(int32_t unit_id, int32_t faction_id) {
     retire_proto(unit_id, faction_id);
 }
 
+// Probe port, porting-order item 5 (IMPLEMENTATION_DETAILS.md 4.19). Pure
+// queries, opaque tier -- engine facts/formulas, not AI judgment (same
+// tier as mod_upgrade_cost etc.).
+static int32_t host_mod_morale_veh(int32_t veh_id, int32_t check_drone_riot, int32_t faction_id_vs_native) {
+    return mod_morale_veh(veh_id, check_drone_riot, faction_id_vs_native);
+}
+
+static int32_t host_aah_ooga(int32_t faction_id, int32_t pact_faction_id) {
+    return aah_ooga(faction_id, pact_faction_id);
+}
+
+// captured_leaders (probe.cpp) returns std::vector<int>; MaxPlayerNum-1
+// upper-bounds the count (the loop it scans never exceeds that). Pure
+// query -- the raw data retrieval is opaque (Monuments[] internals not
+// exposed elsewhere), the priority choice among the results stays real
+// Lua in the MOV_CHECK port.
+static int32_t host_captured_leaders(int32_t faction_id, int32_t* out_ids) {
+    std::vector<int> leaders = captured_leaders(faction_id);
+    int count = (int)leaders.size();
+    for (int i = 0; i < count; i++) {
+        out_ids[i] = leaders[i];
+    }
+    return count;
+}
+
+// MOV_CHECK's own 21-tile neighbor scan (probe.cpp:987-999): first
+// friendly combat unit adjacent to the target base, structural fact (no
+// scoring among candidates), same opaque tier as has_base_sites/
+// nuclear_find_drop_tile. Whole scan stays host-side (TableOffsetX/Y,
+// wrap, on_map, stack_fix are all path.cpp/map.cpp primitives, not worth
+// re-exposing individually for this one call site).
+static int32_t host_probe_activate_check(int32_t tgt_base_id, int32_t veh_fc_id) {
+    BASE* tgt_base = &Bases[tgt_base_id];
+    for (int i = 0; i < 21; i++) {
+        int px = wrap(tgt_base->x + TableOffsetX[i]);
+        int py = tgt_base->y + TableOffsetY[i];
+        int cur_id;
+        if (on_map(px, py) && !is_ocean(mapsq(px, py))
+        && (cur_id = stack_fix(veh_at(px, py))) >= 0
+        && Vehs[cur_id].faction_id == veh_fc_id
+        && mod_stack_check(cur_id, 4, veh_fc_id, -1, -1)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // former_move port, sub-stage 2 (IMPLEMENTATION_DETAILS.md 4.13):
 // select_item's own remaining dependencies (item_yield/bonus_yield/
 // terraform_cost are real engine yield formulas, same tier as
@@ -2014,7 +2061,7 @@ int32_t* out_x, int32_t* out_y) {
 // signature exactly, so no wrapper/trampoline functions are needed
 // (see src/luaai.h for why extern "C" doesn't matter here).
 static LuaHostApi g_host_api = {
-    /* api_version          */ 46,
+    /* api_version          */ 47,
     /* rand_game            */ game_randv,
     /* rand_map             */ random_get,
     /* is_human             */ is_human,
@@ -2313,6 +2360,10 @@ static LuaHostApi g_host_api = {
     /* full_upgrade                  */ host_full_upgrade,
     /* part_upgrade                  */ host_part_upgrade,
     /* retire_proto                  */ host_retire_proto,
+    /* mod_morale_veh                */ host_mod_morale_veh,
+    /* aah_ooga                      */ host_aah_ooga,
+    /* captured_leaders              */ host_captured_leaders,
+    /* probe_activate_check          */ host_probe_activate_check,
 };
 
 static lua_State* L = NULL;
