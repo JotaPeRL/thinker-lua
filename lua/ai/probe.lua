@@ -14,10 +14,13 @@
 -- lua_ai_hook mechanism -- no new hook shape needed. Hooked at both of
 -- MOV_CHECK's two entry points (the initial `!is_human` branch and the
 -- mind-control-retry `goto MOV_CHECK`), since it's reentrant within a
--- single probe() call.
+-- single probe() call. probe_choose_sabotage re-ports MOV_SABOTAGE's own
+-- AI-only block the same way (stage 2 of 3).
 local port = {
     source = {
         probe_choose_action = { file = "src/probe.cpp", func = "probe",
+            upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
+        probe_choose_sabotage = { file = "src/probe.cpp", func = "probe",
             upstream_commit = "15418b28dc13043b75783ca3f11ce006ab67eaf4" },
     },
 }
@@ -156,5 +159,36 @@ local function probe_choose_action(veh_id, tgt_base_id, gene_warfare_allow)
     return action_id
 end
 
+-- Probe port, stage 2 (IMPLEMENTATION_DETAILS.md 4.19): MOV_SABOTAGE's
+-- own AI-only block (probe.cpp:1082-1099 as of this port). Class 1 like
+-- stage 1 -- zero engine-state mutation, only sabotage_id/prb_diff
+-- locals. sabotage_id is threaded in (not just out): on a low-morale
+-- probe, the incoming value (set by the switch statement before
+-- `goto MOV_SABOTAGE`, either 0 or 98) passes through unchanged.
+local SABOTAGE_FACILITIES = {
+    E.FAC_TACHYON_FIELD, E.FAC_PERIMETER_DEFENSE, E.FAC_CHILDREN_CRECHE, E.FAC_COMMAND_CENTER,
+}
+
+local function probe_choose_sabotage(veh_id, tgt_base_id, sabotage_id)
+    local prb_diff = 0
+    if funcs.mod_morale_veh(veh_id, 1, 0) >= 5 then
+        local b = base_api.get(tgt_base_id)
+        if funcs.mod_stack_check(funcs.veh_at(b.x, b.y), 2, 5, -1, -1) ~= 0 then
+            sabotage_id = 98
+            prb_diff = 1
+        else
+            for _, item_id in ipairs(SABOTAGE_FACILITIES) do
+                if funcs.has_fac_built(item_id, tgt_base_id) ~= 0 then
+                    sabotage_id = item_id
+                    prb_diff = 1
+                    break
+                end
+            end
+        end
+    end
+    return {sabotage_id, prb_diff}
+end
+
 port.probe_choose_action = probe_choose_action
+port.probe_choose_sabotage = probe_choose_sabotage
 return port

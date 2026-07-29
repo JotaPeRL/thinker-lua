@@ -508,9 +508,9 @@ enable Lua by default on the branch → next.
    item) — only 3 small, genuinely isolable pure-decision fragments
    exist inside it, everything else (roughly half the function,
    `MOV_DEFEND` onward) is resolution mechanics/UI staying in C++. Stage
-   1 of 3 (`MOV_CHECK`'s `action_id` choice, Class 1) ✅ done,
-   build-verified. Stages 2-3 (`MOV_SABOTAGE`'s `sabotage_id` choice,
-   `MOV_FRAME`'s frame-target choice) not yet started. Detail:
+   1 (`MOV_CHECK`'s `action_id` choice) and 2 (`MOV_SABOTAGE`'s
+   `sabotage_id` choice), both Class 1, ✅ done, build-verified. Stage 3
+   (`MOV_FRAME`'s frame-target choice) not yet started. Detail:
    `IMPLEMENTATION_DETAILS.md` 4.19.
 
 ### 4.3 What stays in C++ (primitives exposed via host API)

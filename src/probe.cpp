@@ -1081,7 +1081,18 @@ MOV_CHECK:
 
 MOV_SABOTAGE:
     if (!(is_human(veh_fc_id))) {
-        if (mod_morale_veh(veh_id, 1, 0) >= 5) {
+        // Probe port, stage 2 (IMPLEMENTATION_DETAILS.md 4.19): Class 1
+        // hook over the sabotage_id/prb_diff decision -- pure query, same
+        // mechanism as probe_choose_action (stage 1). sabotage_id is
+        // threaded in since it's read (not just written) here: on a
+        // low-morale probe, the incoming value (set by the switch
+        // statement above, 0 or 98) passes through unchanged. Untouched
+        // original body below is the fallback.
+        int lua_out[2];
+        if (lua_ai_hook("probe_choose_sabotage", lua_out, 2, {veh_id, tgt_base_id, sabotage_id})) {
+            sabotage_id = lua_out[0];
+            prb_diff = lua_out[1];
+        } else if (mod_morale_veh(veh_id, 1, 0) >= 5) {
             if (mod_stack_check(veh_at(Bases[tgt_base_id].x, Bases[tgt_base_id].y), 2, 5, -1, -1)) {
                 sabotage_id = 98;
                 prb_diff = 1;

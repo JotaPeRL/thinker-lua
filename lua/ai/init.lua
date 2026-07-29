@@ -125,4 +125,7 @@ return {
     -- find_proto -- MOV_CHECK's action_id decision has zero engine-state
     -- mutation.
     probe_choose_action = probe.probe_choose_action,
+    -- Porting-order item 5, second slice (IMPLEMENTATION_DETAILS.md
+    -- 4.19): probe_choose_sabotage, same Class 1 shape as stage 1.
+    probe_choose_sabotage = probe.probe_choose_sabotage,
 }

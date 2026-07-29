@@ -962,8 +962,9 @@ the `!is_human(veh_fc_id)` branch:
 - `MOV_FRAME`'s AI-only sub-block (~14 loc): picks who to frame for the
   action (`prb_state`).
 
-**Status:** `MOV_CHECK` (stage 1 of 3) ✅ done, build-verified, not yet
-live-tested. `MOV_SABOTAGE`/`MOV_FRAME` (stages 2-3) not yet started.
+**Status:** `MOV_CHECK` (stage 1) and `MOV_SABOTAGE` (stage 2) ✅ done,
+build-verified, not yet live-tested. `MOV_FRAME` (stage 3) not yet
+started.
 
 **`probe_choose_action`** (`lua/ai/probe.lua`, new module —
 `probe.cpp` → `probe.lua`, matching the established one-C++-file-per-
@@ -1003,12 +1004,22 @@ transcribed. `game_rand() & 1` ported as `rand.game(2) == 0`
 (`game_randv(n)` is literally `game_rand() % n` for `n>1`, confirmed by
 reading `random.cpp`, so this is exact, not approximate).
 
-**Resume point:** stages 2 (`MOV_SABOTAGE`) and 3 (`MOV_FRAME`) are
-small and mostly reuse stage 1's new surface (only `RankingFactionIDUnk1`,
-already added, is stage-3-specific) — see `probe.cpp:1082-1099`
-(`MOV_SABOTAGE`'s `if (!is_human(veh_fc_id))` block) and
-`probe.cpp:1211-1224` (`MOV_FRAME`'s `else if` AI branch) as of this port
-for their exact current line ranges.
+**`probe_choose_sabotage`** (stage 2, `probe.cpp:1082-1099` as of this
+port): `(veh_id, tgt_base_id, sabotage_id) -> {sabotage_id, prb_diff}`.
+`sabotage_id` is threaded in *and* out — on a low-morale probe (the only
+gate in this block) it passes through unchanged, matching the original
+where a local retains whatever the switch statement set it to (0 or 98)
+before `goto MOV_SABOTAGE`. Needed zero new engine surface beyond stage
+1's own additions (`mod_morale_veh`, plus already-exposed `mod_stack_
+check`/`veh_at`/`has_fac_built`/the four `FAC_*` facility constants).
+Hooked in place of the block's own `if (!is_human(veh_fc_id))` guard,
+untouched original body as fallback — same pattern as stage 1.
+
+**Resume point:** stage 3 (`MOV_FRAME`, `probe.cpp:1211-1224` as of this
+port, the `else if` AI branch choosing who to frame for the probe
+action) is the last of the three and also small — needs only
+`RankingFactionIDUnk1` (already added, stage-3-specific) beyond what
+stages 1-2 already exposed.
 
 ---
 

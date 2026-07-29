@@ -60,6 +60,7 @@ are irrelevant to the port.
 | Production/plans, item 3 remainder | `lua/ai/build.lua` | `mod_base_hurry` | `src/build.cpp` | `15418b28` |
 | Production/plans, item 3 remainder | `lua/ai/plan.lua` | `design_units` | `src/plan.cpp` | `15418b28` |
 | AI probe decisions, stage 1 of 3 | `lua/ai/probe.lua` | `probe_choose_action` | `src/probe.cpp` | `15418b28` |
+| AI probe decisions, stage 2 of 3 | `lua/ai/probe.lua` | `probe_choose_sabotage` | `src/probe.cpp` | `15418b28` |
 
 This table is a curated human-readable index, not the source of truth —
 that's the `port.source` tables in the Lua files themselves, which is
