@@ -1241,16 +1241,32 @@ launches, same convention as `golden_traces.jsonl`** — unlike `lua.log`/
 between comparison runs or two sessions' numbers will land in the same
 file back to back (still readable, just not auto-separated).
 
-**How to measure the C++ baseline:** deploy a build, add `perf_trace=1`
-to `thinker.ini`, run an autoplay session with `lua_ai=0` for N turns on
-a fixed save — this *is* the C++ baseline, since `lua_ai=0` runs the
-original, unhooked code path throughout. Delete/rename `perf_trace.log`,
-set `lua_ai=1` (or remove the line, same default), repeat on the same
-save/seed/turn count. Compare the two logs' per-phase totals (sum across
-turns, or eyeball the per-turn trend as the game grows). No tooling
-exists yet to auto-diff the two logs — a small script would be
-reasonable follow-up work once a first real baseline exists to validate
-the format against.
+**How to measure the C++ baseline — `tools/perf_run.sh` (2026-07-29):**
+a sibling of `tools/autoplay_run.sh` (deliberately not sharing code with
+it — see the script's own header comment), same deploy → force-ini →
+launch-under-autoplay → watch-`lua.log`-for-turn-progress → kill →
+collect-artifacts shape, adapted for this one comparison:
+
+```sh
+tools/perf_run.sh --mode cpp --turns 100 --no-xvfb   # conf.lua_ai=0, the baseline
+tools/perf_run.sh --mode lua --turns 100 --no-xvfb   # conf.lua_ai=1
+```
+
+Forces `perf_trace=1`/`autoplay=1`/`minimal_popups=1`/`lua_ai=<mode>`/
+`lua_shadow=0` in `thinker.ini` for the run's duration (restored after,
+same trap-based restore as `autoplay_run.sh`) — `lua_shadow` is forced
+off explicitly, not just left at its template default, because shadow
+mode calls into Lua on *every* hooked call purely for comparison even
+when `lua_ai=0`, which would put Lua overhead into the very run meant to
+measure its absence. Deletes any stale `perf_trace.log` before
+launching (append-mode, see above — a leftover file would silently mix a
+previous run's numbers into this one) and copies the fresh one into
+`runs/<timestamp>-perf-<mode>-<preset>/` when the run ends. `--rng-seed`
+(same flag as `autoplay_run.sh`) is recommended so both `--mode` runs
+start from identical RNG draws before the two AIs' own decisions
+necessarily diverge. No tooling exists yet to auto-diff the two
+resulting logs — reasonable follow-up once a first real baseline exists
+to validate the format against.
 
 **Not yet done:** an actual baseline run (this section documents the
 tool, not a result). `jit.p`/`jit.v`/`jit.dump` trace-abort watching
