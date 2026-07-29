@@ -1244,8 +1244,22 @@ file back to back (still readable, just not auto-separated).
 **How to measure the C++ baseline — `tools/perf_run.sh` (2026-07-29):**
 a sibling of `tools/autoplay_run.sh` (deliberately not sharing code with
 it — see the script's own header comment), same deploy → force-ini →
-launch-under-autoplay → watch-`lua.log`-for-turn-progress → kill →
-collect-artifacts shape, adapted for this one comparison:
+launch-under-autoplay → watch-for-turn-progress → kill →
+collect-artifacts shape, adapted for this one comparison. **Bug found
+live-testing the first version:** it initially watched `lua.log`'s
+`state_hash` line for progress, same as `autoplay_run.sh` — but that
+line is dispatched through the same `lua_ai_hook` mechanism as any other
+hook, so it never fires at all when `lua_ai=0` (`--mode cpp`): Lua
+doesn't even initialize, `lua.log` stays completely empty for the whole
+run, and the watchdog saw zero progress despite the game actually
+running fine underneath (confirmed via `debug.txt`: 68 real
+`turn_upkeep` lines, popups being dismissed correctly by the existing
+autoplay shims). Fixed by switching to `debug.txt`'s own `turn_upkeep N`
+line (`src/game.cpp`'s `mod_turn_upkeep`, unconditional on both
+`conf.lua_ai` and `conf.autoplay`) — this also means **only `--preset
+debug` is supported** (rejected up front for `develop`, since `debug()`
+compiles out entirely there, leaving no progress signal at all for
+`--mode cpp`).
 
 ```sh
 tools/perf_run.sh --mode cpp --turns 100 --no-xvfb   # conf.lua_ai=0, the baseline

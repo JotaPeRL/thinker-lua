@@ -25,8 +25,17 @@
 #                             port (what a normal game runs). cpp =
 #                             conf.lua_ai=0, the original C++ AI -- this IS
 #                             the performance baseline.
-#   --preset develop|debug   Build to deploy (default: debug -- needed for
-#                             debug.txt if the run crashes).
+#   --preset debug           Only debug is supported (default, and the only
+#                             accepted value) -- this script's watchdog
+#                             tracks turn progress via debug.txt's own
+#                             unconditional "turn_upkeep N" line, since
+#                             lua.log's "state_hash" line (what
+#                             autoplay_run.sh watches) only appears when
+#                             lua_ai=1 -- useless for --mode cpp, where Lua
+#                             never even initializes. debug() is compiled
+#                             out entirely outside debug builds, so
+#                             --preset develop has no progress signal at
+#                             all and is rejected up front.
 #   --turns N                Stop after this many completed turns (default: 100).
 #   --timeout SECONDS        Stall timeout: no new turn within this many
 #                             seconds classifies the run as STALL and kills
@@ -95,8 +104,16 @@ case "$MODE" in
 esac
 
 case "$PRESET" in
-    develop|debug) ;;
-    *) echo "error: --preset must be develop or debug, got: $PRESET" >&2; exit 1 ;;
+    debug) ;;
+    develop)
+        echo "error: --preset develop has no turn-progress signal for --mode cpp" >&2
+        echo "  (debug() -- this script's own progress watchdog -- is compiled out" >&2
+        echo "  entirely outside debug builds, and lua.log's state_hash line only" >&2
+        echo "  appears when lua_ai=1, so a cpp+develop run can never be tracked)." >&2
+        echo "  Use --preset debug (the default)." >&2
+        exit 1
+        ;;
+    *) echo "error: --preset must be debug, got: $PRESET" >&2; exit 1 ;;
 esac
 
 BUILD_DIR="$ROOT/build/$PRESET"
@@ -210,7 +227,16 @@ game_alive() {
     return 1
 }
 
-LUA_LOG="$GAME_DIR/lua.log"
+# debug.txt's own "turn_upkeep N" line (src/game.cpp's mod_turn_upkeep,
+# unconditional -- not gated on conf.lua_ai or conf.autoplay), NOT
+# lua.log's "state_hash" line that autoplay_run.sh watches -- state_hash
+# is dispatched through the same lua_ai_hook mechanism as any other hook,
+# so it never fires at all when lua_ai=0 (Lua doesn't even initialize --
+# lua.log stays completely empty for the whole run). turn_upkeep logs
+# (*CurrentTurn)+1 (the turn about to start), so subtract 1 to match
+# state_hash's/perf_trace's own "turn that just completed" numbering.
+DEBUG_TXT="$GAME_DIR/debug.txt"
+LUA_LOG="$GAME_DIR/lua.log" # only for the artifact copy below, not the watchdog
 LAST_TURN=""
 LAST_PROGRESS="$(date +%s)"
 OUTCOME=""
@@ -227,8 +253,9 @@ while true; do
     fi
 
     CUR_TURN=""
-    if [ -f "$LUA_LOG" ]; then
-        CUR_TURN="$(grep -oP 'state_hash turn=\K[0-9]+' "$LUA_LOG" 2>/dev/null | tail -1)"
+    if [ -f "$DEBUG_TXT" ]; then
+        RAW_TURN="$(grep -oP 'turn_upkeep \K[0-9]+' "$DEBUG_TXT" 2>/dev/null | tail -1)"
+        [ -n "$RAW_TURN" ] && CUR_TURN=$((RAW_TURN - 1))
     fi
     if [ -n "$CUR_TURN" ] && [ "$CUR_TURN" != "$LAST_TURN" ]; then
         LAST_TURN="$CUR_TURN"
