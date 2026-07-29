@@ -760,13 +760,15 @@ and `lua_ai=0` vs `lua_ai=1` (port fidelity, valid while the port is 1:1).
 
 ### 5.4 Performance
 
-**Not yet built** — no C++ baseline has been measured. Plan:
+**Instrumentation ✅ built (2026-07-29); baseline not yet measured.**
+`src/perf_trace.h`/`.cpp` (`conf.perf_trace`, off by default, zero
+overhead when unset) times four phases per turn — production,
+movement-planning, movement-dispatch (the per-vehicle Class 3 movers,
+expected heaviest), base-upkeep — to `perf_trace.log`. Compare two
+autoplay runs on the same save/seed/turn count with `lua_ai=0` (C++
+baseline) vs `lua_ai=1` (Lua). Detail and exact run instructions:
+`IMPLEMENTATION_DETAILS.md` 5.4.
 
-- Instrument time per turn phase (upkeep, production, movement) per faction.
-  **Measure the C++ baseline now that Movement (the largest, most
-  performance-sensitive porting-order item) is fully ported** — this was
-  deferred until the whole mass of Class 3 movers existed to measure
-  against.
 - Budget: Lua AI turn ≤ 1.5x C++ on huge maps with 7 factions late-game (real
   target: imperceptible).
 - Tools: `jit.p` profiler embeddable via script; `jit.v`/`jit.dump` in dev

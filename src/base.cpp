@@ -4044,6 +4044,9 @@ For the most part this follows the original logic flow as closely
 as possible except when noted by comments or config options.
 */
 int __cdecl mod_base_upkeep(int base_id) {
+    // Phase 5.4 performance baseline (IMPLEMENTATION_PLAN.md): per-base
+    // production upkeep. No-op unless conf.perf_trace is set.
+    PerfScope _perf(PERF_BASE_UPKEEP);
     BASE* base = &Bases[base_id];
     Faction* f = &Factions[base->faction_id];
     int faction_id = base->faction_id;

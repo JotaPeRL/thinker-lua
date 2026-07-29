@@ -1210,12 +1210,54 @@ existed (it's strictly stronger evidence of port fidelity).
 
 ### 5.4 Performance instrumentation
 
-Not yet built. Plan: wrap AI phases in `mod_turn_upkeep`/`move_upkeep`/
-production loops with `GetTickCount()` deltas per faction per turn (debug
-builds); baseline the C++ numbers before any further movement work if
-performance becomes a concern; `jit.p`/`jit.v`/`jit.dump` to watch for trace
-aborts from host-API calls inside hot loops (batch queries / hoist the C
-call / move loop-body data to FFI reads if this appears).
+**Status: ✅ built (2026-07-29), baseline not yet measured.** `src/
+perf_trace.h`/`.cpp`: a `PerfScope` RAII timer (`std::chrono::high_
+resolution_clock`, not `GetTickCount()` — no precision need to justify a
+Windows-only call, and this keeps the file trivially portable) accumulates
+wall-clock time per turn into four buckets, roughly matching the plan's
+own "upkeep, production, movement" language:
+
+- `PERF_PRODUCTION` — `mod_production_phase`, per faction (`game.cpp`'s
+  `mod_faction_upkeep`).
+- `PERF_MOVEMENT_PLAN` — `move_upkeep`, per faction (same call site) —
+  `land_raise_plan`/`invasion_plan`/`update_main_region`, *not* the
+  per-vehicle movers.
+- `PERF_MOVEMENT_DISPATCH` — the whole of `mod_enemy_turn`
+  (`veh_turn.cpp`), per faction — the actual per-vehicle Class 3 movers
+  (`combat_move`/`colony_move`/etc.), expected to be the heaviest bucket.
+- `PERF_BASE_UPKEEP` — the whole of `mod_base_upkeep` (`base.cpp`), per
+  base.
+
+Gated on `conf.perf_trace` (new `thinker.ini` option, unlisted/
+undocumented tier same as `conf.golden_trace` — a deliberate benchmark
+switch, not a player setting): 0 = zero overhead, `PerfScope` skips the
+clock read entirely, not just the accumulation. One line appended to
+`perf_trace.log` per turn from `mod_turn_upkeep` (same "fires before
+this turn's processing, reports the turn that just completed" timing as
+the existing `turn_state_hash` call right next to it), then all four
+accumulators reset. **`perf_trace.log` is append-mode across process
+launches, same convention as `golden_traces.jsonl`** — unlike `lua.log`/
+`debug.txt`, it does *not* truncate on launch, so delete or rename it
+between comparison runs or two sessions' numbers will land in the same
+file back to back (still readable, just not auto-separated).
+
+**How to measure the C++ baseline:** deploy a build, add `perf_trace=1`
+to `thinker.ini`, run an autoplay session with `lua_ai=0` for N turns on
+a fixed save — this *is* the C++ baseline, since `lua_ai=0` runs the
+original, unhooked code path throughout. Delete/rename `perf_trace.log`,
+set `lua_ai=1` (or remove the line, same default), repeat on the same
+save/seed/turn count. Compare the two logs' per-phase totals (sum across
+turns, or eyeball the per-turn trend as the game grows). No tooling
+exists yet to auto-diff the two logs — a small script would be
+reasonable follow-up work once a first real baseline exists to validate
+the format against.
+
+**Not yet done:** an actual baseline run (this section documents the
+tool, not a result). `jit.p`/`jit.v`/`jit.dump` trace-abort watching
+(the known LuaJIT failure mode for host-API calls inside hot loops —
+batch queries / hoist the C call / move loop-body data to FFI reads if
+it appears) — separate from this wall-clock instrumentation, not
+started.
 
 ---
 

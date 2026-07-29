@@ -1019,6 +1019,11 @@ void __cdecl mod_turn_upkeep() {
     // build.cpp's vehicle_counts_check seam.
     int lua_state_hash_dummy;
     lua_ai_hook("turn_state_hash", &lua_state_hash_dummy, 1, {*CurrentTurn});
+    // Phase 5.4 performance baseline (IMPLEMENTATION_PLAN.md): same
+    // "fires before this turn's own processing, reports the turn that
+    // just completed" timing as turn_state_hash above. No-op unless
+    // conf.perf_trace is set.
+    perf_trace_log_turn(*CurrentTurn);
     debug("turn_upkeep %d bases: %d vehs: %d\n", (*CurrentTurn)+1, *BaseCount, *VehCount);
     snprintf(ThinkerVars->build_date, 12, MOD_DATE);
     if (*CurrentTurn == 0) {
@@ -1604,7 +1609,12 @@ void __cdecl mod_faction_upkeep(int faction_id) {
     do_all_non_input();
     mod_repair_phase(faction_id);
     do_all_non_input();
-    mod_production_phase(faction_id);
+    {
+        // Phase 5.4 performance baseline (IMPLEMENTATION_PLAN.md):
+        // src/perf_trace.h, no-op unless conf.perf_trace is set.
+        PerfScope _perf(PERF_PRODUCTION);
+        mod_production_phase(faction_id);
+    }
     do_all_non_input();
     if (full_game_turn()) {
         allocate_energy(faction_id);
@@ -1621,7 +1631,11 @@ void __cdecl mod_faction_upkeep(int faction_id) {
         */
         mod_social_ai(faction_id, -1, -1, -1, -1, 0);
         probe_upkeep(faction_id);
-        move_upkeep(faction_id, UM_Full);
+        {
+            // Phase 5.4 performance baseline (IMPLEMENTATION_PLAN.md).
+            PerfScope _perf(PERF_MOVEMENT_PLAN);
+            move_upkeep(faction_id, UM_Full);
+        }
         do_all_non_input();
 
         if (!is_human(faction_id) && *GameRules & RULES_VICTORY_ECONOMIC

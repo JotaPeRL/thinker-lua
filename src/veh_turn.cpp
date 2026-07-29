@@ -3,6 +3,11 @@
 #include "luaai.h"
 
 void __cdecl mod_enemy_turn(int faction_id) {
+    // Phase 5.4 performance baseline (IMPLEMENTATION_PLAN.md): the
+    // per-vehicle Class 3 mover dispatch below is the heaviest bucket.
+    // No-op unless conf.perf_trace is set; destructor fires at function
+    // exit, covering the whole body.
+    PerfScope _perf(PERF_MOVEMENT_DISPATCH);
     debug("enemy_turn %d %d\n", *CurrentTurn, faction_id);
     // Phase 5.3.5 determinism diagnostics, gated on conf.autoplay (noisy --
     // once per faction per turn, not for normal play): running draw counts
