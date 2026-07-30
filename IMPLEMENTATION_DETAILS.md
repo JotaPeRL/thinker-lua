@@ -1282,8 +1282,51 @@ necessarily diverge. No tooling exists yet to auto-diff the two
 resulting logs — reasonable follow-up once a first real baseline exists
 to validate the format against.
 
-**Not yet done:** an actual baseline run (this section documents the
-tool, not a result). `jit.p`/`jit.v`/`jit.dump` trace-abort watching
+**First baseline (2026-07-30), one `--mode cpp` + one `--mode lua` run,
+100 turns each, no `--rng-seed` (so the two games diverge on their own
+merits from turn 1 — see caveat below), both clean (0 crashes, 0 shadow
+mismatches):**
+
+| Phase | C++ total | Lua total | Lua/C++ |
+|---|---|---|---|
+| `production_ms` | 13.2s | 17.7s | 1.34× |
+| `movement_plan_ms` | 2.8s | 3.0s | 1.06× |
+| `movement_dispatch_ms` | 405.8s | 304.1s | 0.75× |
+| `base_upkeep_ms` | 12.6s | 17.1s | 1.36× |
+| **wall-clock total** | **434.3s** | **341.9s** | **0.79×** |
+
+**Raw totals are confounded and shouldn't be read at face value:** by
+turn 100 the two games had genuinely diverged (different AI decisions,
+not a bug) — the C++ run had 89 bases/566 vehicles, the Lua run 86
+bases/779 vehicles. `movement_dispatch` scales with vehicle count, so
+its raw total being lower for Lua despite ~38% *more* vehicles is the
+one number here that's actually informative as-is; the others need
+normalizing before comparing. Joining each phase's per-turn total
+against `debug.txt`'s own `turn_upkeep N bases: B vehs: V` line (the
+count entering the turn right after, as a proxy for that turn's
+workload) gives:
+
+- `movement_dispatch`: **14.83 ms/vehicle** (C++) vs **10.53 ms/vehicle**
+  (Lua) — Lua is genuinely faster per vehicle processed, not just
+  "keeping up" on less work. This is the most trustworthy number in this
+  first pass, since it's the phase the ported Class 3 movers actually run.
+- `production`: **2.21 ms/base** (C++) vs **3.06 ms/base** (Lua) — a
+  real per-base slowdown survives normalization here, plausibly genuine
+  Lua/host-API call overhead (`mod_production_phase` calls the
+  `select_build`/`mod_base_hurry` hooks).
+- `base_upkeep`: **2.11 ms/base** (C++) vs **2.95 ms/base** (Lua) —
+  **not attributable to Lua at all**: `mod_base_upkeep` is pure C++ in
+  both modes, never calls into Lua. The per-base difference reflects the
+  two games' bases having ended up structurally different (population,
+  facilities), i.e. state-divergence noise, not port overhead.
+
+**Follow-up for a cleaner comparison:** re-run both modes with the same
+`--rng-seed` and starting save so at least early turns are directly
+comparable before the two AIs' own decisions diverge; average over
+multiple runs rather than one-shot; consider a synthetic fixed-workload
+benchmark (same save state replayed through both `mod_enemy_turn` calls
+without letting the game actually advance) if vehicle-count confounding
+keeps being a problem. `jit.p`/`jit.v`/`jit.dump` trace-abort watching
 (the known LuaJIT failure mode for host-API calls inside hot loops —
 batch queries / hoist the C call / move loop-body data to FFI reads if
 it appears) — separate from this wall-clock instrumentation, not

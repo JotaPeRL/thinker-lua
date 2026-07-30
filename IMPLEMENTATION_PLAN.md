@@ -760,14 +760,22 @@ and `lua_ai=0` vs `lua_ai=1` (port fidelity, valid while the port is 1:1).
 
 ### 5.4 Performance
 
-**Instrumentation ✅ built (2026-07-29); baseline not yet measured.**
-`src/perf_trace.h`/`.cpp` (`conf.perf_trace`, off by default, zero
-overhead when unset) times four phases per turn — production,
-movement-planning, movement-dispatch (the per-vehicle Class 3 movers,
-expected heaviest), base-upkeep — to `perf_trace.log`. `tools/perf_run.sh
+**Instrumentation ✅ built (2026-07-29); first baseline ✅ measured
+(2026-07-30).** `src/perf_trace.h`/`.cpp` (`conf.perf_trace`, off by
+default, zero overhead when unset) times four phases per turn —
+production, movement-planning, movement-dispatch (the per-vehicle
+Class 3 movers), base-upkeep — to `perf_trace.log`. `tools/perf_run.sh
 --mode cpp|lua` (a sibling of `tools/autoplay_run.sh`) automates a
-same-save/seed/turn-count comparison run for each mode. Detail and exact
-run instructions: `IMPLEMENTATION_DETAILS.md` 5.4.
+same-turn-count comparison run for each mode. **First result (100 turns,
+one run each, no fixed seed):** the per-vehicle cost of
+`movement_dispatch` — the phase the ported Class 3 movers actually run,
+and the most trustworthy number in this pass since the two games'
+vehicle counts diverged — came out *lower* for Lua (10.5 ms/vehicle)
+than C++ (14.8 ms/vehicle). `production` showed a real ~38% per-base
+slowdown surviving normalization, plausibly genuine Lua/host-API call
+overhead. Full numbers, the normalization method, and why raw totals are
+confounded by the two games' diverging state: `IMPLEMENTATION_DETAILS.md`
+5.4.
 
 - Budget: Lua AI turn ≤ 1.5x C++ on huge maps with 7 factions late-game (real
   target: imperceptible).
