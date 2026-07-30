@@ -803,19 +803,22 @@ confounded by the two games' diverging state: `IMPLEMENTATION_DETAILS.md`
 ## Phase 6 — Documentation, packaging and DX
 
 **Status: started.** `docs/LUA_PORTING.md` created in the Consolidation gate
-(item e), kept current as each porting item closes. `docs/LUA_API.md` ✅ done
-(2026-07-30). Items 3-5 not started.
+(item e), kept current as each porting item closes. `docs/LUA_API.md`,
+`Readme.md`/`Technical.md` fork rewrite and the "Hello AI" example ✅ done
+(2026-07-30). Item 4 (packaging) not started.
 
 1. ✅ `docs/LUA_API.md`: API reference (`game`, `map`, `veh`, `base`, `path`,
    `rand`, `log`, `cmath`, `faction`, `tech`) + hook lifecycle and classes +
    project rules (RNG, `idiv`/`imod`, no `ffi` in `ai/`, ordered iteration).
 2. `docs/LUA_PORTING.md`: keep the C++ function → Lua module map, hook class
    per function, port status checklist, provenance/drift workflow current.
-3. Update the fork's `Technical.md`: Arch build, pinned LuaJIT commit and build
-   integration, cdef generator, deploy via Wine.
+3. ✅ `Readme.md` rewritten (fork banner/status/relationship to upstream, rest
+   of upstream content kept) and `Technical.md` updated: Arch build, pinned
+   LuaJIT submodule commit and build integration, cdef generator, deploy via
+   Wine, runtime config, pointers to the Lua docs.
 4. Packaging: include `lua/` in the zips (`tools/makedevzip.sh`,
    `tools/makerelzip.sh`) and in `deploy.sh`.
-5. "Hello AI" example: a minimal commented script that overrides a simple
+5. ✅ "Hello AI" example: a minimal commented script that overrides a simple
    Class-1 hook — the entry point for other modders and the fork's end product.
 
 ---

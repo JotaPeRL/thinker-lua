@@ -188,6 +188,92 @@ Two options:
    * When using the Code::Blocks presets, open the generated `.cbp` from `build/<config>/`. 
 
 
+Lua AI layer
+============
+This fork ([JotaPeRL/thinker-lua](https://github.com/JotaPeRL/thinker-lua), a
+fork of induktio/thinker) embeds LuaJIT 2.1 and ports Thinker's deterministic
+AI from C++ to Lua scripts one function at a time. See `IMPLEMENTATION_PLAN.md`
+and `IMPLEMENTATION_DETAILS.md` at the repository root for the roadmap and
+scope, and `docs/LUA_API.md`/`docs/LUA_PORTING.md` for the Lua-facing API and
+the C++ function -> Lua module map. This section only covers what's needed to
+build and run it.
+
+## LuaJIT (vendored, cross-compiled)
+
+LuaJIT is a git submodule pinned to a fixed commit (`third_party/luajit`, no
+fallback interpreter, no other Lua version supported):
+
+    git submodule update --init third_party/luajit
+
+CMake cross-compiles it as a static library (`libluajit.a`) with the same
+`i686-w64-mingw32-` toolchain as the rest of Thinker, via LuaJIT's own
+makefile (`HOST_CC=gcc -m32` is required so LuaJIT's host-side code
+generation tools, `minilua`/`buildvm`, produce 32-bit-pointer output matching
+the target). This is wired into the `thinkerlib` CMake target automatically;
+no separate step is needed beyond configuring/building a preset as usual.
+
+## `gen_ffi`: cdef generator
+
+`lua/ffi/types.lua` (LuaJIT `ffi.cdef` struct/enum/constant declarations for
+every engine type the Lua side touches) is generated, not hand-written, by
+`tools/gen_ffi.cpp` — a small native (not cross-compiled) host tool built with
+whatever `g++`/`c++` is on `PATH`, since it only needs to run on the build
+machine to emit text, not link against the game. It reads the same engine
+struct headers Thinker's own C++ uses (`engine_types.h`, `engine_enums.h`,
+etc.) and emits field offsets in insertion order; a handful of headers that
+pull in `windows.h` (`main.h`, `engine.h`, `veh_turn.h`, `move.h`, `path.h`)
+can't be included by a native host compiler, so their constants/addresses are
+hand-transcribed into `gen_ffi.cpp` instead, each with a comment citing the
+source line. `thinker.dll` re-validates every emitted offset/size against the
+actual mingw-compiled LuaJIT at game launch (`src/luaai.cpp`), so a
+generator/compiler mismatch fails loudly at startup rather than corrupting
+memory. This step also runs automatically as part of the normal CMake build
+(the `gen_ffi_types` target, a dependency of `thinkerlib`) — running
+`tools/gen_ffi.cpp` by hand is never required.
+
+## Building and running under Wine (Arch Linux dev environment)
+
+The primary day-to-day dev loop for this fork uses CMake presets and Wine
+rather than Code::Blocks on Windows:
+
+    cmake --preset ninja-develop && cmake --build --preset ninja-develop
+    cmake --preset ninja-debug   && cmake --build --preset ninja-debug
+    tools/deploy.sh develop        # or: debug -- copies artifacts into the game folder
+    WINEPREFIX=~/.wine-smac wine ~/.wine-smac/drive_c/Games/SMAC/thinker.exe -windowed
+
+There is no native Linux build of Thinker and no automated test suite for the
+Lua AI port; validation means actually running the game (under Wine, or on
+Windows) and checking `lua.log`/`debug.txt`. `debug` presets enable
+`BUILD_DEBUG` (`debug.txt` logging, the Alt+D/M/V developer shortcuts above);
+`develop`/`release` compile `debug()` out entirely, so use a `debug` preset
+when diagnosing Lua AI behavior. `tools/autoplay_run.sh` and
+`tools/perf_run.sh` automate unattended multi-turn runs (autoplay, popups
+suppressed) for regression and performance testing — see their `--help` output
+and `IMPLEMENTATION_PLAN.md`'s Phase 5 entries for how they're used.
+
+## Runtime configuration
+
+Relevant `thinker.ini` options (documented in full in `docs/thinker.ini`):
+
+* `lua_ai` (default 1): enables the embedded Lua AI runtime. Set to 0 to run
+  pure C++ AI with no Lua state created at all — the two are switchable per
+  run, not a compile-time choice.
+* `lua_shadow` (default 0): diagnostic mode that runs the Lua and C++ AI side
+  by side per hook and logs any divergence, without acting on the Lua result
+  (C++ always governs). Zero overhead when off.
+* Lua error policy: by default, a Lua AI script error is logged (deduplicated)
+  and the runtime falls back to C++ where the hook contract allows it, rather
+  than crashing the game; see `docs/thinker.ini` for the strict-mode toggle.
+
+## Writing or modifying Lua AI scripts
+
+See `docs/LUA_API.md` for the API reference (per-module functions, hook
+classes and lifecycle, determinism rules), `docs/LUA_PORTING.md` for the
+C++-function-to-Lua-module map with porting status, and
+`lua/examples/hello_ai.lua` for a minimal, heavily-commented example that
+overrides one hook end to end.
+
+
 Details for patch startup method
 ================================
 Thinker's launcher program thinker.exe requires the original terranx.exe (game version 2.0) provided

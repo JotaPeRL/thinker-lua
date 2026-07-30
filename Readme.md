@@ -1,7 +1,40 @@
 
-SMACX Thinker Mod
-=================
+Thinker Lua AI (fork of SMACX Thinker Mod)
+===========================================
 
+This is a fork of [induktio/thinker](https://github.com/induktio/thinker),
+the SMACX Thinker Mod for Sid Meier's Alpha Centauri: Alien Crossfire. The
+fork's goal is to port Thinker's deterministic single-player AI from C++ to
+Lua scripts run by an embedded LuaJIT 2.1, so that AI development (new
+strategies, tuning, experiments) can happen in Lua instead of requiring a
+full mingw C++ build/patch cycle for every change.
+
+This is **not** a gameplay-feature fork: rendering, map generation, the UI
+and the launcher stay in C++ and follow upstream unchanged. Only the AI
+decision code is being moved, one function at a time, behind a versioned
+host API — the C++ original always remains as a fallback, and the port is
+required to reproduce the original's behavior exactly before any AI
+improvement is attempted. See `IMPLEMENTATION_PLAN.md` for the phased
+roadmap and current status, `IMPLEMENTATION_DETAILS.md` for the tactical,
+code-grounded reference, and `docs/LUA_API.md`/`docs/LUA_PORTING.md` for
+the Lua-facing API and the C++-function-to-Lua-module map. `CLAUDE.md` has
+the condensed developer-facing summary of all of the above plus the build/
+conventions used day to day.
+
+**Status:** active development, not yet released as a binary. There is no
+separate download for this fork — build it from source (see
+[Technical.md](Technical.md)) and deploy it into a normal Thinker
+installation. The `lua_ai` config option (on by default) toggles between
+the Lua AI and the original C++ AI at runtime, so both remain available
+side by side while the port is in progress.
+
+Everything below this point describes the original Thinker mod this fork
+is built on, and still applies in full — the Lua AI layer changes how the
+AI is *implemented*, not what it does or how it's installed and played.
+
+
+About Thinker
+--------------
 Thinker is a remake of many game engine features for Alpha Centauri: Alien Crossfire.
 This mod improves the AI in single player while providing many gameplay enhancements.
 By patching the game to use an additional DLL, many new features can be developed in C++.
@@ -20,13 +53,15 @@ Thinker also includes changes to remove issues on Windows 11 that prevent playin
 
 [See more information](Details.md) about the features and recommended settings.
 It's strongly recommended to read Details.md since many features are added not provided by the original game.
-[Discuss here](https://github.com/induktio/thinker/discussions) about anything related to Thinker development.
-Remember also to star and watch the repository to receive notifications about new updates.
+[Discuss here](https://github.com/induktio/thinker/discussions) about anything related to Thinker development
+(that's the upstream project's own discussion board — for anything specific to this fork's Lua AI port, use
+this repository's own issues/discussions instead).
 
 
-Download
---------
-These links are the only original source to download binary releases. See also the [Changelog](Changelog.md) for useful release notes.
+Upstream downloads
+-------------------
+These links are the original Thinker project's own binary releases (C++ AI only, no Lua layer,
+since the Lua AI port lives only in this fork). See the [Changelog](Changelog.md) for release notes.
 
 * [Release versions](https://www.dropbox.com/sh/qsps5bhz8v020o9/AAAp6ioWxdo7vnG6Ity5W3o1a?dl=0&lst=)
 * [Develop builds](https://www.dropbox.com/sh/qsps5bhz8v020o9/AADv-0D0-bPq22pgoAIcDRC3a/develop?dl=0&lst=)
@@ -81,7 +116,9 @@ Other mods
 
 Compiling
 ---------
-For information on how to compile Thinker, see [Technical.md](Technical.md).
+For information on how to compile Thinker, including the Lua AI layer
+(embedded LuaJIT, the cdef generator, and the Arch Linux + Wine development
+workflow used by this fork), see [Technical.md](Technical.md).
 
 
 License
