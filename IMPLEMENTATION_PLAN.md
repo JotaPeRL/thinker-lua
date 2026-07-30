@@ -789,24 +789,26 @@ confounded by the two games' diverging state: `IMPLEMENTATION_DETAILS.md`
 ### 5.5 Compatibility
 
 - Saves: the port does not change the save format (AI state lives in engine
-  structs/`plans[]`). Validate loading vanilla and Thinker C++ saves.
+  structs/`plans[]`). Loading vanilla and Thinker C++ saves ✅ tested by the
+  user (2026-07-30), works normally.
 - Multiplayer: **not supported during the porting phase** (see Scope). The RNG
   and determinism rules avoid gratuitous divergence, but no multiplayer
   validation or script-synchronization mechanism is built now.
 - Native Windows: community smoke test before any release (Wine is the dev
-  environment, not the only target).
+  environment, not the only target) — deferred until a Windows machine is
+  available.
 
 ---
 
 ## Phase 6 — Documentation, packaging and DX
 
-**Status: not started**, except `docs/LUA_PORTING.md` (created in the
-Consolidation gate, item e — needs its module-checklist table kept current
-as Movement closes).
+**Status: started.** `docs/LUA_PORTING.md` created in the Consolidation gate
+(item e), kept current as each porting item closes. `docs/LUA_API.md` ✅ done
+(2026-07-30). Items 3-5 not started.
 
-1. `docs/LUA_API.md`: API reference (`game`, `map`, `veh`, `base`, `path`,
-   `rules`, `rand`, `log`, `cmath`) + hook lifecycle and classes + project
-   rules (RNG, `idiv`/`imod`, no `ffi` in `ai/`, ordered iteration).
+1. ✅ `docs/LUA_API.md`: API reference (`game`, `map`, `veh`, `base`, `path`,
+   `rand`, `log`, `cmath`, `faction`, `tech`) + hook lifecycle and classes +
+   project rules (RNG, `idiv`/`imod`, no `ffi` in `ai/`, ordered iteration).
 2. `docs/LUA_PORTING.md`: keep the C++ function → Lua module map, hook class
    per function, port status checklist, provenance/drift workflow current.
 3. Update the fork's `Technical.md`: Arch build, pinned LuaJIT commit and build
