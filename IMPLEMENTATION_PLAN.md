@@ -809,6 +809,13 @@ Items 1, 3, 4, 5 ✅ done (2026-07-30).
 1. ✅ `docs/LUA_API.md`: API reference (`game`, `map`, `veh`, `base`, `path`,
    `rand`, `log`, `cmath`, `faction`, `tech`) + hook lifecycle and classes +
    project rules (RNG, `idiv`/`imod`, no `ffi` in `ai/`, ordered iteration).
+   Expanded (2026-07-31) into a self-contained modder reference — added the
+   `types.lua`/`funcs.lua` catalogs, a full table of every registered hook
+   with its live-vs-shadow-only status (a fact not tabulated anywhere else:
+   items 1/2 and most of item 3's first three slices are shadow-validated
+   only, never actually driving the game yet), and a "developing or
+   extending" workflow — so this doc + `docs/LUA_PORTING.md` are sufficient
+   to work on the Lua AI without reading this plan or the details doc.
 2. `docs/LUA_PORTING.md`: keep the C++ function → Lua module map, hook class
    per function, port status checklist, provenance/drift workflow current.
 3. ✅ `Readme.md` rewritten (fork banner/status/relationship to upstream, rest
