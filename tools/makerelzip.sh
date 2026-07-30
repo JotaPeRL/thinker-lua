@@ -10,6 +10,7 @@ if [ -e "patch/thinker.dll" ]; then
     cp -f ../../patch/{thinker.exe,thinker.dll} .
     cp -f ../../{Readme,Details,Changelog}.md .
     cp -fr ../../docs/* .
+    cp -fr ../../lua .
     7z a -mx9 -sdel ../../$ZIP .
   fi
 fi
