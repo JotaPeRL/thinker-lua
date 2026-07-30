@@ -382,57 +382,88 @@ table below is a curated read of that file plus each module's own
 header comment, current as of this writing. If in doubt, `lua/ai/init.lua`
 itself is short and worth reading directly.
 
-**Live vs. shadow-only matters more than the hook-class table above lets
-on.** A hook being *registered* only means `register_hooks()` resolved it
-into the Lua registry — whether the matching C++ call site actually
-*uses* the returned value depends on which macro that call site invokes:
-`lua_ai_hook`/`lua_ai_command_hook*` mean the Lua result drives the game
-whenever `lua_ai=1`; `lua_ai_shadow_call`/`lua_ai_shadow_check` mean the
-C++ original *always* runs and Lua is only ever compared against it for
-logging, gated by `conf.lua_shadow` — the C++ side's own return value is
-what the game uses, unconditionally. **Editing a shadow-only module
-changes nothing about actual gameplay** until the C++ call site itself is
-switched over (a `src/*.cpp` change, not a Lua one) — that's the single
-most important fact to know before starting work in one of these modules.
+**"Live" has to be checked two different ways, and conflating them is a
+real trap — this table originally got it wrong for `build.lua` and had
+to be corrected.** A hook being *registered* in `init.lua` only means
+`register_hooks()` resolved it into the Lua registry. What that
+function's *own* named C++ call site does with it is one axis:
+`lua_ai_hook`/`lua_ai_command_hook*` mean that specific call site uses
+the Lua result whenever `lua_ai=1`; `lua_ai_shadow_call`/
+`lua_ai_shadow_check` mean the C++ original at that call site *always*
+runs and Lua is only ever compared against it for logging (gated by
+`conf.lua_shadow`) — the C++ return value is what the game uses there,
+unconditionally, regardless of `lua_ai`.
 
-| Module | Registered hook(s) | Class | Live or shadow-only | Domain |
+But a shadow-only-labeled Lua function can *still* drive the game today,
+through a second route: some already-live Class 2/3 hooks (`select_build`
+is the case in point) are themselves ordinary Lua code that calls other
+Lua functions directly — not through any host hook — as plain internal
+helpers. If `find_proto`/`facility_score`/`governor_priorities`/etc. are
+called *inside* `select_build`'s own Lua body (they are — verified by
+grepping `lua/ai/build.lua` for internal callers, not by trusting either
+function's own hook status), then editing them changes what
+`select_build` actually returns, and that **is** live, even though each
+of these functions *also* has its own separate, genuinely shadow-only
+named hook (used only to validate C++'s stand-alone fallback body when
+`select_build`'s hook fails or `lua_ai=0` — a parallel, secondary check,
+not the primary way these functions affect the game). Don't infer "does
+this affect gameplay" from a function's own hook-class row alone — grep
+for who actually *calls* it in Lua first.
+
+`tech.lua`, `social.lua`, and `war.lua` don't have this escape hatch:
+nothing in any live module (`build.lua`'s `select_build`, any of
+`move.lua`, `plan.lua`, `probe.lua`) calls into `mod_tech_val`/
+`mod_tech_ai`/`mod_social_ai`/`evaluate_attack` — they are genuinely
+standalone domains (research valuation, Social Engineering, "wants to
+attack"), reachable only through their own shadow-only hooks. **Editing
+those three modules changes nothing about actual gameplay** until their
+C++ call site is switched from `lua_ai_shadow_call`/`_check` to
+`lua_ai_hook` (a `src/*.cpp` change, not a Lua one).
+
+| Module | Registered hook(s) | Class | Drives gameplay today? | Domain |
 |---|---|---|---|---|
-| `lua/ai/tech.lua` | `mod_tech_val(tech_id, faction_id, simple_calc) -> value` | 1 | Shadow-only (`src/tech.cpp`) | Research valuation: how good is researching this tech right now. |
-| | `mod_tech_ai(faction_id) -> tech_id` | 1 | Shadow-only | Picks the next research target; consumes `rand.map`. |
-| `lua/ai/social.lua` | `mod_social_ai(faction_id, ...) -> proposal` | 2 | Shadow-only (`src/faction.cpp`) | Social Engineering category/model selection. |
-| `lua/ai/war.lua` | `mod_wants_to_attack(faction_id, faction_id_tgt, faction_id_unk) -> bool` | 1 | Shadow-only (`src/faction.cpp`) | Whether one faction currently wants to attack another. |
-| `lua/ai/build.lua` | `find_proto(...) -> unit_id` | 1 | Shadow-only (`src/build.cpp`) | Best matching unit prototype for a build role; consumes `rand.map(128)`. |
-| | `select_colony(...)`, `select_combat(...)` | 1 | Shadow-only | Colony/combat unit selection sub-steps of production AI. |
-| | `facility_score`/`facility_score_hook`, `governor_priorities`/`governor_priorities_hook` | 1 (typed, `out_count>1`) | Shadow-only (`src/plan.cpp`) | Facility build-priority scoring; human-governor production priorities. |
-| | `defend_unit_land_defense`, `defend_unit_explore_veh`, `combat_unit_early_return`, `build_order_item_score`, `colony_unit_branch`, `crawler_unit_branch`, `ferry_unit_branch`, `sea_probe_unit_branch`, `satellites_branch`, `secret_project_branch`, `former_unit_branch` | 1 | Shadow-only | Internal sub-steps/branches of `select_build`'s own decision (each consumes RNG independently). |
-| | **`select_build(base_id) -> item_id`** | **2** | **Live** (`src/build.cpp`) | The base production-queue decision itself — what a base builds next. First hook in the project whose Lua value actually drives the game. |
-| | **`mod_base_hurry(base_id) -> handled`** | **3** (`lua_ai_command_hook_base`) | **Live** (`src/build.cpp`) | Whether/how to spend energy reserves to rush the current production item. |
-| `lua/ai/move.lua` | **`artifact_move`, `crawler_move`, `colony_move`, `former_move`, `trans_move`, `combat_move`, `nuclear_move`** `(veh_id) -> action` | **3** (`lua_ai_command_hook`) | **Live** (`src/veh_turn.cpp` dispatch) | Per-vehicle-type movers — what a single non-human vehicle of this role does on its turn. |
-| | **`land_raise_plan`, `invasion_plan`, `update_main_region_prioritize_naval`** `(faction_id) -> void` | **3** (`lua_ai_command_hook_faction`) | **Live** (`src/move.cpp`) | Per-faction planning: where to raise land with formers, cross-region invasion planning, naval-vs-land region prioritization. |
-| `lua/ai/plan.lua` | **`former_plans`, `design_units`** `(faction_id) -> void` | **3** (`lua_ai_command_hook_faction`) | **Live** (`src/plan.cpp`/`src/faction.cpp`) | Terraforming-order planning per faction; unit prototype (re)design decisions. |
-| `lua/ai/probe.lua` | **`probe_choose_action`, `probe_choose_sabotage`, `probe_choose_frame_target`** | **1** | **Live** (`src/probe.cpp`) | Probe-team action/sabotage-target/frame-target choices — the only 3 isolable pure-decision fragments inside the much larger, otherwise-unported `probe()`. |
+| `lua/ai/tech.lua` | `mod_tech_val(tech_id, faction_id, simple_calc) -> value` | 1 | **No** — shadow-only (`src/tech.cpp`), no live caller anywhere | Research valuation: how good is researching this tech right now. |
+| | `mod_tech_ai(faction_id) -> tech_id` | 1 | **No** — shadow-only | Picks the next research target; consumes `rand.map`. |
+| `lua/ai/social.lua` | `mod_social_ai(faction_id, ...) -> proposal` | 2 | **No** — shadow-only (`src/faction.cpp`) | Social Engineering category/model selection. |
+| `lua/ai/war.lua` | `mod_wants_to_attack(faction_id, faction_id_tgt, faction_id_unk) -> bool` | 1 | **No** — shadow-only (`src/faction.cpp`) | Whether one faction currently wants to attack another. |
+| `lua/ai/build.lua` | `find_proto`, `select_colony`, `select_combat`, `facility_score`/`governor_priorities`, `defend_unit_land_defense`, `defend_unit_explore_veh`, `build_order_item_score`, `colony_unit_branch`, `crawler_unit_branch`, `ferry_unit_branch`, `sea_probe_unit_branch`, `satellites_branch`, `secret_project_branch`, `former_unit_branch` | 1 | **Yes** — each function's *own* named hook is shadow-only, but every one is also called directly from `select_build`'s own Lua body (or from a branch that is), which is live. Editing any of these changes production output today. | Production sub-decisions: unit prototype matching, colony/combat/facility scoring, per-branch (colony/crawler/ferry/sea-probe/satellite/secret-project/former) candidate selection. |
+| | `unit_score`, `find_project`, `find_missile` | — (no hook at all) | **Yes** — pure internal helpers with no C++ call site of their own (not even shadow-only), reached exclusively through `find_proto`/`secret_project_branch`, which are themselves in the live `select_build` call graph. | Unit scoring formula; secret-project/missile selection detail. |
+| | `combat_unit_early_return` | 1 | **No** — the one exception. Deliberately *not* called from `select_build`'s Lua body (inlined differently there to avoid drawing RNG twice — see the comment above `select_build`'s definition); only reachable via its own shadow-only hook. | CombatUnit branch's immediate-return half — dead in the live path. |
+| | **`select_build(base_id) -> item_id`** | **2** | **Yes** (`src/build.cpp`) | The base production-queue decision itself — what a base builds next. First hook in the project whose Lua value actually drives the game. |
+| | **`mod_base_hurry(base_id) -> handled`** | **3** (`lua_ai_command_hook_base`) | **Yes** (`src/build.cpp`) | Whether/how to spend energy reserves to rush the current production item. |
+| `lua/ai/move.lua` | **`artifact_move`, `crawler_move`, `colony_move`, `former_move`, `trans_move`, `combat_move`, `nuclear_move`** `(veh_id) -> action` | **3** (`lua_ai_command_hook`) | **Yes** (`src/veh_turn.cpp` dispatch) | Per-vehicle-type movers — what a single non-human vehicle of this role does on its turn. |
+| | **`land_raise_plan`, `invasion_plan`, `update_main_region_prioritize_naval`** `(faction_id) -> void` | **3** (`lua_ai_command_hook_faction`) | **Yes** (`src/move.cpp`) | Per-faction planning: where to raise land with formers, cross-region invasion planning, naval-vs-land region prioritization. |
+| `lua/ai/plan.lua` | **`former_plans`, `design_units`** `(faction_id) -> void` | **3** (`lua_ai_command_hook_faction`) | **Yes** (`src/plan.cpp`/`src/faction.cpp`) | Terraforming-order planning per faction; unit prototype (re)design decisions. |
+| `lua/ai/probe.lua` | **`probe_choose_action`, `probe_choose_sabotage`, `probe_choose_frame_target`** | **1** | **Yes** (`src/probe.cpp`) | Probe-team action/sabotage-target/frame-target choices — the only 3 isolable pure-decision fragments inside the much larger, otherwise-unported `probe()`. |
 | `lua/harness/state_hash.lua` | `turn_state_hash` | 1 | n/a — not an AI decision | Per-turn state-hash dump for the determinism harness (`tools/autoplay_run.sh`), not a gameplay hook. |
 
 Some modules export more local functions than are actually registered in
 `init.lua` (check each module's own `return port`/`port.*` assignments
 at its tail) — those extras are internal building blocks the registered
-hooks are built from (individually unit-testable via `dofile`, but not
-hookable on their own).
+hooks are built from (individually unit-testable via `dofile`; some are
+hookable in their own right but shadow-only in practice, as above; some
+are pure internal helpers never registered at all — e.g. `find_project`/
+`find_missile`/`unit_score` have no `init.lua` entry of their own and are
+only ever reached through `select_build`'s call graph).
 
 ## Developing or extending the Lua AI
 
-**To change behavior in an already-*live* hook** (`select_build`,
-`mod_base_hurry`, any Movement mover/planner, `former_plans`/
-`design_units`, or any of the 3 probe fragments): edit the function in
-its `lua/ai/*.lua` module directly — respect the hook's Class contract
-(no mutation in a Class 1/2 function; a Class 3 function may call
-`funcs.*` mutators freely, since there is no separate commit step to
-protect) and the determinism rules above, then test (see below). No C++
-change is needed.
+**To change behavior in something that already drives gameplay**
+(everything in the table above marked "Yes", which includes `select_build`
+itself and, through it, essentially all of `build.lua` except
+`combat_unit_early_return`; `mod_base_hurry`; every Movement mover/
+planner; `former_plans`/`design_units`; the 3 probe fragments): edit the
+function in its `lua/ai/*.lua` module directly — respect the hook's
+Class contract (no mutation in a Class 1/2 function; a Class 3 function
+may call `funcs.*` mutators freely, since there is no separate commit
+step to protect) and the determinism rules above, then test (see below).
+No C++ change is needed. Before assuming a `build.lua` function is
+inert because its own row says "shadow-only", grep who calls it inside
+`lua/ai/build.lua` first — most of them are reached from `select_build`.
 
-**To change behavior in a *shadow-only* hook** (`tech.lua`, `social.lua`,
-`war.lua`, and everything under `build.lua` except `select_build`/
-`mod_base_hurry`): a pure-Lua edit will show up as shadow-mode
+**To change behavior in something that's genuinely inert today**
+(`tech.lua`, `social.lua`, `war.lua`, and `build.lua`'s
+`combat_unit_early_return`): a pure-Lua edit will show up as shadow-mode
 divergence logging (if `conf.lua_shadow=1`) but has **no effect on actual
 gameplay** — the matching `src/*.cpp` call site still needs its
 `lua_ai_shadow_call`/`lua_ai_shadow_check` pair replaced with
