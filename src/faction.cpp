@@ -1483,36 +1483,58 @@ int __cdecl mod_social_ai(int faction_id, int a2, int a3, int a4, int a5, CSocia
     }
     debug("social_params %d %d %8s defense: %d creche: %d pop_boom: %d want_pop: %3d pop_total: %3d\n",
         *CurrentTurn, faction_id, m->filename, def_value, has_creche, pop_boom, want_pop, pop_total);
-    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b). pop_boom
-    // is final at this point and nothing has been mutated yet, so this is
-    // safe to run before C++'s own selection loop below.
-    LuaShadowCall shadow = lua_ai_shadow_call("mod_social_ai", 1, {faction_id, pop_boom ? 1 : 0});
-    int score_diff = 1 + (*CurrentTurn + 11*faction_id) % 6;
+    int score_diff = 0;
     int sf = -1;
     int sm2 = -1;
     CSocialCategory soc;
     auto pending = (CSocialCategory*)&f->SE_Politics_pending;
     auto current = (CSocialCategory*)&f->SE_Politics;
 
-    for (int i = 0; i < MaxSocialCatNum; i++) {
-        int sm1 = current->models[i];
-        int sc1 = social_score(faction_id, i, sm1, pop_boom);
-        for (int j = 0; j < MaxSocialModelNum; j++) {
-            if (j == sm1 || !society_avail(i, j, faction_id)) {
-                continue;
-            }
-            int sc2 = social_score(faction_id, i, j, pop_boom);
-            if (sc2 - sc1 > score_diff) {
-                sf = i;
-                sm2 = j;
-                score_diff = sc2 - sc1;
-                memcpy(&soc, &f->SE_Politics, sizeof(soc));
-                soc.models[sf] = sm2;
+    // Class 2 hook (IMPLEMENTATION_PLAN.md Phase 4.1): Lua proposes a
+    // packed sf*MaxSocialModelNum+sm2 category/model switch (-1 for "no
+    // change"), matching lua/ai/social.lua's mod_social_ai return
+    // encoding exactly (already written for this, not just for shadow
+    // comparison). pop_boom is final at this point and nothing has been
+    // mutated yet, so it's safe to hand off here. This side validates
+    // nothing extra beyond affordability below -- same contract as
+    // select_build, no separate commit step of its own. score_diff stays
+    // 0 (only used in the debug log below) when the proposal comes from
+    // Lua, since the packed return doesn't carry it. Falls back to the
+    // original selection loop (unchanged, previously shadow-verified
+    // with zero mismatches -- Consolidation gate item d) whenever
+    // lua_ai=0, the hook isn't registered, or the Lua call errors.
+    int prop;
+    if (lua_ai_hook("mod_social_ai", &prop, 1, {faction_id, pop_boom ? 1 : 0})) {
+        // prop is untrusted past this point (a future Lua edit could
+        // return anything) and sf/sm2 become raw array indices below, so
+        // bounds-check the unpacked pair rather than trust the encoding
+        // -- an out-of-range value is treated the same as "no change".
+        if (prop >= 0 && prop < MaxSocialCatNum * MaxSocialModelNum) {
+            sf = prop / MaxSocialModelNum;
+            sm2 = prop % MaxSocialModelNum;
+            memcpy(&soc, &f->SE_Politics, sizeof(soc));
+            soc.models[sf] = sm2;
+        }
+    } else {
+        score_diff = 1 + (*CurrentTurn + 11*faction_id) % 6;
+        for (int i = 0; i < MaxSocialCatNum; i++) {
+            int sm1 = current->models[i];
+            int sc1 = social_score(faction_id, i, sm1, pop_boom);
+            for (int j = 0; j < MaxSocialModelNum; j++) {
+                if (j == sm1 || !society_avail(i, j, faction_id)) {
+                    continue;
+                }
+                int sc2 = social_score(faction_id, i, j, pop_boom);
+                if (sc2 - sc1 > score_diff) {
+                    sf = i;
+                    sm2 = j;
+                    score_diff = sc2 - sc1;
+                    memcpy(&soc, &f->SE_Politics, sizeof(soc));
+                    soc.models[sf] = sm2;
+                }
             }
         }
     }
-    int cpp_prop = (sf >= 0) ? sf * MaxSocialModelNum + sm2 : -1;
-    lua_ai_shadow_check("mod_social_ai", shadow, &cpp_prop, 1);
     int cost;
     if (sf >= 0 && f->energy_credits > (cost = social_upheaval(faction_id, &soc))) {
         int sm1 = current->models[sf];
@@ -1715,11 +1737,16 @@ static int __cdecl evaluate_attack(int faction_id, int faction_id_tgt, int facti
 }
 
 int __cdecl mod_wants_to_attack(int faction_id, int faction_id_tgt, int faction_id_unk) {
-    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b).
-    LuaShadowCall shadow = lua_ai_shadow_call("mod_wants_to_attack", 1,
-        {faction_id, faction_id_tgt, faction_id_unk});
-    int value = evaluate_attack(faction_id, faction_id_tgt, faction_id_unk);
-    lua_ai_shadow_check("mod_wants_to_attack", shadow, &value, 1);
+    // Class 1 hook (IMPLEMENTATION_PLAN.md Phase 4.1): Lua's value is used
+    // directly whenever lua_ai=1 and the hook succeeds. Falls back to
+    // evaluate_attack (unchanged, previously shadow-verified with zero
+    // mismatches -- Consolidation gate item d) whenever lua_ai=0, the
+    // hook isn't registered, or the Lua call errors.
+    int value;
+    if (!lua_ai_hook("mod_wants_to_attack", &value, 1,
+        {faction_id, faction_id_tgt, faction_id_unk})) {
+        value = evaluate_attack(faction_id, faction_id_tgt, faction_id_unk);
+    }
 
     debug("wants_to_attack turn: %d factions: %d %d %d value: %d\n",
         *CurrentTurn, faction_id, faction_id_tgt, faction_id_unk, value);

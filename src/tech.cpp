@@ -372,20 +372,20 @@ determines whether a simplistic or extended calculation is required for technolo
 Return Value: Value of tech_id to the specified faction
 */
 int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
-    // Class 1 shadow mode (IMPLEMENTATION_PLAN.md Phase 5.1, Consolidation
-    // gate item b) -- C++ always governs; lua_shadow=1 just compares and
-    // logs. Zero overhead beyond one flag check when lua_shadow=0.
-    LuaShadowCall shadow = lua_ai_shadow_call("mod_tech_val", 1, {tech_id, faction_id, simple_calc});
-    auto report_and_return = [&](int cpp_value) -> int {
-        lua_ai_shadow_check("mod_tech_val", shadow, &cpp_value, 1);
-        return cpp_value;
-    };
+    // Class 1 hook (IMPLEMENTATION_PLAN.md Phase 4.1): Lua's value is
+    // used directly whenever lua_ai=1 and the hook succeeds. Falls back
+    // to the original body below (unchanged, previously shadow-verified
+    // with zero mismatches -- Consolidation gate item d) whenever
+    // lua_ai=0, the hook isn't registered, or the Lua call errors.
+    int value;
+    if (lua_ai_hook("mod_tech_val", &value, 1, {tech_id, faction_id, simple_calc})) {
+        return value;
+    }
     Faction* f = &Factions[faction_id];
     MFaction* m = &MFactions[faction_id];
     if (tech_id == 9999) {
-        return report_and_return(2);
+        return 2;
     }
-    int value;
     if (tech_id < MaxTechnologyNum) {
         CTech* tech = &Tech[tech_id];
         int enemy_count = 0;
@@ -434,7 +434,7 @@ int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
         }
         if (simple_calc) {
             assert(value == tech_val(tech_id, faction_id, simple_calc));
-            return report_and_return(value);
+            return value;
         }
         if (base_count) {
             for (int region = 1; region < MaxRegionLandNum; region++) {
@@ -464,7 +464,7 @@ int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
             }
         }
         if (has_tech(tech_id, faction_id)) {
-            return report_and_return(value);
+            return value;
         }
         if (climactic_battle()
         && tech_is_preq(tech_id, Facility[FAC_ASCENT_TO_TRANSCENDENCE].preq_tech, 2)) {
@@ -623,17 +623,22 @@ int __cdecl mod_tech_val(int tech_id, int faction_id, int simple_calc) {
             + u->reactor_id - 2;
         assert(value == tech_val(tech_id, faction_id, simple_calc));
     }
-    return report_and_return(value);
+    return value;
 }
 
 int __cdecl mod_tech_ai(int faction_id) {
-    // Class 1 shadow mode (Phase 5.1, Consolidation gate item b). This
-    // hook draws from the map RNG (random_get, once per available tech)
-    // via Lua's rand.map() -- lua_ai_shadow_call snapshots/restores both
-    // RNG streams around the Lua call unconditionally, so the C++ loop
-    // below always sees the RNG exactly as if the shadow call never
-    // happened, whether or not this particular hook actually consumes it.
-    LuaShadowCall shadow = lua_ai_shadow_call("mod_tech_ai", 1, {faction_id});
+    // Class 1 hook (IMPLEMENTATION_PLAN.md Phase 4.1): Lua's value is used
+    // directly whenever lua_ai=1 and the hook succeeds -- Lua's own
+    // rand.map() draws for real in that case (no RNG snapshot/restore
+    // needed here, unlike shadow mode, since there is no C++ computation
+    // left to keep in sync with once Lua's result is what's returned).
+    // Falls back to the original loop below (unchanged, previously
+    // shadow-verified with zero mismatches -- Consolidation gate item d)
+    // whenever lua_ai=0, the hook isn't registered, or the Lua call errors.
+    int lua_tech_id;
+    if (lua_ai_hook("mod_tech_ai", &lua_tech_id, 1, {faction_id})) {
+        return lua_tech_id;
+    }
     int tech_id = -1;
     int best_value = INT_MIN;
     for (int i = 0; i < MaxTechnologyNum; i++) {
@@ -644,7 +649,6 @@ int __cdecl mod_tech_ai(int faction_id) {
             if (*GameRules & RULES_BLIND_RESEARCH) {
                 if (is_human(faction_id) && i == Units[BSC_FORMERS].preq_tech
                 && (Factions[faction_id].AI_growth || Factions[faction_id].AI_wealth)) {
-                    lua_ai_shadow_check("mod_tech_ai", shadow, &i, 1);
                     return i;
                 }
                 int preq = tech_level(i, 0); // Replaces tech_recurse
@@ -658,7 +662,6 @@ int __cdecl mod_tech_ai(int faction_id) {
             }
         }
     }
-    lua_ai_shadow_check("mod_tech_ai", shadow, &tech_id, 1);
     return tech_id;
 }
 

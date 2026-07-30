@@ -337,6 +337,25 @@ counts): `DEVELOPMENT_DIARY.md`, 2026-07-14 through 2026-07-20.
   `sf*MaxSocialModelNum+sm2`, `-1` = no proposal). `pop_boom`/`hq_region`/
   `great_beelzebub`/`great_satan`/`has_agenda` kept as opaque host
   wrappers (engine mechanics, not the AI decision itself).
+  **"Closed" meant shadow-validated, not live, until 2026-07-31**: the
+  Consolidation gate below (item d) formally closed items 1/2/2b on zero
+  `lua_shadow=1` mismatches, but the C++ call sites (`mod_tech_val`/
+  `mod_tech_ai` in `tech.cpp`; `mod_social_ai`/`mod_wants_to_attack` in
+  `faction.cpp`) were never switched from `lua_ai_shadow_call`/`_check`
+  to `lua_ai_hook` — so `lua_ai=1` alone never made any of the four
+  actually decide anything; only `lua_shadow=1` even ran the Lua side,
+  purely for comparison logging. Found via a direct user question
+  ("lua_ai=1 não deveria fazer o Lua decidir?") that turned out to be
+  correct — `docs/LUA_API.md`'s hook table had documented the shadow-only
+  status accurately but nobody had gone back to flip these four to live
+  after the gate closed them. Fixed by applying `select_build`'s own
+  precedent verbatim to all four: try `lua_ai_hook` first, keep the
+  original body as the fallback, delete the now-redundant shadow
+  scaffolding. `mod_social_ai`'s unpacked `sf`/`sm2` proposal is
+  bounds-checked before use as an array index — the one place this
+  batch needed a safety check the original C++-only path never did,
+  since a hook return is an untrusted boundary in a way an internal
+  local variable isn't.
 - **4.7 `unit_score`+`find_proto`**, **4.8 `select_colony`/`select_combat`**,
   **4.9 `facility_score`/`governor_priorities`** — closed 2026-07-14/16.
   First-ever `BASE`/`VEH` FFI exposure happened here. Durable naming trap:

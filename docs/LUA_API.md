@@ -394,7 +394,7 @@ runs and Lua is only ever compared against it for logging (gated by
 `conf.lua_shadow`) — the C++ return value is what the game uses there,
 unconditionally, regardless of `lua_ai`.
 
-But a shadow-only-labeled Lua function can *still* drive the game today,
+A shadow-only-labeled Lua function can *still* drive the game today,
 through a second route: some already-live Class 2/3 hooks (`select_build`
 is the case in point) are themselves ordinary Lua code that calls other
 Lua functions directly — not through any host hook — as plain internal
@@ -410,22 +410,31 @@ not the primary way these functions affect the game). Don't infer "does
 this affect gameplay" from a function's own hook-class row alone — grep
 for who actually *calls* it in Lua first.
 
-`tech.lua`, `social.lua`, and `war.lua` don't have this escape hatch:
-nothing in any live module (`build.lua`'s `select_build`, any of
-`move.lua`, `plan.lua`, `probe.lua`) calls into `mod_tech_val`/
-`mod_tech_ai`/`mod_social_ai`/`evaluate_attack` — they are genuinely
-standalone domains (research valuation, Social Engineering, "wants to
-attack"), reachable only through their own shadow-only hooks. **Editing
-those three modules changes nothing about actual gameplay** until their
-C++ call site is switched from `lua_ai_shadow_call`/`_check` to
-`lua_ai_hook` (a `src/*.cpp` change, not a Lua one).
+**As of 2026-07-31, `mod_tech_val`/`mod_tech_ai`/`mod_social_ai`/
+`mod_wants_to_attack` were flipped from shadow-only to live** (`src/tech.cpp`,
+`src/faction.cpp`) — the Consolidation gate (2026-07-14/16) had validated
+all three modules byte-for-byte against C++ via shadow mode and formally
+"closed" them, but left the actual C++ call sites on
+`lua_ai_shadow_call`/`_check` rather than switching them to `lua_ai_hook`,
+so `lua_ai=1` never actually made them decide anything — only
+`lua_shadow=1` made them run at all, purely for comparison logging. That
+gap is why this table originally (wrongly) listed them as inert; the fix
+was a straightforward C++ change per function, following `select_build`'s
+existing pattern exactly (try `lua_ai_hook` first, fall back to the
+unchanged original body). `mod_social_ai`'s Class 2 wiring additionally
+bounds-checks the unpacked `sf`/`sm2` pair before using them as array
+indices (`src/faction.cpp`), since a hook return is an untrusted boundary
+in a way the original C++-only computation never was.
+
+The one hook that remains genuinely inert today is `combat_unit_early_return`
+(`lua/ai/build.lua`) — see its row below.
 
 | Module | Registered hook(s) | Class | Drives gameplay today? | Domain |
 |---|---|---|---|---|
-| `lua/ai/tech.lua` | `mod_tech_val(tech_id, faction_id, simple_calc) -> value` | 1 | **No** — shadow-only (`src/tech.cpp`), no live caller anywhere | Research valuation: how good is researching this tech right now. |
-| | `mod_tech_ai(faction_id) -> tech_id` | 1 | **No** — shadow-only | Picks the next research target; consumes `rand.map`. |
-| `lua/ai/social.lua` | `mod_social_ai(faction_id, ...) -> proposal` | 2 | **No** — shadow-only (`src/faction.cpp`) | Social Engineering category/model selection. |
-| `lua/ai/war.lua` | `mod_wants_to_attack(faction_id, faction_id_tgt, faction_id_unk) -> bool` | 1 | **No** — shadow-only (`src/faction.cpp`) | Whether one faction currently wants to attack another. |
+| `lua/ai/tech.lua` | `mod_tech_val(tech_id, faction_id, simple_calc) -> value` | 1 | **Yes** (`src/tech.cpp`) | Research valuation: how good is researching this tech right now. Also double-purposed to value a rival faction (`tech_id` encodes a faction id) and a unit prototype (`tech_id` encodes a proto id) — see the three branches in the function body. |
+| | `mod_tech_ai(faction_id) -> tech_id` | 1 | **Yes** | Picks the next research target; consumes `rand.map`. |
+| `lua/ai/social.lua` | `mod_social_ai(faction_id, pop_boom) -> packed_proposal` | 2 | **Yes** (`src/faction.cpp`) | Social Engineering category/model selection. `pop_boom`/affordability/the actual apply step stay in C++ (Class 2 contract); Lua only proposes `sf*MaxSocialModelNum+sm2` or `-1`. |
+| `lua/ai/war.lua` | `mod_wants_to_attack(faction_id, faction_id_tgt, faction_id_unk) -> bool` | 1 | **Yes** (`src/faction.cpp`) | Whether one faction currently wants to attack another. |
 | `lua/ai/build.lua` | `find_proto`, `select_colony`, `select_combat`, `facility_score`/`governor_priorities`, `defend_unit_land_defense`, `defend_unit_explore_veh`, `build_order_item_score`, `colony_unit_branch`, `crawler_unit_branch`, `ferry_unit_branch`, `sea_probe_unit_branch`, `satellites_branch`, `secret_project_branch`, `former_unit_branch` | 1 | **Yes** — each function's *own* named hook is shadow-only, but every one is also called directly from `select_build`'s own Lua body (or from a branch that is), which is live. Editing any of these changes production output today. | Production sub-decisions: unit prototype matching, colony/combat/facility scoring, per-branch (colony/crawler/ferry/sea-probe/satellite/secret-project/former) candidate selection. |
 | | `unit_score`, `find_project`, `find_missile` | — (no hook at all) | **Yes** — pure internal helpers with no C++ call site of their own (not even shadow-only), reached exclusively through `find_proto`/`secret_project_branch`, which are themselves in the live `select_build` call graph. | Unit scoring formula; secret-project/missile selection detail. |
 | | `combat_unit_early_return` | 1 | **No** — the one exception. Deliberately *not* called from `select_build`'s Lua body (inlined differently there to avoid drawing RNG twice — see the comment above `select_build`'s definition); only reachable via its own shadow-only hook. | CombatUnit branch's immediate-return half — dead in the live path. |
@@ -449,10 +458,8 @@ only ever reached through `select_build`'s call graph).
 ## Developing or extending the Lua AI
 
 **To change behavior in something that already drives gameplay**
-(everything in the table above marked "Yes", which includes `select_build`
-itself and, through it, essentially all of `build.lua` except
-`combat_unit_early_return`; `mod_base_hurry`; every Movement mover/
-planner; `former_plans`/`design_units`; the 3 probe fragments): edit the
+(everything in the table above marked "Yes" — as of 2026-07-31 that's
+every registered hook except `combat_unit_early_return`): edit the
 function in its `lua/ai/*.lua` module directly — respect the hook's
 Class contract (no mutation in a Class 1/2 function; a Class 3 function
 may call `funcs.*` mutators freely, since there is no separate commit
@@ -462,20 +469,23 @@ inert because its own row says "shadow-only", grep who calls it inside
 `lua/ai/build.lua` first — most of them are reached from `select_build`.
 
 **To change behavior in something that's genuinely inert today**
-(`tech.lua`, `social.lua`, `war.lua`, and `build.lua`'s
-`combat_unit_early_return`): a pure-Lua edit will show up as shadow-mode
-divergence logging (if `conf.lua_shadow=1`) but has **no effect on actual
-gameplay** — the matching `src/*.cpp` call site still needs its
-`lua_ai_shadow_call`/`lua_ai_shadow_check` pair replaced with
-`lua_ai_hook` (or the relevant `lua_ai_command_hook*`) before Lua's
-result is what the game actually uses. That's a deliberate, separate
-step (each of these was left shadow-only rather than flipped live) — see
-`IMPLEMENTATION_PLAN.md` if you want the reasoning for a specific one,
-but flipping it is a mechanical C++ change: swap the macro, delete the
-now-redundant C++ computation only if the hook's fallback path still
-needs it (Class 1/2 hooks fall back to the C++ body on error, so the
-computation must stay), and bump nothing (`api_version` is for host-API
-struct layout, not hook wiring).
+(only `build.lua`'s `combat_unit_early_return`, deliberately excluded
+from `select_build`'s own Lua body — see its table row above): a
+pure-Lua edit will show up as shadow-mode divergence logging (if
+`conf.lua_shadow=1`) but has **no effect on actual gameplay** — the
+matching `src/*.cpp` call site still needs its `lua_ai_shadow_call`/
+`lua_ai_shadow_check` pair replaced with `lua_ai_hook` (or the relevant
+`lua_ai_command_hook*`) before Lua's result is what the game actually
+uses. Flipping it is a mechanical C++ change, the same one just applied
+to `tech.lua`/`social.lua`/`war.lua`: try the hook first, keep the
+existing computation as the fallback body, delete only the
+now-redundant shadow-call/lambda scaffolding, and bump nothing
+(`api_version` is for host-API struct layout, not hook wiring). Whether
+it's *worth* doing for this specific one is a separate question — see
+its own comment in `lua/ai/build.lua`/`select_build`'s definition for
+why it was excluded from the live call graph in the first place (RNG
+draw-count parity with C++, not a scoping decision that should be
+casually reversed).
 
 **To write genuinely new AI logic** (not a port of an existing C++
 function): follow `lua/examples/hello_ai.lua`'s pattern — a module

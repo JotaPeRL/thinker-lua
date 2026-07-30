@@ -413,14 +413,23 @@ enable Lua by default on the branch → next.
    ~400 relevant loc). Pure query, small, easy to compare. Validates the whole
    pipeline (hook, FFI reads, host API, RNG, traces, shadow).
 
-   **Status: ✅ closed** by the Consolidation gate below. Detail:
+   **Status: ✅ closed** by the Consolidation gate below. **Live since
+   2026-07-31** — `src/tech.cpp`'s `mod_tech_val`/`mod_tech_ai` were left
+   on `lua_ai_shadow_call`/`_check` (validation-only, C++ always governed
+   regardless of `lua_ai`) well past the gate closing them; flipped to
+   `lua_ai_hook` (Lua drives whenever `lua_ai=1`, C++ body kept as
+   fallback), following `select_build`'s existing pattern exactly. Detail:
    `IMPLEMENTATION_DETAILS.md` 4.5–4.11.
 2. **Social engineering** (`faction.cpp`: `mod_social_ai` scoring,
    `mod_wants_to_attack`). Transactional/pure, once per faction per turn.
 
    **Status: ✅ closed.** Zero mismatches across ~145 `mod_social_ai` calls
-   and 123 `mod_wants_to_attack` calls. Detail: `IMPLEMENTATION_DETAILS.md`
-   4.5–4.11.
+   and 123 `mod_wants_to_attack` calls. **Live since 2026-07-31**, same
+   shadow-only-past-the-gate gap and fix as item 1 — `mod_social_ai`'s
+   Class 2 wiring additionally bounds-checks the unpacked `sf`/`sm2`
+   proposal before using it as a raw array index, since a hook return is
+   an untrusted boundary the original C++-only computation never had.
+   Detail: `IMPLEMENTATION_DETAILS.md` 4.5–4.11.
 3. **Production and plans** (`build.cpp` + `plan.cpp`): `governor_priorities`,
    `facility_score`, `unit_score`/`find_proto`, `select_colony`/`select_combat`,
    `select_build`, `find_project`, `mod_base_hurry`, then `plans_upkeep`,
